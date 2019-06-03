@@ -1,0 +1,59 @@
+#!/usr/bin/env python
+import os, shutil, fnmatch
+import commands, argparse
+
+
+parser = argparse.ArgumentParser(description='Crawl and grab')
+parser.add_argument('directories', metavar='dir', type=string, nargs='+',
+                  help='list of directories to be avoided')
+
+args = parser.parse_args()
+
+
+SOURCE = '/Users/william/' #'/Volumes/labshared/'
+DEST = os.path.expanduser('~/avi_cache/')
+PATTERN = '*.avi'
+
+def total_split(p):
+    head, tail = os.path.split(p)
+    if head:
+        if not tail:
+            return (head, )
+        else: return total_split(head) + (tail, )
+    else: return (tail, )
+    
+def cp(src, dst):
+    if os.path.exists(dst):
+        if os.path.getsize(src) != os.path.getsize(dst):
+            print dst, 'already exists, but file size is different, overwriting...'
+        else:
+            return True
+    else:
+        print src, '->', dst
+        
+    dirs = total_split(dst)
+    
+    for i in range(1, len(dirs)):
+        sub_dir = os.path.join(*dirs[:i])
+        if not os.path.exists(sub_dir):
+            os.mkdir(sub_dir)
+            
+    #shutil.copy2(src, dst)
+    #shutil's copy is slow for some reason...
+    stat, output = commands.getstatusoutput("cp -p %s %s" % (src, dst))
+    #print output
+    return stat
+
+def crawl_copy(src, dst, pattern):
+    for fn in os.listdir(src):
+        s = os.path.join(src, fn)
+        d = os.path.join(dst, fn)
+        
+        if fnmatch.fnmatch(fn, pattern):
+            cp(s, d)
+        if os.path.isdir(s):
+            crawl_copy(s, d, pattern)
+            
+
+if __name__ == '__main__':
+    crawl_copy(SOURCE, DEST, PATTERN)
