@@ -4,7 +4,7 @@ function process_dir(Dirbase, reprocess)
     Dir = [Dirbase '/Tiff_folder'];
     cd(Dir)
 
-    Dirs = dir('PIV*');
+    Dirs = dir('PIV*File');
     dirlist = {Dirs.name};
 
     disp(dirlist)
@@ -13,9 +13,9 @@ function process_dir(Dirbase, reprocess)
     % Use below to process in multiple ways
     Dts = [1]; % process PIV from image n and image n+Dt...
     % steps = [10, 20, 30, 40, 50, 60, 70, 80, 90];
-    steps = [1]; %process image n & imange n+Dt pair, then process n+step & n+Dt+step...
+    steps = [2]; %process image n & imange n+Dt pair, then process n+step & n+Dt+step...
     Ws = [16];
-    max = 3400;  % Process images till max. If 0, process all
+    max = 0;  % Process images till max. If 0, process all
     % max = 59;
 
     % for j=1:length(Dts)

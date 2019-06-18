@@ -117,8 +117,12 @@ def return_piston_tracking_data(cinedir, cinename):
     print 'Looking for piston measurements'
     pistontrack_dir = cinedir + '/pistontracking'
     pistontrack_data_path = os.path.join(pistontrack_dir, cinename + '_position_data.txt')
+    pistontrack_data_path2 = os.path.join(pistontrack_dir, cinename[:-5] + '_position_data.txt')
     if os.path.exists(pistontrack_data_path):
         print '... Found!'
+    elif os.path.exists(pistontrack_data_path2):
+        print '... Found!'
+        pistontrack_data_path = pistontrack_data_path2
     else:
         print '... NOT found... Expected file path is:'
         print pistontrack_data_path
@@ -215,8 +219,8 @@ def get_time_for_pivoutput(time_cine, Dt, step, mode='left'):
     if len(time_cine) % 2 == 1:
         time_cine = np.delete(time_cine, -1)
 
-    time = time_cine[::int(step)]
-    time = np.delete(time, range(len(time)-int(Dt), len(time)))
+    time = time_cine[:-int(Dt)][::int(step)]
+    # time = np.delete(time, range(len(time)-int(Dt), len(time)))
     if mode == 'left':
         return time
     elif mode == 'middle':
@@ -251,8 +255,9 @@ def get_frame2sec(time_cine, Dt, step):
         time_cine = np.delete(time_cine, -1)
 
     timeA = time_cine[::int(step)]
-    timeA = np.delete(timeA, range(len(timeA) - int(Dt), len(timeA)))
     timeB = time_cine[int(Dt)::int(step)]
+    if len(timeB) != len(timeA):
+        timeA = np.delete(timeA, -1)
     frame2sec = timeB - timeA
     return frame2sec
 

@@ -659,8 +659,21 @@ def legend(ax, remove=False, **kwargs):
 
 # Colorbar
 # Scientific format for Color bar- set format=sfmt to activate it
-sfmt=mpl.ticker.ScalarFormatter(useMathText=True)
-sfmt.set_powerlimits((0, 0))
+class FormatScalarFormatter(mpl.ticker.ScalarFormatter):
+    def __init__(self, fformat="%1.1f", offset=True, mathText=True):
+        self.fformat = fformat
+        self.set_powerlimits((0,0))
+        mpl.ticker.ScalarFormatter.__init__(self,useOffset=offset,
+                                                        useMathText=mathText)
+        self.set_powerlimits((0, 0))
+    def _set_format(self, vmin, vmax):
+        self.format = self.fformat
+        if self._useMathText:
+            self.format = '$%s$' % mpl.ticker._mathdefault(self.format)
+
+# sfmt = FormatScalarFormatter(format)
+# sfmt=mpl.ticker.ScalarFormatter(useMathText=True)
+# sfmt.set_powerlimits((0, 0))
 
 def add_colorbar_old(mappable, fig=None, ax=None, fignum=None, label=None, fontsize=__fontsize__,
                  vmin=None, vmax=None, cmap='jet', option='normal', **kwargs):
@@ -705,7 +718,7 @@ def add_colorbar_old(mappable, fig=None, ax=None, fignum=None, label=None, fonts
 
 
 def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', label=None, fontsize=None, option='normal',
-                 tight_layout=True, ticklabelsize=None, aspect='equal', **kwargs):
+                 format='%1.1f', tight_layout=True, ticklabelsize=None, aspect='equal', **kwargs):
     """
     Adds a color bar
 
@@ -725,6 +738,9 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
     """
     # ax = mappable.axes
     # fig = ax.figure
+
+
+
     # Get a Figure instance
     if fig is None:
         fig = plt.gcf()
@@ -739,9 +755,11 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
     divider = axes_grid.make_axes_locatable(ax)
     cax = divider.append_axes(location, size='5%', pad=0.15)
     if option == 'scientific':
+        sfmt = FormatScalarFormatter(format)
         cb = fig.colorbar(mappable, cax=cax, format=sfmt, **kwargs)
     else:
         cb = fig.colorbar(mappable, cax=cax, **kwargs)
+
 
     if not label is None:
         if fontsize is None:

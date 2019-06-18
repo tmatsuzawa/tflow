@@ -64,10 +64,16 @@ parser.add_argument('-dir', '--dir', help='Use a single DATADIR to make a master
                     default=None)
 parser.add_argument('-cine', '--cine', help='Find all available PIVLab outputs about a PARTICULAR CINE.', type=str,
                     default=None)
+parser.add_argument('-t', '--t', help='Index for time at which data are plotted', type=int,
+                    default=0)
 parser.add_argument('-overwrite', '--overwrite',
                     help='overwrite pivlab outputs. This is handy if code fails and force code to insert pivlab outputs to hdf5. Default: False',
                     type=bool,
                     default=False)
+parser.add_argument('-save', '--save',
+                    help='Save figures. Default: True',
+                    type=bool,
+                    default=True)
 args = parser.parse_args()
 
 
@@ -80,7 +86,17 @@ print 'Running basic analysis...'
 print '-------------------------------------------------------------------------------------------------'
 
 for hdf5datapath in hdf5datapaths:
-    analyze_flows.main(hdf5datapath, overwrite=args.overwrite)
+    hdf5dataname = os.path.split(hdf5datapath)[1][:-3]
+
+    # Process a specific cine
+    if args.cine is not None:
+        cinename = os.path.split(args.cine)[1]
+        cinename_wo_ext = cinename[:-5]
+        if hdf5dataname == cinename_wo_ext:
+            analyze_flows.main(hdf5datapath, overwrite=args.overwrite, t=args.t, save=args.save)
+    else:# Process all
+        analyze_flows.main(hdf5datapath, overwrite=args.overwrite, t=args.t, save=args.save)
+
 
 
 

@@ -9,6 +9,9 @@ import numpy.ma as ma
 from scipy.interpolate import interp2d
 from scipy.interpolate import UnivariateSpline
 import scipy.integrate as integrate
+import matplotlib.pyplot as plt
+import numpy.ma as ma
+
 """
 Philosophy:
 udata = (ux, uy, uz) or (ux, uy)
@@ -713,8 +716,9 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
         k1ds = np.empty(shape)
 
 
-        for t in tqdm(range(duration), desc='time'):
-            # flatten arrays to feed to binned_statistic
+        for t in range(duration):
+            # flatten arrays to feed to binned_statistic\
+
             kk_flatten, e_knd_flatten = kk.flatten(), e_ks[..., t].flatten()
             # get a histogram
             k1d, _, _ = binned_statistic(kk_flatten, kk_flatten, statistic='mean', bins=nkout)
@@ -729,8 +733,7 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
         return e_k1ds, e_k1d_errs, k1ds
 
     dim, duration = len(udata), udata.shape[-1]
-    e_ks, ks = get_energy_spectrum_nd(udata, x0=x0, x1=x1, y0=y0, y1=y1,
-                           z0=z0, z1=z1, dx=dx, dy=dy, dz=dz)
+    e_ks, ks = get_energy_spectrum_nd(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz)
     # OLD: only capable to convert 2d spectra to one
     # if dim == 3:
     #     kx, ky, kz = ks[0], ks[1], ks[2]
@@ -745,11 +748,13 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
     # if dim == 3:
     #     e_ks = e_ks[:, :, z, :]
     # e_k, kk = convert_2d_spec_to_1d(e_ks, kx, ky, nkout=nkout)
+
     e_k, e_k_err, kk = convert_nd_spec_to_1d(e_ks, ks, nkout=nkout)
 
 
     # normalization
     energy_avg, energy_avg_err = get_spatial_avg_energy(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
+
     for t in range(duration):
         I = np.trapz(e_k[:, t], kk[:, t])
         N = I / energy_avg[t] # normalizing factor
@@ -760,6 +765,209 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
         from tqdm import tqdm as tqdm
 
     return e_k[1:], e_k_err[1:], kk[1:]
+
+def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
+                           z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
+                        notebook=True):
+    """
+    Returns 1D energy spectrum from velocity field data
+
+    Parameters
+    ----------
+    udata
+    x0
+    x1
+    y0
+    y1
+    z0
+    z1
+    z
+    dx
+    dy
+    dz
+    nkout: int, number of bins to take histograms from nd fft output
+    notebook: bool, if True, use tqdm_notebook instead of tqdm.
+        Set it False if you are NOT calling this function from notebook.
+
+    Returns
+    -------
+
+    """
+    def delete_masked_elements(data, mask):
+        """
+        Deletes elements of data using mask, and returns a 1d array
+        Parameters
+        ----------
+        data: N-d array
+        mask: N-d array, bool
+
+        Returns
+        -------
+        compressed_data
+
+        """
+        data_masked = ma.array(data, mask=mask)
+        compressed_data = data_masked.compressed()
+        '...Reduced data using a given mask'
+        return compressed_data
+
+    def convert_2d_spec_to_1d(s_e, kx, ky, nkout=40):
+        """Convert a 2d spectrum s_e computed over a grid of k values kx and ky into a 1d spectrum computed over k
+
+        Parameters
+        ----------
+        s_e : n x m float array
+            The fourier transform intensity pattern to convert to 1d
+        kx : n x m float array
+            input wavenumbers' x components
+        ky : n x m float array
+            input wavenumbers' y components, as np.array([[y0, y0, y0, y0, ...], [y1, y1, y1, y1, ...], ...]])
+        nkout : int
+            approximate length of the k vector for output; will be larger since k values smaller than 1/L will be removed
+            number of bins for the output k vector
+
+        Returns
+        -------
+        s_k :
+        kbin :
+        """
+        nx, ny,  nt = np.shape(s_e)
+
+        kk = np.sqrt(np.reshape(kx ** 2 + ky ** 2, (nx * ny)))
+        kx_1d = np.sqrt(np.reshape(kx ** 2, (nx * ny)))
+        ky_1d = np.sqrt(np.reshape(ky ** 2, (nx * ny)))
+
+        s_e = np.reshape(s_e, (nx * ny, nt))
+        # sort k by values
+        #    indices=np.argsort(k)
+        #    s_e=s_e[indices]
+
+        nk, nbin = np.histogram(kk, bins=nkout)
+        #     print 'Fourier.spectrum_2d_to_1d_convert(): nkout = ', nkout
+        #     print 'Fourier.spectrum_2d_to_1d_convert(): nbin = ', nbin
+        nn = len(nbin) - 1
+
+        # remove too small values of kx or ky (components aligned with the mesh directions)
+        epsilon = nbin[0]
+        kbin = np.zeros(nn)
+        indices = np.zeros((nx * ny, nn), dtype=bool)
+        jj = 0
+        okinds_nn = []
+        for ii in range(nn):
+            indices[:, ii] = np.logical_and(np.logical_and(kk >= nbin[ii], kk < nbin[ii + 1]),
+                                            np.logical_and(np.abs(kx_1d) >= epsilon, np.abs(ky_1d) >= epsilon))
+
+            # If there are any values to add, add them to kbin (prevents adding values less than epsilon
+            if indices[:, ii].any():
+                kbin[jj] = np.mean(kk[indices[:, ii]])
+                okinds_nn.append(ii)
+                jj += 1
+
+        s_k = np.zeros((nn, nt))
+
+        for t in range(nt):
+            s_part = s_e[:, t]
+            jj = 0
+            for ii in okinds_nn:
+                s_k[jj, t] = np.nanmean(s_part[indices[:, ii]])
+                jj += 1
+
+        kbin = ma.masked_equal(kbin, 0)
+        s_k = ma.masked_equal(s_k, 0)
+        # kbin = kbin.compressed()
+
+        return s_k, kbin
+
+    def convert_nd_spec_to_1d(e_ks, ks, nkout=None):
+        dim = ks.shape[0]
+        duration = e_ks.shape[-1]
+        kk = np.zeros((ks.shape[1:]))
+        for i in range(dim):
+            kk += ks[i, ...] ** 2
+        kk = np.sqrt(kk) # radial k
+
+        if nkout is None:
+            nkout = np.max(ks.shape[1:])
+        nkout += 1 # Compensate for throwing away the k=0 component at the end
+        shape = (nkout, duration)
+
+        e_k1ds = np.empty(shape)
+        e_k1d_errs = np.empty(shape)
+        k1ds = np.empty(shape)
+
+
+        for t in range(duration):
+            # flatten arrays to feed to binned_statistic\
+
+            kk_flatten, e_knd_flatten = kk.flatten(), e_ks[..., t].flatten()
+            # get a histogram
+            k1d, _, _ = binned_statistic(kk_flatten, kk_flatten, statistic='mean', bins=nkout)
+            e_k1d, _, _ = binned_statistic(kk_flatten, e_knd_flatten, statistic='mean', bins=nkout)
+            e_k1d_err, _, _ = binned_statistic(kk_flatten, e_knd_flatten, statistic='std', bins=nkout)
+
+            # Insert to a big array
+            k1ds[..., t] = k1d
+            e_k1ds[..., t] = e_k1d
+            e_k1d_errs[..., t] = e_k1d_err
+
+        return e_k1ds, e_k1d_errs, k1ds
+
+
+    udata = fix_udata_shape(udata)
+    dim, duration = len(udata), udata.shape[-1]
+    if dim == 2:
+        height, width, duration = udata[0].shape
+        ux, uy = udata[0, y0:y1, x0:x1, :],  udata[1, y0:y1, x0:x1, :]
+    elif dim == 3:
+        height, width, depth, duration = udata[0].shape
+        ux, uy, uz = udata[0, y0:y1, x0:x1, z0:z1, :], udata[1, y0:y1, x0:x1, z0:z1, :], udata[2, y0:y1, x0:x1, z0:z1, :]
+
+    if k == 'kx':
+        ax_ind = 1 # axis number to take 1D DFT
+        n = width
+        d = dx
+        if dim == 2:
+            ax_ind_for_avg = 0  # axis number(s) to take statistics (along y)
+        elif dim == 3:
+            ax_ind_for_avg = (0, 2)  # axis number(s) to take statistics  (along y and z)
+    elif k == 'ky':
+        ax_ind = 0 # axis number to take 1D DFT
+        n = height
+        d = dy
+        if dim == 2:
+            ax_ind_for_avg = 1 # axis number(s) to take statistics  (along x)
+        elif dim == 3:
+            ax_ind_for_avg = (1, 2) # axis number(s) to take statistics  (along x and z)
+    elif k == 'kz':
+        ax_ind = 2 # axis number to take 1D DFT
+        n = depth
+        d = dz
+        ax_ind_for_avg = (0, 1)  # axis number(s) to take statistics  (along x and y)
+
+    # E11
+    ux_k = np.fft.fft(ux, axis=ax_ind) / n
+    e11_nd = np.abs(ux_k * np.conj(ux_k))
+    e11 = np.nanmean(e11_nd, axis=ax_ind_for_avg)[:n/2, :]
+    e11_err = np.nanstd(e11_nd, axis=ax_ind_for_avg)[:n/2, :]
+
+    # E22
+    uy_k = np.fft.fft(uy, axis=ax_ind) / n
+    e22_nd = np.abs(uy_k * np.conj(uy_k))
+    e22 = np.nanmean(e22_nd, axis=ax_ind_for_avg)[:n/2, :]
+    e22_err = np.nanstd(e22_nd, axis=ax_ind_for_avg)[:n/2, :]
+
+    k = np.fft.fftfreq(n, d=d)[:n/2] * 2 * np.pi # shape=(n, duration)
+
+    if dim == 3:
+        # E33
+        uz_k = np.fft.fft(uz, axis=ax_ind) / n
+        e33_nd = np.abs(uz_k * np.conj(uz_k))
+        e33 = np.nanmean(e33_nd, axis=ax_ind_for_avg)[:n/2, :]
+        e33_err = np.nanstd(e33_nd, axis=ax_ind_for_avg)[:n/2, :]
+        return np.array([e11, e22, e33]), np.array([e11_err, e22_err, e33_err]), k
+    else:
+        return np.array([e11, e22]), np.array([e11_err, e22_err]), k
+
 
 def get_dissipation_spectrum(udata, nu, x0=0, x1=None, y0=0, y1=None,
                            z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
@@ -806,10 +1014,39 @@ def get_rescaled_energy_spectrum(udata, epsilon=10**5, nu=1.0034,x0=0, x1=None,
     eta = (nu ** 3 / epsilon) ** (0.25)  # mm
     # print 'dissipation rate, Kolmogorov scale: ', epsilon, eta
 
+    # # Subtlety: E(k) and E11(k) is not the same. E(k)=C epsilon^(2/3)k^(-5/3), E11(k)=C1 epsilon^(2/3)k^(-5/3)
+    # # In iso, homo, turbulence, C1 = 18/55 C. (Pope 6.242)
+    # c = 1.6
+    # c1 = 18. / 55. * c
+
     k_norm = kk * eta
     e_k_norm = e_k[...] / ((epsilon * nu ** 5.) ** (0.25))
     e_k_err_norm = e_k_err[...] / ((epsilon * nu ** 5.) ** (0.25))
+
     return e_k_norm, e_k_err_norm, k_norm
+
+def get_1d_rescaled_energy_spectrum(udata, epsilon=10**5, nu=1.0034,x0=0, x1=None,
+                                 y0=0, y1=None, z0=0, z1=None, z=0,
+                                 dx=1, dy=1, dz=1, nkout=None, notebook=True):
+    dim = len(udata)
+    # get energy spectrum
+    eii_arr, eii_err_arr, k1d = get_1d_energy_spectrum(udata, x0=x0, x1=x1,
+                                 y0=y0, y1=y1, z0=z0, z1=z1,
+                                 dx=dx, dy=dy, dz=dz, nkout=nkout, notebook=notebook)
+
+    # Kolmogorov length scale
+    eta = (nu ** 3 / epsilon) ** (0.25)  # mm
+    # print 'dissipation rate, Kolmogorov scale: ', epsilon, eta
+
+    k_norm = k1d * eta
+    eii_arr_norm = np.empty_like(eii_arr)
+    eii_err_arr_norm = np.empty_like(eii_err_arr)
+
+    for i in range(dim):
+        eii_arr_norm = eii_arr[...] / ((epsilon * nu ** 5.) ** (0.25))
+        eii_err_arr_norm = eii_err_arr[...] / ((epsilon * nu ** 5.) ** (0.25))
+
+    return eii_arr_norm, eii_err_arr_norm, k_norm
 
 
 def get_rescaled_dissipation_spectrum(udata, epsilon=10**5, nu=1.0034,x0=0, x1=None,
@@ -859,6 +1096,18 @@ def get_rescaled_dissipation_spectrum(udata, epsilon=10**5, nu=1.0034,x0=0, x1=N
     D_k_err_norm = D_k_err[...] / (u_eta ** 3)
     return D_k_norm, D_k_err_norm, k_norm
 
+def scale_energy_spectrum(e_k, kk, epsilon=10**5, nu=1.0034, e_k_err=None):
+    # Kolmogorov length scale
+    eta = (nu ** 3 / epsilon) ** (0.25)  # mm
+    # print 'dissipation rate, Kolmogorov scale: ', epsilon, eta
+
+    k_norm = kk * eta
+    e_k_norm = e_k[...] / ((epsilon * nu ** 5.) ** (0.25))
+    if e_k_err is not None:
+        e_k_err_norm = e_k_err[...] / ((epsilon * nu ** 5.) ** (0.25))
+        return e_k_norm, e_k_err_norm, k_norm
+    else:
+        return e_k_norm, k_norm
 
 ########## DISSIPATION RATE ##########
 def get_epsilon_using_sij(udata, dx=None, dy=None, dz=None, nu=1.004):
@@ -940,7 +1189,7 @@ def get_epsilon_using_diss_spectrum(udata, nu=1.0034,x0=0, x1=None,
     for t in range(duration):
         # Divide the integrated result by (2*np.pi)^3 because the literature use the convention k=1/L NOT 2pi/L
         # Recall D ~ k^2dk. this is why there are (2pi)^3
-        epsilon[t] = np.trapz(D_k[:, t], k1d[:, t]) / (2* np.pi)**3
+        epsilon[t] = np.trapz(D_k[:, t], k1d[:, t])
     return epsilon
 
 
@@ -1033,14 +1282,15 @@ def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=None, x1=Non
     # Initialization
     rrs, corrs, corr_errs = np.empty((n_bins, t1 - t0)), np.empty((n_bins, t1 - t0)), np.empty((n_bins, t1 - t0))
 
-    for t in tqdm(range(t0, t1), desc='time'):
+    for t in tqdm(range(t0, t1), desc='autocorr. time'):
         # Call velocity field at time t as uu
         uu = ui[y0:y1, x0:x1, t]
 
-        uu2_norm = np.nanmean(ui[y0:y1, x0:x1, ...] ** 2, axis=(0, 1))  # mean square velocity
         roll_indices = range(0, limits[roll_axis], int(1. / coarse))
         m = len(roll_indices)
         n = int(x_grid.size * coarse2)
+
+        uu2_norm = np.nanmean(ui[y0:y1, x0:x1, ...] ** 2, axis=(0, 1))  # mean square velocity (avg over space)
 
         rr = np.empty((n, m))
         corr = np.empty((n, m))
@@ -1065,6 +1315,15 @@ def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=None, x1=Non
         # Sort arrays
         rr, corr = sort2arr(rr_, corr_)
         rr, corr_err = sort2arr(rr_, corr_err)
+
+        # MAKE SURE f(r=0)=g(r=0)=1
+        # IF coarse2 is not 1.0, the autocorrelation functions at r=0 may take values other than 1.
+        # This is due to using an inadequate normalization factor.
+        # As a consequence, this messes up determining Taylor microscale etc.
+        # One can fix this properly by computing the normalizing factor using the same undersampled ensemble.
+        # BUT it is not worth the effort because one just needs to scale the correlation values here.
+        corr /= corr[0]
+        corr_err /= corr[0]
 
         # Insert to a big array
         rrs[..., t] = rr
@@ -1166,7 +1425,7 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None, x0=None, x
     # Initialization
     rrs, corrs, corr_errs = np.zeros((n_bins, t1 - t0)), np.ones((n_bins, t1 - t0)), np.zeros((n_bins, t1 - t0))
 
-    for t in tqdm(range(t0, t1), desc='time'):
+    for t in tqdm(range(t0, t1), desc='autocorr. 3d time'):
         # Call velocity field at time t as uu
         uu = ui[y0:y1, x0:x1, z0:z1, t]
 
@@ -1221,8 +1480,11 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None, x0=None, x
 
 
 def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None, x0=None, x1=None, y0=None, y1=None, z0=0, z1=None, t0=None, t1=None,
-                             coarse=1.0, coarse2=0.2, notebook=True):
+                             coarse=1.0, coarse2=0.2, notebook=True, return_rij=True):
     """
+    Returns two-point velocity autocorrelation tensor, and autocorrelation functions.
+    Uses the x-component of velocity. (CAUTION required for unisotropic flows)
+
     Pope Eq. 6.44
     Parameters
     ----------
@@ -1249,7 +1511,7 @@ def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None, x0=N
         height, width, depth, duration = udata[0].shape
         ux, uy, uz = udata[0], udata[1], udata[2]
 
-    print 'Compute two-point velocity autocorrelation tensor Rij'
+    print 'Compute two-point velocity autocorrelation'
     if dim == 2:
         r_long, f_long, f_err_long = compute_spatial_autocorr(ux, x, y, roll_axis=1, n_bins=n_bins, x0=x0, x1=x1,
                                                               y0=y0, y1=y1, t0=t0, t1=t1, coarse=coarse, coarse2=coarse2, notebook=notebook)
@@ -1261,35 +1523,41 @@ def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None, x0=N
                                                                 coarse=coarse, coarse2=coarse2, notebook=notebook)
         r_tran, g_tran, g_err_tran = compute_spatial_autocorr3d(ux, x, y, z, roll_axis=0, n_bins=n_bins, x0=x0, x1=x1,
                                                                   y0=y0, y1=y1, z0=z0, z1=z1,
+
                                                                   coarse=coarse, coarse2=coarse2, notebook=notebook)
-    # Make long./trans. autocorrelation functions
-    ## make an additional list to use 2d interpolation: i.e. supply autocorrelation values as a function of (r, t)
-    time_list = []
-    for t in time:
-        time_list += [t] * len(r_long[:, 0])
-    # 2d interpolation of long./trans. autocorrelation functions
-    f = interp2d(r_long.flatten(), time_list, f_long.flatten())
-    g = interp2d(r_tran.flatten(), time_list, g_tran.flatten())
-
-    # Define Rij(r, t) as a function.
-    def two_pt_velocity_autocorrelation_tensor(i, j, r, t, udata):
-        dim = len(r)
-        u2_avg = np.nanmean(udata ** 2, axis=tuple(range(dim + 1))) # spatial average
-        if dim == 2:
-            x, y = r[0], r[1]
-        elif dim == 3:
-            x, y, z = r[0], r[1], r[2]
-        r2_norm = np.zeros_like(x)
-        for k in range(dim):
-            r2_norm += r[k] ** 2
-        r_norm = np.sqrt(r2_norm)
-        Rij_value = u2_avg[t] * (g(r_norm, t) * klonecker_delta(i, j) + (f(r_norm , t)-g(r_norm , t)) * r[i] * r[j] / (r_norm ** 2))
-        return Rij_value
-    print '... Returning two-point velocity autocorrelation tensor Rij(r, t). Arguments: i, j, r, t. Pope Eq. 6.44.'
-
     # Return autocorrelation values and rs
     autocorrs = (r_long, f_long, f_err_long, r_tran, g_tran, g_err_tran)
-    return two_pt_velocity_autocorrelation_tensor, autocorrs
+
+    if return_rij:
+        print 'Compute two-point velocity autocorrelation tensor Rij. (Requires '
+        # Make long./trans. autocorrelation functions
+        ## make an additional list to use 2d interpolation: i.e. supply autocorrelation values as a function of (r, t)
+        time_list = []
+        for t in time:
+            time_list += [t] * len(r_long[:, 0])
+        # 2d interpolation of long./trans. autocorrelation functions
+        print '... 2D interpolation to define long./trans. autocorrelation function (this may take a while)'
+        f = interp2d(r_long.flatten(), time_list, f_long.flatten())
+        g = interp2d(r_tran.flatten(), time_list, g_tran.flatten())
+
+        # Define Rij(r, t) as a function.
+        def two_pt_velocity_autocorrelation_tensor(i, j, r, t, udata):
+            dim = len(r)
+            u2_avg = np.nanmean(udata ** 2, axis=tuple(range(dim + 1))) # spatial average
+            if dim == 2:
+                x, y = r[0], r[1]
+            elif dim == 3:
+                x, y, z = r[0], r[1], r[2]
+            r2_norm = np.zeros_like(x)
+            for k in range(dim):
+                r2_norm += r[k] ** 2
+            r_norm = np.sqrt(r2_norm)
+            Rij_value = u2_avg[t] * (g(r_norm, t) * klonecker_delta(i, j) + (f(r_norm , t)-g(r_norm , t)) * r[i] * r[j] / (r_norm ** 2))
+            return Rij_value
+        print '... Returning two-point velocity autocorrelation tensor Rij(r, t). Arguments: i, j, r, t. Pope Eq. 6.44.'
+        return two_pt_velocity_autocorrelation_tensor, autocorrs
+    else:
+        return autocorrs
 
 def get_autocorr_functions(r_long, f_long, r_tran, g_tran, time):
     """
@@ -1315,7 +1583,54 @@ def get_autocorr_functions(r_long, f_long, r_tran, g_tran, time):
     g = interp2d(r_tran.flatten(), time_list, g_tran.flatten())
     return f, g
 
+def get_autocorr_functions_int_list(r_long, f_long, r_tran, g_tran):
+    n, duration = r_long.shape
+    data = [r_long, f_long, r_tran, g_tran]
+    # Remove nans if necessary
+    for i, datum in enumerate(data):
+        if ~np.isnan(data[i]).any():
+            data[i] = data[i][~np.isnan(data[i])]
+    # inter
+    # polate data (3rd order spline)
+    fs, gs = [], []
+    for t in range(duration):
+        # if r_long contains nans, UnivariateSpline fails. so clean this up.
+        r_long_tmp, f_long_tmp = remove_nans_for_array_pair(r_long[:, t], f_long[:, t])
+        r_tran_tmp, g_tran_tmp = remove_nans_for_array_pair(r_tran[:, t], g_tran[:, t])
+
+        # Make sure that f(r=0, t)=g(r=0,t)=1
+        f_long_tmp /= f_long_tmp[0]
+        g_tran_tmp /= g_tran_tmp[0]
+
+        # Make autocorrelation function an even function for curvature calculation
+        r_long_tmp = np.concatenate((-np.flip(r_long_tmp, axis=0)[:-1], r_long_tmp))
+        f_long_tmp = np.concatenate((np.flip(f_long_tmp, axis=0)[:-1], f_long_tmp))
+        r_tran_tmp = np.concatenate((-np.flip(r_tran_tmp, axis=0)[:-1], r_tran_tmp))
+        g_tran_tmp = np.concatenate((np.flip(g_tran_tmp, axis=0)[:-1], g_tran_tmp))
+
+        f_spl = UnivariateSpline(r_long_tmp, f_long_tmp, s=0, k=3)  # longitudinal autocorrelation func.
+        g_spl = UnivariateSpline(r_tran_tmp, g_tran_tmp, s=0, k=3)  # transverse autocorrelation func.
+
+        fs.append(f_spl)
+        gs.append((g_spl))
+    return fs, gs
+
 def get_autocorrelation_tensor_iso(r_long, f_long, r_tran, g_tran, time):
+    """
+    Returns autocorrelation tensor with isotropy assumption
+
+    Parameters
+    ----------
+    r_long
+    f_long
+    r_tran
+    g_tran
+    time
+
+    Returns
+    -------
+
+    """
     f, g = get_autocorr_functions(r_long, f_long, r_tran, g_tran, time)
 
     # Define Rij(r, t) as a function.
@@ -1413,7 +1728,7 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
     # Initialization
     rrs, Dxxs, Dxx_errs = np.zeros((n_bins, t1 - t0)), np.ones((n_bins, t1 - t0)), np.zeros((n_bins, t1 - t0))
 
-    for t in tqdm(range(t0, t1), desc='time'):
+    for t in tqdm(range(t0, t1), desc='struc. func. time'):
         # Call velocity field at time t as uu
         uu = ui[..., t]
 
@@ -1544,6 +1859,45 @@ def scale_raw_structure_funciton_long(rrs, Dxxs, Dxx_errs, epsilon, nu=1.004, p=
 ## TAYLOR MICROSCALES ##
 # Taylor microscales 1: using autocorrelation functions
 ### DEFAULT ###
+def remove_nans_for_array_pair(arr1, arr2):
+    """
+    remove nans or infs in arr1 and arrs, and returns the compressed arrays with the same length
+
+    Parameters
+    ----------
+    arr1
+    arr2
+
+    Returns
+    -------
+    compressed_arr1, compressed_arr2
+    """
+
+    def get_mask_for_nan_and_inf(U):
+        """
+        Returns a mask for nan and inf values in a multidimensional array U
+        Parameters
+        ----------
+        U: N-d array
+
+        Returns
+        -------
+
+        """
+        U = np.array(U)
+        U_masked_invalid = ma.masked_invalid(U)
+        return U_masked_invalid.mask
+
+    mask1 = get_mask_for_nan_and_inf(arr1)
+    mask2 = get_mask_for_nan_and_inf(arr2)
+    mask = ~(~mask1 * ~mask2)
+
+    arr1 = ma.array(arr1, mask=mask)
+    arr2 = ma.array(arr2, mask=mask)
+    compressed_arr1 = arr1.compressed()
+    compressed_arr2 = arr2.compressed()
+    return compressed_arr1, compressed_arr2
+
 def get_taylor_microscales(r_long, f_long, r_tran, g_tran):
     """
     Returns Taylor microscales as the curvature of the autocorrelation functions at r=0
@@ -1575,17 +1929,44 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran):
     for i, datum in enumerate(data):
         if ~np.isnan(data[i]).any():
             data[i] = data[i][~np.isnan(data[i])]
-    # interpolate data (3rd order spline)
+    # inter
+    # polate data (3rd order spline)
     lambda_f, lambda_g = [], []
     for t in range(duration):
-        f_spl = UnivariateSpline(r_long[:, t], f_long[:, t] / f_long[0, t], s=0, k=3) # longitudinal autocorrelation func.
-        g_spl = UnivariateSpline(r_tran[:, t], g_tran[:, t] / g_tran[0, t], s=0, k=3) # transverse autocorrelation func.
+        # if r_long contains nans, UnivariateSpline fails. so clean this up.
+        r_long_tmp, f_long_tmp = remove_nans_for_array_pair(r_long[:, t], f_long[:, t])
+        r_tran_tmp, g_tran_tmp = remove_nans_for_array_pair(r_tran[:, t], g_tran[:, t])
+
+
+        # Make sure that f(r=0, t)=g(r=0,t)=1
+        f_long_tmp /= f_long_tmp[0]
+        g_tran_tmp /= g_tran_tmp[0]
+
+
+        # Make autocorrelation function an even function for curvature calculation
+        r_long_tmp = np.concatenate((-np.flip(r_long_tmp, axis=0)[:-1], r_long_tmp))
+        f_long_tmp = np.concatenate((np.flip(f_long_tmp, axis=0)[:-1], f_long_tmp))
+        r_tran_tmp = np.concatenate((-np.flip(r_tran_tmp, axis=0)[:-1], r_tran_tmp))
+        g_tran_tmp = np.concatenate((np.flip(g_tran_tmp, axis=0)[:-1], g_tran_tmp))
+
+
+        f_spl = UnivariateSpline(r_long_tmp, f_long_tmp, s=0, k=3) # longitudinal autocorrelation func.
+        g_spl = UnivariateSpline(r_tran_tmp, g_tran_tmp, s=0, k=3) # transverse autocorrelation func.
+
+
         # take the second derivate of the spline function
         f_spl_2d = f_spl.derivative(n=2)
         g_spl_2d = g_spl.derivative(n=2)
 
         lambda_f_ = (- f_spl_2d(0) / 2.) ** (-0.5)  # Compute long. Taylor microscale
         lambda_g_ = (- g_spl_2d(0) / 2.) ** (-0.5)  # Compute trans. Taylor microscale
+
+        # # Show Taylor microscale (debugging)
+        # fig, ax = plt.subplots(num=5)
+        # ax.plot(r_tran_tmp, g_tran_tmp)
+        # ax.plot(r_tran_tmp, g_spl_2d(0) / 2. * r_tran_tmp ** 2 + 1)
+        # ax.set_ylim(-0.2, 1.1)
+        # plt.show()
 
         lambda_f.append(lambda_f_)
         lambda_g.append(lambda_g_)
@@ -2056,14 +2437,14 @@ def kolmogorov_53(k, k0=50):
     e_k = k0*k**(-5./3)
     return e_k
 
-def kolmogorov_53_uni(k, epsilon, c=1.6):
+def kolmogorov_53_uni(k, epsilon, c=1.5):
     """
     Universal Kolmogorov Energy spectrum
     Parameters
     ----------
     k: array-like, wavenumber: convention is k= 1/L NOT 2pi/L
     epsilon: float, dissipation rate
-    c: float, Kolmogorov coefficient: 1.6
+    c: float, Kolmogorov coefficient: resc
 
     Returns
     -------

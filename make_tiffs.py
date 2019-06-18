@@ -109,8 +109,8 @@ cinepath_sample = '/Volumes/labshared4/takumi/old_data/sample_piv_cine/PIV_fv_vp
 
 parser = argparse.ArgumentParser(description='Comprehensive interactive tool to analyze PIV cine')
 parser.add_argument('-cine', '--cine', help='path to cine file', default=cinepath_sample)
-parser.add_argument('-start', '--start', help='', default=0)
-parser.add_argument('-end', '--end', help='', default=10)
+parser.add_argument('-start', '--start', help='', default=0, type=int)
+parser.add_argument('-end', '--end', help='', default=None, type=int)
 parser.add_argument('-overwrite', '--overwrite', help='overwrite images', default=False)
 args = parser.parse_args()
 

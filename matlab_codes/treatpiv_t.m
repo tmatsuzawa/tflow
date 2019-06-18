@@ -23,11 +23,11 @@ end
 for ind = 1:1:length(dirlist)
     directory=dirlist{ind};
     files= dir(['./' directory '/im*.tiff']);
-    
     disp(['Found ' int2str(length(files)) ' images...'])
-    
+    amount = length(files);
     filenames={files.name};
-    filenames = sortrows(filenames); %sort all image files
+%     filenames = sortrows(filenames); %sort all image files
+    filenames = sort_nat(filenames);
     amount = length(filenames);
     % if number of image is odd, it will raise an error. 
     if rem(amount, 2) == 1
@@ -39,7 +39,8 @@ for ind = 1:1:length(dirlist)
     if max == 0  % Default: process all
         max = amount - Dt;
     end
-        
+    disp(directory)
+    disp(max)
     %% Standard PIV Settings
     std_set = cell(12,2); % To make it more readable, let's create a "settings table"
     %Parameter                       %Setting           %Options
@@ -71,11 +72,11 @@ for ind = 1:1:length(dirlist)
     % PIV postprocessing settings
     % Parameter                       %Setting        %Descriptions
     post_set = cell(7,1);
-    post_set{1,1} = 'umin';     post_set{1,2} = -2; % minimum allowed u velocity
-    post_set{2,1} = 'umax';     post_set{2,2} =  2; % maximum allowed u velocity
-    post_set{3,1} = 'vmin';     post_set{3,2} = -2; % maximum allowed v velocity
-    post_set{4,1} = 'vmax';     post_set{4,2} =  2; % maximum allowed v velocity
-    post_set{5,1} = 'stdthresh';post_set{5,2} =  4; % threshold for standard deviation check
+    post_set{1,1} = 'umin';     post_set{1,2} = -4; % minimum allowed u velocity
+    post_set{2,1} = 'umax';     post_set{2,2} =  4; % maximum allowed u velocity
+    post_set{3,1} = 'vmin';     post_set{3,2} = -4; % maximum allowed v velocity
+    post_set{4,1} = 'vmax';     post_set{4,2} =  4; % maximum allowed v velocity
+    post_set{5,1} = 'stdthresh';post_set{5,2} =  2; % threshold for standard deviation check
     post_set{6,1} = 'epsilon';  post_set{6,2} = 0.15; % epsilon for normalized median test
     post_set{7,1} = 'thresh';   post_set{7,2} = 1;  % threshold for normalized median test
     
@@ -92,7 +93,7 @@ for ind = 1:1:length(dirlist)
     %create the directory to save the data :
     basename = directory; %remove the _File extension
     PathName =[Dirbase Data_name '/PIVlab_Win' int2str(std_set{1,2}) 'pix_W' int2str(W) 'px_Dt' int2str(Dt) '_step' num2str(step) '_' basename];
-    if exist(PathName) & reprocess
+    if exist(PathName) && reprocess
         datadirs = dir([Dirbase Data_name '/PIVlab_*']);
         n_datadirs = size(datadirs,1);
         PathName = [PathName '_' sprintf('%02d', n_datadirs)];
@@ -104,8 +105,8 @@ for ind = 1:1:length(dirlist)
     for i=1:step:(max)
         %write result in a txt file
         ndigit = floor(log10(amount*subratio))+1;
-        number = str2num(filenames{i}(3:8));
-%         disp(filenames{i}(3:8))
+%         number = str2num(filenames{i}(3:8));% for im00000.tiff
+        number = i;
 %         disp(number)
         if number>0
             nzero = ndigit -(floor(log10(number))+1);
@@ -129,6 +130,7 @@ for ind = 1:1:length(dirlist)
             end
             %  disp(i+1)
             counter=counter+1;
+            disp(i)
             disp(fullfile(['./' directory], filenames{i}))
             image1 = imread(fullfile(['./' directory], filenames{i})); % read images
             image2 = imread(fullfile(['./' directory], filenames{i+Dt}));
@@ -224,5 +226,11 @@ for ind = 1:1:length(dirlist)
             end
         end
     end
+    
+   % reset max to process all for the next file
+    if max == amount - Dt  % Default: process all
+        max = 0;
+    end
+    
     disp('Done')
 end
