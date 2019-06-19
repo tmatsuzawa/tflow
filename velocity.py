@@ -498,9 +498,6 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
     -------
     energy_fft: nd array with shape (height, width, duration) or (height, width, depth, duration)
     ks: nd array with shape (ncomponents, height, width, duration) or (ncomponents, height, width, depth, duration)
-        ...
-
-
 
     Example
     -----------------
@@ -544,19 +541,18 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
             raise ValueError
         udata = udata[:, y0:y1, x0:x1, z0:z1, :]
 
-
     n_samples = 1
     for d in range(dim):
         n_samples *= udata.shape[d+1]
 
-    ukdata = np.fft.fftn(udata, axes=range(1, dim+1)) / np.sqrt(n_samples)
+    ukdata = np.fft.fftn(udata, axes=range(1, dim+1))
     ukdata = np.fft.fftshift(ukdata, axes=range(1, dim+1))
 
     # compute E(k)
     ek = np.zeros(ukdata[0].shape)
 
     for i in range(dim):
-        ek[...] += np.abs(ukdata[i, ...]) ** 2
+        ek[...] += np.abs(ukdata[i, ...]) ** 2 / n_samples
     ek /= 2.
 
     if dim == 2:
@@ -728,7 +724,6 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
 
         for t in range(duration):
             # flatten arrays to feed to binned_statistic\
-
             kk_flatten, e_knd_flatten = kk.flatten(), e_ks[..., t].flatten()
             if remove_undersampled_region:
                 mask = np.abs(kk_flatten) > k_max
@@ -736,16 +731,24 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
                 kk_flatten = delete_masked_elements(kk_flatten, mask)
                 e_knd_flatten = delete_masked_elements(e_knd_flatten, mask)
 
+
             # get a histogram
             k1d, _, _ = binned_statistic(kk_flatten, kk_flatten, statistic='mean', bins=nkout)
             e_k1d, _, _ = binned_statistic(kk_flatten, e_knd_flatten, statistic='mean', bins=nkout)
             e_k1d_err, _, _ = binned_statistic(kk_flatten, e_knd_flatten, statistic='std', bins=nkout)
 
+            # One must fix the power by some numerical factor due to the DFT and the definition of E(k)
+            n_samples = len(kk_flatten)
+            deltak = k1d[1] - k1d[0]
+            if dim == 2:
+                jacobian = 2 * np.pi * k1d
+            elif dim == 3:
+                jacobian = 4 * np.pi * k1d ** 2
 
             # Insert to a big array
             k1ds[..., t] = k1d
-            e_k1ds[..., t] = e_k1d * 2 * np.pi * k1d
-            e_k1d_errs[..., t] = e_k1d_err * 2 * np.pi * k1d
+            e_k1ds[..., t] = e_k1d * jacobian / (n_samples * deltak)
+            e_k1d_errs[..., t] = e_k1d_err * jacobian / (n_samples * deltak)
 
 
         return e_k1ds, e_k1d_errs, k1ds
@@ -769,15 +772,17 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
 
     e_k, e_k_err, kk = convert_nd_spec_to_1d(e_ks, ks, nkout=nkout)
 
-
-    # normalization
-    energy_avg, energy_avg_err = get_spatial_avg_energy(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
-
-    for t in range(duration):
-        I = np.trapz(e_k[1:, t], kk[1:, t])
-        N = I / energy_avg[t] # normalizing factor
-        e_k[:, t] /= N
-        e_k_err[:, t] /= N
+    ##### NORMALIZATION IS NO LONGER NEEDED ####
+    # The current code
+    # # normalization
+    # energy_avg, energy_avg_err = get_spatial_avg_energy(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
+    #
+    # for t in range(duration):
+    #     I = np.trapz(e_k[1:, t], kk[1:, t])
+    #     print I
+    #     N = I / energy_avg[t] # normalizing factor
+    #     e_k[:, t] /= N
+    #     e_k_err[:, t] /= N
 
     if notebook:
         from tqdm import tqdm as tqdm
@@ -785,7 +790,7 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
     return e_k[1:], e_k_err[1:], kk[1:]
 
 def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
-                           z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
+                           z0=0, z1=None, dx=None, dy=None, dz=None,
                         notebook=True):
     """
     Returns 1D energy spectrum from velocity field data
@@ -799,7 +804,6 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
     y1
     z0
     z1
-    z
     dx
     dy
     dz
@@ -989,7 +993,7 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
 
 def get_dissipation_spectrum(udata, nu, x0=0, x1=None, y0=0, y1=None,
                            z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
-                        notebook=True, convention='2pi/L'):
+                        notebook=True):
     """
     Returns dissipation spectrum D(k) = 2 nu k^2 E(k) where E(k) is the 1d energy spectrum
     Parameters
@@ -1021,7 +1025,7 @@ def get_dissipation_spectrum(udata, nu, x0=0, x1=None, y0=0, y1=None,
     return D_k, D_k_err, k1d
 
 def get_rescaled_energy_spectrum(udata, epsilon=10**5, nu=1.0034,x0=0, x1=None,
-                                 y0=0, y1=None, z0=0, z1=None, z=0,
+                                 y0=0, y1=None, z0=0, z1=None,
                                  dx=1, dy=1, dz=1, nkout=None, notebook=True):
     # get energy spectrum
     e_k, e_k_err, kk = get_energy_spectrum(udata, x0=x0, x1=x1,
@@ -1043,14 +1047,14 @@ def get_rescaled_energy_spectrum(udata, epsilon=10**5, nu=1.0034,x0=0, x1=None,
 
     return e_k_norm, e_k_err_norm, k_norm
 
-def get_1d_rescaled_energy_spectrum(udata, epsilon=10**5, nu=1.0034,x0=0, x1=None,
-                                 y0=0, y1=None, z0=0, z1=None, z=0,
-                                 dx=1, dy=1, dz=1, nkout=None, notebook=True):
+def get_1d_rescaled_energy_spectrum(udata, epsilon=10**5, nu=1.0034, x0=0, x1=None,
+                                 y0=0, y1=None, z0=0, z1=None,
+                                 dx=1, dy=1, dz=1, notebook=True):
     dim = len(udata)
     # get energy spectrum
     eii_arr, eii_err_arr, k1d = get_1d_energy_spectrum(udata, x0=x0, x1=x1,
                                  y0=y0, y1=y1, z0=z0, z1=z1,
-                                 dx=dx, dy=dy, dz=dz, nkout=nkout, notebook=notebook)
+                                 dx=dx, dy=dy, dz=dz, notebook=notebook)
 
     # Kolmogorov length scale
     eta = (nu ** 3 / epsilon) ** (0.25)  # mm
