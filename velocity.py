@@ -544,20 +544,23 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
             raise ValueError
         udata = udata[:, y0:y1, x0:x1, z0:z1, :]
 
-    energy = get_energy(udata)
-
-    dim = len(udata)
 
     n_samples = 1
-    for d in range(len(energy.shape) - 1):
-        n_samples *= energy.shape[d]
+    for d in range(dim):
+        n_samples *= udata.shape[d+1]
 
-    energy_fft = np.abs(np.fft.fftn(energy, axes=range(dim)))
-    energy_fft = np.fft.fftshift(energy_fft, axes=range(dim))
-    # energy_fft /= n_samples
+    ukdata = np.fft.fftn(udata, axes=range(1, dim+1)) / np.sqrt(n_samples)
+    ukdata = np.fft.fftshift(ukdata, axes=range(1, dim+1))
+
+    # compute E(k)
+    ek = np.zeros(ukdata[0].shape)
+
+    for i in range(dim):
+        ek[...] += np.abs(ukdata[i, ...]) ** 2
+    ek /= 2.
 
     if dim == 2:
-        height, width, duration = energy.shape
+        height, width, duration = ek.shape
         kx = np.fft.fftfreq(width, d=dx)  # this returns FREQUENCY (JUST INVERSE LENGTH) not ANGULAR FREQUENCY
         ky = np.fft.fftfreq(height, d=dy)
         kx = np.fft.fftshift(kx)
@@ -565,10 +568,10 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
         kxx, kyy = np.meshgrid(kx, ky)
         kxx, kyy = kxx * 2 * np.pi, kyy * 2 * np.pi # Convert inverse length into wavenumber
 
-        return energy_fft, np.asarray([kxx, kyy])
+        return ek, np.asarray([kxx, kyy])
 
     elif dim == 3:
-        height, width, depth, duration = energy.shape
+        height, width, depth, duration = ek.shape
         kx = np.fft.fftfreq(width, d=dx)
         ky = np.fft.fftfreq(height, d=dy)
         kz = np.fft.fftfreq(depth, d=dz)
@@ -578,10 +581,10 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
         kxx, kyy, kzz = np.meshgrid(ky, kx, kz)
         kxx, kyy, kzz = kxx * 2 * np.pi, kyy * 2 * np.pi, kzz * 2 * np.pi
 
-        return energy_fft, np.asarray([kxx, kyy, kzz])
+        return ek, np.asarray([kxx, kyy, kzz])
 
 def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
-                           z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
+                           z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None, remove_undersampled_region=True,
                         notebook=True):
     """
     Returns 1D energy spectrum from velocity field data
@@ -707,7 +710,7 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
         kk = np.sqrt(kk) # radial k
 
         if nkout is None:
-            nkout = np.max(ks.shape[1:])
+            nkout = int(np.max(ks.shape[1:]) * 0.7)
         nkout += 1 # Compensate for throwing away the k=0 component at the end
         shape = (nkout, duration)
 
@@ -715,20 +718,35 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
         e_k1d_errs = np.empty(shape)
         k1ds = np.empty(shape)
 
+        if remove_undersampled_region:
+            kx_max, ky_max = np.max(ks[0, ...]), np.max(ks[1, ...])
+            k_max = np.min([kx_max, ky_max])
+            if dim == 3:
+                kz_max = np.max(ks[2, ...])
+                k_max = np.min([k_max, kz_max])
+
 
         for t in range(duration):
             # flatten arrays to feed to binned_statistic\
 
             kk_flatten, e_knd_flatten = kk.flatten(), e_ks[..., t].flatten()
+            if remove_undersampled_region:
+                mask = np.abs(kk_flatten) > k_max
+                # print len(kk_flatten)
+                kk_flatten = delete_masked_elements(kk_flatten, mask)
+                e_knd_flatten = delete_masked_elements(e_knd_flatten, mask)
+
             # get a histogram
             k1d, _, _ = binned_statistic(kk_flatten, kk_flatten, statistic='mean', bins=nkout)
             e_k1d, _, _ = binned_statistic(kk_flatten, e_knd_flatten, statistic='mean', bins=nkout)
             e_k1d_err, _, _ = binned_statistic(kk_flatten, e_knd_flatten, statistic='std', bins=nkout)
 
+
             # Insert to a big array
             k1ds[..., t] = k1d
-            e_k1ds[..., t] = e_k1d
-            e_k1d_errs[..., t] = e_k1d_err
+            e_k1ds[..., t] = e_k1d * 2 * np.pi * k1d
+            e_k1d_errs[..., t] = e_k1d_err * 2 * np.pi * k1d
+
 
         return e_k1ds, e_k1d_errs, k1ds
 
@@ -756,7 +774,7 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
     energy_avg, energy_avg_err = get_spatial_avg_energy(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
 
     for t in range(duration):
-        I = np.trapz(e_k[:, t], kk[:, t])
+        I = np.trapz(e_k[1:, t], kk[1:, t])
         N = I / energy_avg[t] # normalizing factor
         e_k[:, t] /= N
         e_k_err[:, t] /= N
@@ -2108,7 +2126,7 @@ def get_integral_velocity_scale(udata):
 
 ## KOLMOGOROV SCALES ##
 ### DEFAULT ###
-def get_kolmogorov_scale(udata, dx, dy, dz, nu=1.0004):
+def get_kolmogorov_scale(udata, dx, dy, dz, nu=1.004):
     """
     Returns kolmogorov LENGTh scale
     Parameters
@@ -2129,7 +2147,7 @@ def get_kolmogorov_scale(udata, dx, dy, dz, nu=1.0004):
 
 
 ########## ALL SCALES (LENGTH, VELOCITY, TIME)  ##########
-def get_integral_scales_all(udata, dx, dy, dz=None, nu=1.0004):
+def get_integral_scales_all(udata, dx, dy, dz=None, nu=1.004):
     """
     Returns integral scales (related to LARGE EDDIES)
     Parameters
@@ -2175,7 +2193,7 @@ def get_taylor_microscales_all(udata, r_long, f_long, r_tran, g_tran):
     tau_lambda = lambda_g / u_lambda # other way to define the time scale is through temporal autocorrelation
     return lambda_g, u_lambda, tau_lambda
 
-def get_kolmogorov_scales_all(udata, dx, dy, dz, nu=1.0004):
+def get_kolmogorov_scales_all(udata, dx, dy, dz, nu=1.004):
     """
     Returns Kolmogorov scales
     Parameters
