@@ -48,7 +48,9 @@ def compute_basics(hdf5datapath, overwrite=False, verbose=False, nu=1.004, use_f
         ## energy_spectra
         # dx = dy = fyle['exp'].attrs['scale'] * fyle['exp'].attrs['W'] * 0.5 # 0.5 is overwrapping fraction of interrogation area in piv algorithm
         #
-
+        print '----------------'
+        print dx, dy
+        print '----------------'
         e_k2d, (kx, ky) = vel.get_energy_spectrum_nd(udata_turb, dx=dx, dy=dy)
         e_k1d, e_k1d_err, k = vel.get_energy_spectrum(udata_turb, dx=dx, dy=dy, notebook=False)
 
@@ -315,22 +317,22 @@ def get_energy_spectrum_1d_int(hdf5datapath, indices, t0=0, save=True, show_org_
             graph.title(ax_e_spec, 'Estimated $\epsilon = {0:.2E}$ ($mm^2/s^3$)'.format(Decimal(str(epsilon_sij[t0]))))
             graph.labelaxes(ax_e_time_avg, '$x$ ($mm$)', '$y$ ($mm$)')
             graph.labelaxes(ax_energy, '$x$ ($mm$)', '$y$ ($mm$)')
-            graph.labelaxes(ax_e_spec, '$k / (2 * np.pi)$ ($mm^{-1}$)', '$E(k)$ ($mm^3/s^2$)')
+            graph.labelaxes(ax_e_spec, '$k$ ($mm^{-1}$)', '$E(k)$ ($mm^3/s^2$)')
 
             graph.axvline(ax_e_spec, x=2*np.pi / box_params['L'], color='b', label='Box Size: $%d mm$' % int(box_params['L']))
             graph.axvline(ax_e_spec, x=2*np.pi / box_params['blob_size'], color='darkorange', label = 'Typical Blob Diameter: $100mm$')
             graph.axvline(ax_e_spec, x=2*np.pi / box_params['l_limit']  , color='r', label='Resolution Limit')
             graph.axvline(ax_e_spec, x=2*np.pi / box_params['eta_estimated'], color='g', label='Estimated $\eta=50 \mu m$')
 
-
             axes_e_time_avg.append(ax_e_time_avg)
             axes_energy.append(ax_energy)
             axes_e_spec.append(ax_e_spec)
             ax_e_spec.legend(loc=1, fontsize=8)
+
         e_saddoughi, k_saddoughi = vel.get_rescaled_energy_spectrum_saddoughi()
         ax_e_spec_s.plot(k_saddoughi, e_saddoughi, color='k', label='Saddoughi and Veeravalli')
         graph.tologlog(ax_e_spec_s)
-        graph.labelaxes(ax_e_spec_s, '$k\eta / (2 \pi)$', '$E(k)/(\epsilon \\nu^5)^{1/4}$')
+        graph.labelaxes(ax_e_spec_s, '$k\eta$', '$E(k)/(\epsilon \\nu^5)^{1/4}$')
         ax_e_spec_s.legend(['Rescaled with $\epsilon=10^3$ ($mm^2/s^3$)',
                             'Rescaled with $\epsilon=10^5$ ($mm^2/s^3$)',
                             'Rescaled with $\epsilon=10^7$ ($mm^2/s^3$)'])
@@ -870,7 +872,8 @@ def make_movie_espec(hdf5datapath, indices=[], framerate=10):
                   'axes.labelsize': 12,  # axes
                   'axes.titlesize': 10,
                   'xtick.labelsize': 12,  # tick
-                  'ytick.labelsize': 12}
+                  'ytick.labelsize': 12,
+                  'lines.linewidth': 5} # lines
         pylab.rcParams.update(params)
 
         # PLOT
@@ -888,6 +891,7 @@ def make_movie_espec(hdf5datapath, indices=[], framerate=10):
             time = np.asarray(pivdata[indices[i]]['t'])
 
             e_saddoughi, k_saddoughi = vel.get_rescaled_energy_spectrum_saddoughi()
+
 
             e_2d_max = np.nanmax(e_2d)
             e_k_min, e_k_max = np.nanmin(e_k), np.nanmax(e_k)
@@ -976,26 +980,26 @@ def main(hdf5datapath, t=0, overwrite=False, verbose=False, save=True):
 
 
     # ENERGY SPECTRA + TIME-AVERAGED ENERGY
-    get_energy_spectrum_1d_int(hdf5datapath, indices, t0=t, save=save, show_org_spectrum=True)
+    get_energy_spectrum_1d_int(hdf5datapath, indices, t0=t, save=save, show_org_spectrum=False)
 
     # # make a movie
     # make_movie_espec(hdf5datapath, indices)
 
 
 
-    # TIME EVOLUTION
-    get_time_evolution(hdf5datapath, indices=indices, save=save)
-
-
-    # Computationally expensive task 1: Autocorrelation functions
-    compute_autocorrelations(hdf5datapath, coarse=1.0, coarse2=0.2,  overwrite=overwrite)
-
-
-    # LENGTHSCALES AND REYNOLDS NUMBERS
-    ## TIME-EVOLUTION OF LENGTHSCALES AND REYNOLDS NUMBERS
-    compute_lengthscales(hdf5datapath, indices, overwrite=overwrite, verbose=False)
-
-    get_lengthscales(hdf5datapath, indices, t0=t, save=save)
+    # # TIME EVOLUTION
+    # get_time_evolution(hdf5datapath, indices=indices, save=save)
+    #
+    #
+    # # Computationally expensive task 1: Autocorrelation functions
+    # compute_autocorrelations(hdf5datapath, coarse=1.0, coarse2=0.2,  overwrite=overwrite)
+    #
+    #
+    # # LENGTHSCALES AND REYNOLDS NUMBERS
+    # ## TIME-EVOLUTION OF LENGTHSCALES AND REYNOLDS NUMBERS
+    # compute_lengthscales(hdf5datapath, indices, overwrite=overwrite, verbose=False)
+    #
+    # get_lengthscales(hdf5datapath, indices, t0=t, save=save)
 
     ## COMPARISON OF COMPUTATION METHODS OVER LENGTHSCALES
 

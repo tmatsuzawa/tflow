@@ -65,7 +65,7 @@ def cine2tiff(cinepath, start=0, end=None, step=1, header='im', overwrite=False)
         Name of the root folder where the images will be saved.
     post : str. Default ''
         post string to add to the title of the tiff folder name
-    OUTPUT
+
     OUTPUT
     None
     """

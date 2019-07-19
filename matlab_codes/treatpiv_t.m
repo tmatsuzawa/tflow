@@ -1,6 +1,6 @@
 %% PIV caller
 
-function treatpiv_t(Dirbase, dirlist, Dt, W, step, max, reprocess)
+function treatpiv_t(Dirbase, dirlist, Dt, W, step, maxind, bitnumber, reprocess)
 
 subratio = 1;
 Data_name = ['/pivlab_outputs/PIV_W' num2str(W) '_Dt' num2str(Dt) '_step' num2str(step) '_data'];
@@ -23,6 +23,7 @@ end
 for ind = 1:1:length(dirlist)
     directory=dirlist{ind};
     files= dir(['./' directory '/im*.tiff']);
+%     files= dir(['./' directory '/npts0050000_shape01024x01024_z50_lthickness20p00_nsteps010_zeta1p00_sz1p500_gaussian_szsig0p500_shapegaussian_lsig0p100_zplane_lsig0p100_zplane_cutoff1p000_maxi255p000_pbcTrue_*.png']);
     disp(['Found ' int2str(length(files)) ' images...'])
     amount = length(files);
     filenames={files.name};
@@ -36,11 +37,10 @@ for ind = 1:1:length(dirlist)
 %     disp(filenames)
     
     % process images till max
-    if max == 0  % Default: process all
-        max = amount - Dt;
+    if maxind == 0  % Default: process all
+        maxind = amount - Dt;
     end
-    disp(directory)
-    disp(max)
+
     %% Standard PIV Settings
     std_set = cell(12,2); % To make it more readable, let's create a "settings table"
     %Parameter                       %Setting           %Options
@@ -53,9 +53,11 @@ for ind = 1:1:length(dirlist)
     std_set{7,1}= 'Int._area_2';           std_set{7,2}=32;         % second pass window size
     std_set{8,1}= 'Int._area_3';           std_set{8,2}=16;         % third pass window size
     std_set{9,1}= 'Int._area_4';           std_set{9,2}=8;          % fourth pass window size
-    std_set{10,1}='Window_deformation';    std_set{10,2}='spline';  % '*spline' is more accurate, but slower
+    std_set{10,1}='Window_deformation';    std_set{10,2}='*spline';  % '*spline' is more accurate, but slower
     std_set{11,1}='Dt';                    std_set{11,2}=Dt;        % spacing between imageA and imageB
     std_set{12,1}='step';                  std_set{12,2}=step;      % spacing between successive image pairs
+    std_set{13,1}='repeat';                std_set{12,2}=0;      % if 1, repeat computing correlation
+    std_set{14,1}='mask_auto';             std_set{12,2}=1;      % if 1, repalce the center of matrix (3x3) by its mean
     
     % Standard image preprocessing settings
     pre_set = cell(8,1);
@@ -72,13 +74,13 @@ for ind = 1:1:length(dirlist)
     % PIV postprocessing settings
     % Parameter                       %Setting        %Descriptions
     post_set = cell(7,1);
-    post_set{1,1} = 'umin';     post_set{1,2} = -4; % minimum allowed u velocity
-    post_set{2,1} = 'umax';     post_set{2,2} =  4; % maximum allowed u velocity
-    post_set{3,1} = 'vmin';     post_set{3,2} = -4; % maximum allowed v velocity
-    post_set{4,1} = 'vmax';     post_set{4,2} =  4; % maximum allowed v velocity
+    post_set{1,1} = 'umin';     post_set{1,2} = -2; % minimum allowed u velocity
+    post_set{2,1} = 'umax';     post_set{2,2} =  2; % maximum allowed u velocity
+    post_set{3,1} = 'vmin';     post_set{3,2} = -2; % maximum allowed v velocity
+    post_set{4,1} = 'vmax';     post_set{4,2} =  2; % maximum allowed v velocity
     post_set{5,1} = 'stdthresh';post_set{5,2} =  2; % threshold for standard deviation check
     post_set{6,1} = 'epsilon';  post_set{6,2} = 0.15; % epsilon for normalized median test
-    post_set{7,1} = 'thresh';   post_set{7,2} = 1;  % threshold for normalized median test
+    post_set{7,1} = 'thresh';   post_set{7,2} = 2;  % threshold for normalized median test
     
     
     % PIV analysis loop
@@ -102,7 +104,7 @@ for ind = 1:1:length(dirlist)
     mkdir(PathName);
     
    
-    for i=1:step:(max)
+    for i=1:step:(maxind)
         %write result in a txt file
         ndigit = floor(log10(amount*subratio))+1;
 %         number = str2num(filenames{i}(3:8));% for im00000.tiff
@@ -134,10 +136,21 @@ for ind = 1:1:length(dirlist)
             disp(fullfile(['./' directory], filenames{i}))
             image1 = imread(fullfile(['./' directory], filenames{i})); % read images
             image2 = imread(fullfile(['./' directory], filenames{i+Dt}));
+            minintens_1 = min(image1(:));
+            maxintens_1 = max(image1(:));
+            minintens_2 = min(image2(:));
+            maxintens_2 = max(image2(:));
+%             minintens = min([minintens_1 minintens_2])  / (2^bitnumber);
+%             maxintens = max([maxintens_1 maxintens_2])  / (2^bitnumber);
             image1 = PIVlab_preproc (image1,pre_set{1,2},pre_set{2,2},pre_set{3,2},pre_set{4,2},pre_set{5,2},pre_set{6,2},pre_set{7,2},pre_set{8,2}); %preprocess images
             image2 = PIVlab_preproc (image2,pre_set{1,2},pre_set{2,2},pre_set{3,2},pre_set{4,2},pre_set{5,2},pre_set{6,2},pre_set{7,2},pre_set{8,2});
             [x{1},y{1},u{1},v{1},typevector{1}] = piv_FFTmulti (image1,image2,std_set{1,2},std_set{2,2},std_set{3,2},std_set{4,2},std_set{5,2},std_set{6,2},std_set{7,2},std_set{8,2},std_set{9,2},std_set{10,2});%,file_conv);
-                                                 %piv_FFTmulti (image1,image2,interrogationarea, step, subpixfinder, mask_inpt, roi_inpt,passes,int2,int3,int4,imdeform)
+%             % For new release of PIVLab
+%             image1 = PIVlab_preproc (image1,pre_set{1,2},pre_set{2,2},pre_set{3,2},pre_set{4,2},pre_set{5,2},pre_set{6,2},pre_set{7,2},pre_set{8,2}, minintens, maxintens); %preprocess images
+%             image2 = PIVlab_preproc (image2,pre_set{1,2},pre_set{2,2},pre_set{3,2},pre_set{4,2},pre_set{5,2},pre_set{6,2},pre_set{7,2},pre_set{8,2}, minintens, maxintens);
+%             [x{1},y{1},u{1},v{1},typevector{1}] = piv_FFTmulti (image1,image2,std_set{1,2},std_set{2,2},std_set{3,2},std_set{4,2},std_set{5,2},std_set{6,2},std_set{7,2},std_set{8,2},std_set{9,2},std_set{10,2},std_set{13,2},std_set{14,2});%,file_conv);
+            
+            %piv_FFTmulti (image1,image2,interrogationarea, step, subpixfinder, mask_inpt, roi_inpt,passes,int2,int3,int4,imdeform)
             
             typemask{1} = logical(not(isnan(u{1}))+not(isnan(v{1})));
             
@@ -210,8 +223,8 @@ for ind = 1:1:length(dirlist)
                 typevector_filtered(typevector{PIVresult,1}==0)=0; %restores typevector for mask
 
                 %Interpolate missing data
-                u_filtered=inpaint_nans(u_filtered,4);
-                v_filtered=inpaint_nans(v_filtered,4);
+                u_filtered=inpaint_nans(u_filtered, 4);
+                v_filtered=inpaint_nans(v_filtered, 4);
 
                 u_filt{PIVresult,1}=u_filtered;
                 v_filt{PIVresult,1}=v_filtered;
@@ -228,8 +241,8 @@ for ind = 1:1:length(dirlist)
     end
     
    % reset max to process all for the next file
-    if max == amount - Dt  % Default: process all
-        max = 0;
+    if maxind == amount - Dt  % Default: process all
+        maxind = 0;
     end
     
     disp('Done')

@@ -2,15 +2,19 @@ from scipy.stats import binned_statistic
 from tqdm import tqdm
 import numpy as np
 import sys
-import library.basics.formatarray as fa
-import library.tools.rw_data as rw
+import re
+import h5py
 import os
 import numpy.ma as ma
 from scipy.interpolate import interp2d
 from scipy.interpolate import UnivariateSpline
+from scipy import interpolate
 import scipy.integrate as integrate
 import matplotlib.pyplot as plt
 import numpy.ma as ma
+from scipy import signal
+import os
+import copy
 
 """
 Philosophy:
@@ -23,7 +27,7 @@ udata = np.stack((ux, uy))
 
 
 ########## Fundamental operations ##########
-def get_duidxj_tensor(udata, dx=1, dy=1, dz=1):
+def get_duidxj_tensor(udata, dx=1., dy=1., dz=1.):
     """
     Assumes udata has a shape (d, nrows, ncols, duration) or  (d, nrows, ncols)
     ... one can easily make udata by np.stack((ux, uy))
@@ -253,7 +257,7 @@ def div(udata):
         div_u += sij[..., d, d]
     return div_u
 
-def curl(udata):
+def curl(udata, dx=1., dy=1., dz=1.):
     """
     Computes curl of a velocity field using a rate of strain tensor
     ... For dim=3, the sign might need to be flipped... not tested
@@ -269,7 +273,7 @@ def curl(udata):
     omega: numpy array with shape (height, width, duration) (2D) or (height, width, duration) (2D)
 
     """
-    sij = get_duidxj_tensor(udata)
+    sij = get_duidxj_tensor(udata, dx=dx, dy=dy, dz=dz)
     dim = len(sij.shape) - 3  # spatial dim
     eij, gij = decompose_duidxj(sij)
     if dim == 2:
@@ -320,9 +324,9 @@ def get_energy(udata):
     energy /= 2.
     return energy
 
-def get_enstrophy(udata):
+def get_enstrophy(udata, dx=1., dy=1., dz=1.):
     dim = udata.shape[0]
-    omega = curl(udata)
+    omega = curl(udata, dx=dx, dy=dy, dz=dz)
     shape = omega.shape # shape=(dim, nrows, ncols, nstacks, duration) if nstacks=0, shape=(dim, nrows, ncols, duration)
     if dim == 2:
         enstrophy = omega ** 2 / 2.
@@ -349,7 +353,7 @@ def get_time_avg_energy(udata):
     energy_avg = np.nanmean(energy, axis=dim)
     return energy_avg
 
-def get_time_avg_enstrophy(udata):
+def get_time_avg_enstrophy(udata, dx=1., dy=1., dz=1.):
     """
     Returns time-averaged-enstrophy
     Parameters
@@ -361,7 +365,7 @@ def get_time_avg_enstrophy(udata):
 
     """
     dim = udata.shape[0]
-    enstrophy = get_enstrophy(udata)
+    enstrophy = get_enstrophy(udata, dx=dx, dy=dy, dz=dz)
     enstrophy_avg = np.nanmean(enstrophy, axis=dim)
     return enstrophy_avg
 
@@ -399,7 +403,7 @@ def get_spatial_avg_energy(udata, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None):
 
 
 def get_spatial_avg_enstrophy(udata, x0=0, x1=None, y0=0, y1=None,
-                           z0=0, z1=None):
+                           z0=0, z1=None, dx=1., dy=1., dz=1.):
     """
     Return enstrophy averaged over space
 
@@ -427,7 +431,7 @@ def get_spatial_avg_enstrophy(udata, x0=0, x1=None, y0=0, y1=None,
             z1 = udata[0].shape[2]
         udata = udata[:, y0:y1, x0:x1, z0:z1, :]
 
-    enstrophy = get_enstrophy(udata)
+    enstrophy = get_enstrophy(udata, dx=dx, dy=dy, dz=dz)
     enstrophy_vs_t = np.nanmean(enstrophy, axis=tuple(range(dim)))
     enstrophy_vs_t_err = np.nanstd(enstrophy, axis=tuple(range(dim)))
     return enstrophy_vs_t, enstrophy_vs_t_err
@@ -452,38 +456,39 @@ def fft_nd(field, dx=1, dy=1, dz=1):
     """
     dim = len(field.shape) - 1
     n_samples = 1
-    # for d in range(dim):
-    #     n_samples *= field.shape[d]
+    for d in range(dim):
+        n_samples *= field.shape[d]
 
-    field_fft = np.abs(np.fft.fftn(field, axes=range(dim)))
+    field_fft = np.fft.fftn(field, axes=range(dim))
     field_fft = np.fft.fftshift(field_fft, axes=range(dim))
-    # field_fft /= n_samples# Divide the result by the number of samples (this is because of discreteness of FFT)
+    field_fft /= n_samples# Divide the result by the number of samples (this is because of discreteness of FFT)
 
     if dim == 2:
         height, width, duration = field.shape
-        lx, ly = dx * width, dy * height
-        # volume = lx * ly
+        kx = np.fft.fftfreq(width, d=dx)  # this returns FREQUENCY (JUST INVERSE LENGTH) not ANGULAR FREQUENCY
+        ky = np.fft.fftfreq(height, d=dy)
+        kx = np.fft.fftshift(kx)
+        ky = np.fft.fftshift(ky)
+        kxx, kyy = np.meshgrid(kx, ky)
+        kxx, kyy = kxx * 2 * np.pi, kyy * 2 * np.pi # Convert inverse length into wavenumber
 
-        ky, kx = np.mgrid[-height / 2: height / 2: complex(0, height),
-                 -width / 2: width / 2: complex(0, width)]
-        kx = kx * 2 * np.pi / lx
-        ky = ky * 2 * np.pi / ly
-        return field_fft, np.asarray([kx, ky])
+        return ek, np.asarray([kxx, kyy])
 
     elif dim == 3:
         height, width, depth, duration = field.shape
-        lx, ly, lz = dx * width, dy * height, dz * depth
-        # volume = lx * ly * lz
-        ky, kx, kz = np.mgrid[-height / 2: height / 2: complex(0, height),
-                     -width / 2: width / 2: complex(0, width),
-                     -depth / 2: depth / 2: complex(0, depth)]
-        kx = kx * 2 * np.pi / (dx * width)
-        ky = ky * 2 * np.pi / (dy * height)
-        kz = kz * 2 * np.pi / (dz * height)
-        return field_fft, np.asarray([kx, ky, kz])
+        kx = np.fft.fftfreq(width, d=dx)
+        ky = np.fft.fftfreq(height, d=dy)
+        kz = np.fft.fftfreq(depth, d=dz)
+        kx = np.fft.fftshift(kx)
+        ky = np.fft.fftshift(ky)
+        kz = np.fft.fftshift(kz)
+        kxx, kyy, kzz = np.meshgrid(ky, kx, kz)
+        kxx, kyy, kzz = kxx * 2 * np.pi, kyy * 2 * np.pi, kzz * 2 * np.pi
+
 
 def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
-                           z0=0, z1=None, dx=None, dy=None, dz=None):
+                           z0=0, z1=None, dx=None, dy=None, dz=None,
+                           window=None, correct_signal_loss=True):
 
     """
     Returns nd energy spectrum from velocity data
@@ -523,6 +528,10 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
         print 'ERROR: dx or dy is not provided! dx is grid spacing in real space.'
         print '... k grid will be computed based on this spacing! Please provide.'
         raise ValueError
+    if x0 is None:
+        x0 = 0
+    if y0 is None:
+        y0 = 0
     if x1 is None:
         x1 = udata[0].shape[1]
     if y1 is None:
@@ -530,7 +539,7 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
 
     dim = len(udata)
     udata = fix_udata_shape(udata)
-    if dim==2:
+    if dim == 2:
         udata = udata[:, y0:y1, x0:x1, :]
     elif dim == 3:
         if z1 is None:
@@ -545,8 +554,35 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
     for d in range(dim):
         n_samples *= udata.shape[d+1]
 
-    ukdata = np.fft.fftn(udata, axes=range(1, dim+1))
-    ukdata = np.fft.fftshift(ukdata, axes=range(1, dim+1))
+    # Apply a window to get lean FFT spectrum for aperiodic signals
+    duration = udata.shape[-1]
+    if window is not None:
+        if dim == 2:
+            xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+            windows =get_window_radial(xx, yy, wtype=window, duration=duration)
+            # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
+            udata_tapered = np.empty_like(udata)
+            for i in range(dim):
+                udata_tapered[i, ...] = udata[i, ...] * windows
+            # udata_tapered = udata * windows
+        elif dim == 3:
+            xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+            windows = get_window_radial(xx, yy, zz, wtype=window, duration=duration)
+            # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
+            udata_tapered = np.empty_like(udata)
+            for i in range(dim):
+                udata_tapered[i, ...] = udata[i, ...] * windows
+            # udata_tapered = udata * windows
+        ukdata = np.fft.fftn(udata_tapered, axes=range(1, dim + 1))
+        ukdata = np.fft.fftshift(ukdata, axes=range(1, dim + 1))
+
+        energy, energy_tapered = get_energy(udata), get_energy(udata_tapered)
+        signal_intensity_losses = np.nanmean(energy_tapered, axis=tuple(range(dim))) / np.nanmean(energy, axis=tuple(range(dim)))
+
+    else:
+        ukdata = np.fft.fftn(udata, axes=range(1, dim+1))
+        ukdata = np.fft.fftshift(ukdata, axes=range(1, dim+1))
+        signal_intensity_losses = np.ones(duration)
 
     # compute E(k)
     ek = np.zeros(ukdata[0].shape)
@@ -555,33 +591,63 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
         ek[...] += np.abs(ukdata[i, ...]) ** 2 / n_samples
     ek /= 2.
 
+
+
+    if correct_signal_loss:
+        if window is not None:
+            if dim == 2:
+                xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+                window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
+                signal_intensity_loss = np.nanmean(window_arr)
+            elif dim == 3:
+                xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+                window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
+                signal_intensity_loss = np.nanmean(window_arr)
+        else:
+            signal_intensity_loss = 1.
+        # ek /= signal_intensity_loss
+        for t in range(duration):
+            # print signal_intensity_losses[t]
+            ek[..., t] = ek[..., t] / signal_intensity_losses[t]
     if dim == 2:
         height, width, duration = ek.shape
-        kx = np.fft.fftfreq(width, d=dx)  # this returns FREQUENCY (JUST INVERSE LENGTH) not ANGULAR FREQUENCY
-        ky = np.fft.fftfreq(height, d=dy)
+        kx = np.fft.fftfreq(width, d=dx) * 2 * np.pi  # ANGULAR FREQUENCY (WAVENUMBER) NOT FREQ(INVERSE LENGTH)
+        ky = np.fft.fftfreq(height, d=dy) * 2 * np.pi
         kx = np.fft.fftshift(kx)
         ky = np.fft.fftshift(ky)
         kxx, kyy = np.meshgrid(kx, ky)
-        kxx, kyy = kxx * 2 * np.pi, kyy * 2 * np.pi # Convert inverse length into wavenumber
+        kxx, kyy = kxx, kyy
+
+        # Output the SPECTRAL DENSITY
+        # ... DFT outputs the integrated density (which is referred as POWER) in a pixel(delta_kx * delta_ky)
+        # ... But energy spectrum is indeed plotting the SPECTRAL DENSITY!
+        deltakx, deltaky = kx[1] - kx[0], ky[1] - ky[0]
+        ek = ek / (deltakx * deltaky)
 
         return ek, np.asarray([kxx, kyy])
 
     elif dim == 3:
         height, width, depth, duration = ek.shape
-        kx = np.fft.fftfreq(width, d=dx)
-        ky = np.fft.fftfreq(height, d=dy)
-        kz = np.fft.fftfreq(depth, d=dz)
+        kx = np.fft.fftfreq(width, d=dx) * 2 * np.pi
+        ky = np.fft.fftfreq(height, d=dy) * 2 * np.pi
+        kz = np.fft.fftfreq(depth, d=dz) * 2 * np.pi
         kx = np.fft.fftshift(kx)
         ky = np.fft.fftshift(ky)
         kz = np.fft.fftshift(kz)
         kxx, kyy, kzz = np.meshgrid(ky, kx, kz)
-        kxx, kyy, kzz = kxx * 2 * np.pi, kyy * 2 * np.pi, kzz * 2 * np.pi
+        kxx, kyy, kzz = kxx, kyy, kzz
+
+        # Output the SPECTRAL DENSITY
+        # ... DFT outputs the integrated density (which is referred as POWER) in a pixel(delta_kx * delta_ky)
+        # ... But energy spectrum is indeed plotting the SPECTRAL DENSITY!
+        deltakx, deltaky, deltakz = kx[1] - kx[0], ky[1] - ky[0], kz[1] - kz[0]
+        ek = ek / (deltakx * deltaky * deltakz)
 
         return ek, np.asarray([kxx, kyy, kzz])
 
 def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
-                           z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None, remove_undersampled_region=True,
-                        notebook=True):
+                           z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
+                        window=None, remove_undersampled_region=True, cc=1.75, notebook=True):
     """
     Returns 1D energy spectrum from velocity field data
 
@@ -630,84 +696,54 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
         '...Reduced data using a given mask'
         return compressed_data
 
-    def convert_2d_spec_to_1d(s_e, kx, ky, nkout=40):
-        """Convert a 2d spectrum s_e computed over a grid of k values kx and ky into a 1d spectrum computed over k
-
+    def convert_nd_spec_to_1d(e_ks, ks, nkout=None, cc=1.75):
+        """
+        Convert the results of get_energy_spectrum_nd() into a 1D spectrum
+        ... This is actually a tricky problem.
+        Importantly, this will output the SPECTRAL DENSITY,
+        not power which is integrated spectrated density in a pixel/voxel (delta_kx, delta_ky.)
+        ... Ask Takumi for derivation. The derivation goes like this.
+        ...... 1. Start with the Parseval's theorem.
+        ...... 2. Write the discretized equation about the TKE: Average TKE = sum deltak * E(k)
+        ...... 3. Using 1, write down the avg TKE
+        ...... 4. Equate 2 and 3. You get e_k1d * jacobian / (n_samples * deltak)
+        ......   IF deltak = deltakr where deltakr = np.sqrt(deltakx**2 + deltaky**2) for 2D
+        ......   where e_k1d is just a histogram value obtained from the DFT result (i.e. POWER- spectral density integrated over a px)
+        ...... 5. Finally, convert this into the SPECTRAL DENSITY. This is two-fold.
+        ...... 5.1.
+        ......   e_k1d * jacobian / (n_samples * deltak) is not necessarily the correct density if deltak is not equal to deltakr.
+        ......   This is because e_k1d comes from the histogram of the input velocity field.
+        ......   One can show that the correction is just (deltak / deltakr) ** dim
+        ...... 5.2
+        ......   After 5.1, this finally the integrated power between k and k + deltak
+        ......   Now divide this by deltak to get the spectral density.
         Parameters
         ----------
-        s_e : n x m float array
-            The fourier transform intensity pattern to convert to 1d
-        kx : n x m float array
-            input wavenumbers' x components
-        ky : n x m float array
-            input wavenumbers' y components, as np.array([[y0, y0, y0, y0, ...], [y1, y1, y1, y1, ...], ...]])
-        nkout : int
-            approximate length of the k vector for output; will be larger since k values smaller than 1/L will be removed
-            number of bins for the output k vector
+        e_ks
+        ks
+        nkout
 
         Returns
         -------
-        s_k :
-        kbin :
+
         """
-        nx, ny,  nt = np.shape(s_e)
-
-        kk = np.sqrt(np.reshape(kx ** 2 + ky ** 2, (nx * ny)))
-        kx_1d = np.sqrt(np.reshape(kx ** 2, (nx * ny)))
-        ky_1d = np.sqrt(np.reshape(ky ** 2, (nx * ny)))
-
-        s_e = np.reshape(s_e, (nx * ny, nt))
-        # sort k by values
-        #    indices=np.argsort(k)
-        #    s_e=s_e[indices]
-
-        nk, nbin = np.histogram(kk, bins=nkout)
-        #     print 'Fourier.spectrum_2d_to_1d_convert(): nkout = ', nkout
-        #     print 'Fourier.spectrum_2d_to_1d_convert(): nbin = ', nbin
-        nn = len(nbin) - 1
-
-        # remove too small values of kx or ky (components aligned with the mesh directions)
-        epsilon = nbin[0]
-        kbin = np.zeros(nn)
-        indices = np.zeros((nx * ny, nn), dtype=bool)
-        jj = 0
-        okinds_nn = []
-        for ii in range(nn):
-            indices[:, ii] = np.logical_and(np.logical_and(kk >= nbin[ii], kk < nbin[ii + 1]),
-                                            np.logical_and(np.abs(kx_1d) >= epsilon, np.abs(ky_1d) >= epsilon))
-
-            # If there are any values to add, add them to kbin (prevents adding values less than epsilon
-            if indices[:, ii].any():
-                kbin[jj] = np.mean(kk[indices[:, ii]])
-                okinds_nn.append(ii)
-                jj += 1
-
-        s_k = np.zeros((nn, nt))
-
-        for t in range(nt):
-            s_part = s_e[:, t]
-            jj = 0
-            for ii in okinds_nn:
-                s_k[jj, t] = np.nanmean(s_part[indices[:, ii]])
-                jj += 1
-
-        kbin = ma.masked_equal(kbin, 0)
-        s_k = ma.masked_equal(s_k, 0)
-        # kbin = kbin.compressed()
-
-        return s_k, kbin
-
-    def convert_nd_spec_to_1d(e_ks, ks, nkout=None):
         dim = ks.shape[0]
         duration = e_ks.shape[-1]
+        if dim == 2:
+            deltakx, deltaky = ks[0, 0, 1] - ks[0, 0, 0], ks[1, 1, 0] - ks[1, 0, 0]
+            e_ks *= deltakx * deltaky # use the raw DFT outputs (power=integrated density over a px)
+            deltakr = np.sqrt(deltakx**2 + deltaky**2) # radial k spacing of the velocity field
+        if dim == 3:
+            deltakx, deltaky, deltakz = ks[0, 0, 1, 0] - ks[0, 0, 0, 0], ks[1, 1, 0, 0] - ks[1, 0, 0, 0], ks[2, 0, 0, 1] - ks[2, 0, 0, 0]
+            e_ks *= deltakx * deltaky * deltakz # use the raw DFT outputs (power=integrated density over a px)
+            deltakr = np.sqrt(deltakx ** 2 + deltaky ** 2 + deltakz ** 2)  # radial k spacing of the velocity field
         kk = np.zeros((ks.shape[1:]))
         for i in range(dim):
             kk += ks[i, ...] ** 2
         kk = np.sqrt(kk) # radial k
 
         if nkout is None:
-            nkout = int(np.max(ks.shape[1:]) * 0.7)
-        nkout += 1 # Compensate for throwing away the k=0 component at the end
+            nkout = int(np.max(ks.shape[1:]) * 0.8)
         shape = (nkout, duration)
 
         e_k1ds = np.empty(shape)
@@ -715,46 +751,65 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
         k1ds = np.empty(shape)
 
         if remove_undersampled_region:
-            kx_max, ky_max = np.max(ks[0, ...]), np.max(ks[1, ...])
-            k_max = np.min([kx_max, ky_max])
+            kx_max, ky_max = np.nanmax(ks[0, ...]), np.nanmax(ks[1, ...])
+            k_max = np.nanmin([kx_max, ky_max])
             if dim == 3:
-                kz_max = np.max(ks[2, ...])
-                k_max = np.min([k_max, kz_max])
-
+                kz_max = np.nanmax(ks[2, ...])
+                k_max = np.nanmin([k_max, kz_max])
 
         for t in range(duration):
             # flatten arrays to feed to binned_statistic\
             kk_flatten, e_knd_flatten = kk.flatten(), e_ks[..., t].flatten()
+
             if remove_undersampled_region:
                 mask = np.abs(kk_flatten) > k_max
                 # print len(kk_flatten)
                 kk_flatten = delete_masked_elements(kk_flatten, mask)
                 e_knd_flatten = delete_masked_elements(e_knd_flatten, mask)
-
-
             # get a histogram
-            k1d, _, _ = binned_statistic(kk_flatten, kk_flatten, statistic='mean', bins=nkout)
+            k_means, k_edges, binnumber = binned_statistic(kk_flatten, kk_flatten, statistic='mean', bins=nkout)
+            k_binwidth = (k_edges[1] - k_edges[0])
+            k1d = k_edges[1:] - k_binwidth / 2
             e_k1d, _, _ = binned_statistic(kk_flatten, e_knd_flatten, statistic='mean', bins=nkout)
             e_k1d_err, _, _ = binned_statistic(kk_flatten, e_knd_flatten, statistic='std', bins=nkout)
+
+            # # WEIGHTED AVERAGE
+            # ke_k1d, _, _ = binned_statistic(kk_flatten, kk_flatten * e_knd_flatten, statistic='mean', bins=nkout)
+            # e_k1d = ke_k1d / k1d
+            # ke_k1d_err, _, _ = binned_statistic(kk_flatten, kk_flatten * e_knd_flatten, statistic='std', bins=nkout)
+            # e_k1d_err = ke_k1d_err / k1d
+
 
             # One must fix the power by some numerical factor due to the DFT and the definition of E(k)
             n_samples = len(kk_flatten)
             deltak = k1d[1] - k1d[0]
+
             if dim == 2:
                 jacobian = 2 * np.pi * k1d
             elif dim == 3:
                 jacobian = 4 * np.pi * k1d ** 2
 
             # Insert to a big array
+            # ... A quick derivation of this math is given in the docstring.
             k1ds[..., t] = k1d
-            e_k1ds[..., t] = e_k1d * jacobian / (n_samples * deltak)
-            e_k1d_errs[..., t] = e_k1d_err * jacobian / (n_samples * deltak)
+            # OLD stuff
+            # e_k1ds[..., t] = e_k1d * jacobian / (n_samples * deltak)
+            # e_k1d_errs[..., t] = e_k1d_err * jacobian / (n_samples * deltak)
+            # print deltak
+            # Old stuff 2: scaling that works
+            # e_k1ds[..., t] = e_k1d * jacobian / (n_samples * deltak) * (deltak / deltakr) ** dim / deltak
+            # e_k1d_errs[..., t] = e_k1d_err * jacobian / (n_samples * deltak) * (deltak / deltakr) ** dim / deltak
+            # print deltak,  deltakr, (deltak / deltakr)
+            e_k1ds[..., t] = e_k1d * jacobian / (n_samples * deltak) * (deltak / deltakr) ** 2 / deltak * cc
+            e_k1d_errs[..., t] = e_k1d_err * jacobian / (n_samples * deltak) * (deltak / deltakr) ** 2 / deltak * cc
 
+            # print deltak / deltakr
 
         return e_k1ds, e_k1d_errs, k1ds
 
     dim, duration = len(udata), udata.shape[-1]
-    e_ks, ks = get_energy_spectrum_nd(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz)
+
+    e_ks, ks = get_energy_spectrum_nd(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz, window=window)
     # OLD: only capable to convert 2d spectra to one
     # if dim == 3:
     #     kx, ky, kz = ks[0], ks[1], ks[2]
@@ -769,16 +824,14 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
     # if dim == 3:
     #     e_ks = e_ks[:, :, z, :]
     # e_k, kk = convert_2d_spec_to_1d(e_ks, kx, ky, nkout=nkout)
+    e_k, e_k_err, kk = convert_nd_spec_to_1d(e_ks, ks, nkout=nkout, cc=cc)
 
-    e_k, e_k_err, kk = convert_nd_spec_to_1d(e_ks, ks, nkout=nkout)
-
-    ##### NORMALIZATION IS NO LONGER NEEDED ####
-    # The current code
+    # #### NORMALIZATION IS NO LONGER NEEDED ####
     # # normalization
     # energy_avg, energy_avg_err = get_spatial_avg_energy(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
     #
     # for t in range(duration):
-    #     I = np.trapz(e_k[1:, t], kk[1:, t])
+    #     I = np.trapz(e_k[0:, t], kk[0:, t])
     #     print I
     #     N = I / energy_avg[t] # normalizing factor
     #     e_k[:, t] /= N
@@ -787,11 +840,11 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
     if notebook:
         from tqdm import tqdm as tqdm
 
-    return e_k[1:], e_k_err[1:], kk[1:]
+    return e_k[0:], e_k_err[0:], kk[0:]
 
 def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
                            z0=0, z1=None, dx=None, dy=None, dz=None,
-                        notebook=True):
+                           window=None, correct_signal_loss=True, notebook=True):
     """
     Returns 1D energy spectrum from velocity field data
 
@@ -815,135 +868,31 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
     -------
 
     """
-    def delete_masked_elements(data, mask):
-        """
-        Deletes elements of data using mask, and returns a 1d array
-        Parameters
-        ----------
-        data: N-d array
-        mask: N-d array, bool
-
-        Returns
-        -------
-        compressed_data
-
-        """
-        data_masked = ma.array(data, mask=mask)
-        compressed_data = data_masked.compressed()
-        '...Reduced data using a given mask'
-        return compressed_data
-
-    def convert_2d_spec_to_1d(s_e, kx, ky, nkout=40):
-        """Convert a 2d spectrum s_e computed over a grid of k values kx and ky into a 1d spectrum computed over k
-
-        Parameters
-        ----------
-        s_e : n x m float array
-            The fourier transform intensity pattern to convert to 1d
-        kx : n x m float array
-            input wavenumbers' x components
-        ky : n x m float array
-            input wavenumbers' y components, as np.array([[y0, y0, y0, y0, ...], [y1, y1, y1, y1, ...], ...]])
-        nkout : int
-            approximate length of the k vector for output; will be larger since k values smaller than 1/L will be removed
-            number of bins for the output k vector
-
-        Returns
-        -------
-        s_k :
-        kbin :
-        """
-        nx, ny,  nt = np.shape(s_e)
-
-        kk = np.sqrt(np.reshape(kx ** 2 + ky ** 2, (nx * ny)))
-        kx_1d = np.sqrt(np.reshape(kx ** 2, (nx * ny)))
-        ky_1d = np.sqrt(np.reshape(ky ** 2, (nx * ny)))
-
-        s_e = np.reshape(s_e, (nx * ny, nt))
-        # sort k by values
-        #    indices=np.argsort(k)
-        #    s_e=s_e[indices]
-
-        nk, nbin = np.histogram(kk, bins=nkout)
-        #     print 'Fourier.spectrum_2d_to_1d_convert(): nkout = ', nkout
-        #     print 'Fourier.spectrum_2d_to_1d_convert(): nbin = ', nbin
-        nn = len(nbin) - 1
-
-        # remove too small values of kx or ky (components aligned with the mesh directions)
-        epsilon = nbin[0]
-        kbin = np.zeros(nn)
-        indices = np.zeros((nx * ny, nn), dtype=bool)
-        jj = 0
-        okinds_nn = []
-        for ii in range(nn):
-            indices[:, ii] = np.logical_and(np.logical_and(kk >= nbin[ii], kk < nbin[ii + 1]),
-                                            np.logical_and(np.abs(kx_1d) >= epsilon, np.abs(ky_1d) >= epsilon))
-
-            # If there are any values to add, add them to kbin (prevents adding values less than epsilon
-            if indices[:, ii].any():
-                kbin[jj] = np.mean(kk[indices[:, ii]])
-                okinds_nn.append(ii)
-                jj += 1
-
-        s_k = np.zeros((nn, nt))
-
-        for t in range(nt):
-            s_part = s_e[:, t]
-            jj = 0
-            for ii in okinds_nn:
-                s_k[jj, t] = np.nanmean(s_part[indices[:, ii]])
-                jj += 1
-
-        kbin = ma.masked_equal(kbin, 0)
-        s_k = ma.masked_equal(s_k, 0)
-        # kbin = kbin.compressed()
-
-        return s_k, kbin
-
-    def convert_nd_spec_to_1d(e_ks, ks, nkout=None):
-        dim = ks.shape[0]
-        duration = e_ks.shape[-1]
-        kk = np.zeros((ks.shape[1:]))
-        for i in range(dim):
-            kk += ks[i, ...] ** 2
-        kk = np.sqrt(kk) # radial k
-
-        if nkout is None:
-            nkout = np.max(ks.shape[1:])
-        nkout += 1 # Compensate for throwing away the k=0 component at the end
-        shape = (nkout, duration)
-
-        e_k1ds = np.empty(shape)
-        e_k1d_errs = np.empty(shape)
-        k1ds = np.empty(shape)
-
-
-        for t in range(duration):
-            # flatten arrays to feed to binned_statistic\
-
-            kk_flatten, e_knd_flatten = kk.flatten(), e_ks[..., t].flatten()
-            # get a histogram
-            k1d, _, _ = binned_statistic(kk_flatten, kk_flatten, statistic='mean', bins=nkout)
-            e_k1d, _, _ = binned_statistic(kk_flatten, e_knd_flatten, statistic='mean', bins=nkout)
-            e_k1d_err, _, _ = binned_statistic(kk_flatten, e_knd_flatten, statistic='std', bins=nkout)
-
-            # Insert to a big array
-            k1ds[..., t] = k1d
-            e_k1ds[..., t] = e_k1d
-            e_k1d_errs[..., t] = e_k1d_err
-
-        return e_k1ds, e_k1d_errs, k1ds
-
+    if x0 is None:
+        x0 = 0
+    if y0 is None:
+        y0 = 0
+    if x1 is None:
+        x1 = udata[0].shape[1]
+    if y1 is None:
+        y1 = udata[0].shape[0]
 
     udata = fix_udata_shape(udata)
     dim, duration = len(udata), udata.shape[-1]
     if dim == 2:
-        height, width, duration = udata[0].shape
         ux, uy = udata[0, y0:y1, x0:x1, :],  udata[1, y0:y1, x0:x1, :]
+        height, width, duration = ux.shape
+        udata_tmp = udata[:, y0:y1, x0:x1, :]
     elif dim == 3:
-        height, width, depth, duration = udata[0].shape
         ux, uy, uz = udata[0, y0:y1, x0:x1, z0:z1, :], udata[1, y0:y1, x0:x1, z0:z1, :], udata[2, y0:y1, x0:x1, z0:z1, :]
+        height, width, depth, duration = ux.shape
+        udata_tmp = udata[:, y0:y1, x0:x1, z0:z1, :]
+    else:
+        raise ValueError('... Error: Invalid dimension is given. Use 2 or 3 for the number of spatial dimensions. ')
 
+    n_samples = 1
+    for i in range(dim):
+        n_samples *= ux.shape[i]
     if k == 'kx':
         ax_ind = 1 # axis number to take 1D DFT
         n = width
@@ -966,30 +915,82 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
         d = dz
         ax_ind_for_avg = (0, 1)  # axis number(s) to take statistics  (along x and y)
 
+    # Apply hamming window to get lean FFT spectrum for aperiodic signals
+    if window is not None:
+        duration = udata.shape[-1]
+        if dim == 2:
+            xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+            windows = get_window_radial(xx, yy, wtype=window, duration=duration, x0=x0, x1=x1, y0=y0, y1=y1)
+            # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
+            udata_tapered = np.empty_like(udata_tmp)
+            for i in range(dim):
+                udata_tapered[i, ...] = udata_tmp[i, ...] * windows
+            ux, uy = udata_tapered
+        elif dim == 3:
+            xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+            windows = get_window_radial(xx, yy, zz, wtype=window, duration=duration, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
+            # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
+            udata_tapered = np.empty_like(udata_tmp)
+            for i in range(dim):
+                udata_tapered[i, ...] = udata_tmp[i, ...] * windows
+            ux, uy, uz = udata_tapered
+
+    if correct_signal_loss:
+        if window is not None:
+            if dim == 2:
+                xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+                window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
+                signal_intensity_loss = np.nanmean(window_arr)
+            elif dim == 3:
+                xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+                window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
+                signal_intensity_loss = np.nanmean(window_arr)
+        else:
+            signal_intensity_loss = 1.
+
     # E11
-    ux_k = np.fft.fft(ux, axis=ax_ind) / n
+    ux_k = np.fft.fft(ux, axis=ax_ind) / np.sqrt(n_samples)
     e11_nd = np.abs(ux_k * np.conj(ux_k))
     e11 = np.nanmean(e11_nd, axis=ax_ind_for_avg)[:n/2, :]
     e11_err = np.nanstd(e11_nd, axis=ax_ind_for_avg)[:n/2, :]
 
     # E22
-    uy_k = np.fft.fft(uy, axis=ax_ind) / n
+    uy_k = np.fft.fft(uy, axis=ax_ind) / np.sqrt(n_samples)
     e22_nd = np.abs(uy_k * np.conj(uy_k))
     e22 = np.nanmean(e22_nd, axis=ax_ind_for_avg)[:n/2, :]
     e22_err = np.nanstd(e22_nd, axis=ax_ind_for_avg)[:n/2, :]
 
+    # Get an array for wavenumber
     k = np.fft.fftfreq(n, d=d)[:n/2] * 2 * np.pi # shape=(n, duration)
-
+    deltak = k[1] - k[0]
     if dim == 3:
         # E33
-        uz_k = np.fft.fft(uz, axis=ax_ind) / n
+        uz_k = np.fft.fft(uz, axis=ax_ind) / np.sqrt(n_samples)
         e33_nd = np.abs(uz_k * np.conj(uz_k))
         e33 = np.nanmean(e33_nd, axis=ax_ind_for_avg)[:n/2, :]
         e33_err = np.nanstd(e33_nd, axis=ax_ind_for_avg)[:n/2, :]
-        return np.array([e11, e22, e33]), np.array([e11_err, e22_err, e33_err]), k
-    else:
-        return np.array([e11, e22]), np.array([e11_err, e22_err]), k
 
+        eiis, eii_errs = np.array([e11, e22, e33]), np.array([e11_err, e22_err, e33_err])
+    elif dim == 2:
+        eiis, eii_errs = np.array([e11, e22]), np.array([e11_err, e22_err])
+    else:
+        raise ValueError('... 1d spectrum: Check the dimension of udata! It must be 2 or 3!')
+
+    # Get the correct power
+    # ... DFT outputs the integrated power between k and k + deltak
+    # ... One must divide the integrated power by deltak to account for this.
+    for i in range(dim):
+        eiis[i] /= deltak
+        eii_errs[i] /= deltak
+
+    # Windowing causes the loss of the signal (energy.)
+    # ... This compensates for the loss.
+    if correct_signal_loss:
+        for i in range(dim):
+            eiis[i] /= signal_intensity_loss
+            eii_errs[i] /= signal_intensity_loss
+
+    return eiis, eii_errs, k
 
 def get_dissipation_spectrum(udata, nu, x0=0, x1=None, y0=0, y1=None,
                            z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
@@ -1026,11 +1027,13 @@ def get_dissipation_spectrum(udata, nu, x0=0, x1=None, y0=0, y1=None,
 
 def get_rescaled_energy_spectrum(udata, epsilon=10**5, nu=1.0034,x0=0, x1=None,
                                  y0=0, y1=None, z0=0, z1=None,
-                                 dx=1, dy=1, dz=1, nkout=None, notebook=True):
+                                 dx=1, dy=1, dz=1, nkout=None,
+                                 window=None, notebook=True):
     # get energy spectrum
     e_k, e_k_err, kk = get_energy_spectrum(udata, x0=x0, x1=x1,
                                  y0=y0, y1=y1, z0=z0, z1=z1,
-                                 dx=dx, dy=dy, dz=dz, nkout=nkout, notebook=notebook)
+                                 dx=dx, dy=dy, dz=dz, nkout=nkout, window=window,
+                                 notebook=notebook)
 
     # Kolmogorov length scale
     eta = (nu ** 3 / epsilon) ** (0.25)  # mm
@@ -1047,26 +1050,40 @@ def get_rescaled_energy_spectrum(udata, epsilon=10**5, nu=1.0034,x0=0, x1=None,
 
     return e_k_norm, e_k_err_norm, k_norm
 
-def get_1d_rescaled_energy_spectrum(udata, epsilon=10**5, nu=1.0034, x0=0, x1=None,
+def get_1d_rescaled_energy_spectrum(udata, epsilon=None, nu=1.0034, x0=0, x1=None,
                                  y0=0, y1=None, z0=0, z1=None,
-                                 dx=1, dy=1, dz=1, notebook=True):
+                                 dx=1, dy=1, dz=1, notebook=True, window=None, correct_signal_loss=True):
     dim = len(udata)
+    duration = udata.shape[-1]
     # get energy spectrum
     eii_arr, eii_err_arr, k1d = get_1d_energy_spectrum(udata, x0=x0, x1=x1,
                                  y0=y0, y1=y1, z0=z0, z1=z1,
-                                 dx=dx, dy=dy, dz=dz, notebook=notebook)
+                                 dx=dx, dy=dy, dz=dz,
+                                 window=window, correct_signal_loss=correct_signal_loss, notebook=notebook)
+    if epsilon is None:
+        epsilon = get_epsilon_using_sij(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz)
+
 
     # Kolmogorov length scale
-    eta = (nu ** 3 / epsilon) ** (0.25)  # mm
+    eta = (nu ** 3 / epsilon) ** 0.25  # mm
     # print 'dissipation rate, Kolmogorov scale: ', epsilon, eta
 
-    k_norm = k1d * eta
+    shape = (len(k1d), duration)
+    k_norm = np.empty(shape)
     eii_arr_norm = np.empty_like(eii_arr)
     eii_err_arr_norm = np.empty_like(eii_err_arr)
 
+
+    for t in range(duration):
+        try:
+            k_norm[:, t] = k1d * eta[t]
+        except:
+            k_norm[:, t] = k1d * eta
+
+
     for i in range(dim):
-        eii_arr_norm = eii_arr[...] / ((epsilon * nu ** 5.) ** (0.25))
-        eii_err_arr_norm = eii_err_arr[...] / ((epsilon * nu ** 5.) ** (0.25))
+        eii_arr_norm = eii_arr[...] / ((epsilon * nu ** 5.) ** 0.25)
+        eii_err_arr_norm = eii_err_arr[...] / ((epsilon * nu ** 5.) ** 0.25)
 
     return eii_arr_norm, eii_err_arr_norm, k_norm
 
@@ -1131,8 +1148,145 @@ def scale_energy_spectrum(e_k, kk, epsilon=10**5, nu=1.0034, e_k_err=None):
     else:
         return e_k_norm, k_norm
 
+def get_large_scale_vel_field(udata, kmax, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, window=None,
+                              dx=None, dy=None, dz=None):
+    """
+    Returns a velocity field which satisfies k = sqrt(kx^2 + ky^2) < kmax in the original vel. field (udata)
+    Parameters
+    ----------
+    udata: nd array
+    ... velocity field data with shape (# of components, physical dimensions (width x height x depth), duration)
+    kmax: float
+    ... value of k below which spectrum is kept. i.e. cutoff k for the low-pass filter
+    x0: int
+    ... index used to specify a region of a vel. field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
+    x1: int
+    ... index used to specify a region of a vel. field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
+    y0: int
+    ... index used to specify a region of a vel. field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
+    y1: int
+    ... index used to specify a region of a vel. field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
+    z0: int
+    ... index used to specify a region of a vel. field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
+    z1: int
+    ... index used to specify a region of a vel. field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
+    window: 2d/3d nd array
+    ... window used to make input data periodic to surpress spectral leakage in FFT
+    dx: float
+    ... x spacing. used to compute k
+    dy: float
+    ... y spacing. used to compute k
+    dz: float
+    ... z spacing. used to compute k
+
+    Returns
+    -------
+    udata_ifft: nd array
+    ... low-pass filtered velocity field data
+    coords: nd array
+    ... if dim == 2, returns np.asarray([xgrid, ygrid])
+    ... if dim == 3, returns np.asarray([xgrid, ygrid, zgrid])
+    """
+    if dx is None or dy is None:
+        print 'ERROR: dx or dy is not provided! dx is grid spacing in real space.'
+        print '... k grid will be computed based on this spacing! Please provide.'
+        raise ValueError
+    if x1 is None:
+        x1 = udata[0].shape[1]
+    if y1 is None:
+        y1 = udata[0].shape[0]
+
+    dim = len(udata)
+    udata = fix_udata_shape(udata)
+    if dim == 2:
+        xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+        coords = np.asarray([xx[y0:y1, x0:x1], yy[y0:y1, x0:x1]])
+        udata = udata[:, y0:y1, x0:x1, :]
+    elif dim == 3:
+        if z1 is None:
+            z1 = udata[0].shape[2]
+        if dz is None:
+            print 'ERROR: dz is not provided! dx is grid spacing in real space.'
+            print '... k grid will be computed based on this spacing! Please provide.'
+            raise ValueError
+        xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+        coords = np.asarray([xx[y0:y1, x0:x1, z0:z1], yy[y0:y1, x0:x1, z0:z1], zz[y0:y1, x0:x1, z0:z1]])
+        udata = udata[:, y0:y1, x0:x1, z0:z1, :]
+
+    n_samples = 1
+    for d in range(dim):
+        n_samples *= udata.shape[d + 1]
+
+    # Apply a window to suppress spectral leaking
+    if window is not None:
+        duration = udata.shape[-1]
+        if dim == 2:
+            windows = get_window_radial(xx, yy, wtype=window, duration=duration)
+            udata_tapered = udata * windows
+        elif dim == 3:
+            windows = get_window_radial(xx, yy, zz=zz, wtype=window, duration=duration)
+            udata_tapered = udata * windows
+        else:
+            raise ValueError('... dimension of udata must be 2 or 3!')
+        ukdata = np.fft.fftn(udata_tapered, axes=range(1, dim + 1))
+        ukdata = np.fft.fftshift(ukdata, axes=range(1, dim + 1))
+    else:
+        ukdata = np.fft.fftn(udata, axes=range(1, dim + 1))
+        ukdata = np.fft.fftshift(ukdata, axes=range(1, dim + 1))
+
+    if dim == 2:
+        ncomp, height, width, duration = udata.shape
+        # k space grid
+        kx = np.fft.fftfreq(width, d=dx)  # this returns FREQUENCY (JUST INVERSE LENGTH) not ANGULAR FREQUENCY
+        ky = np.fft.fftfreq(height, d=dy)
+        kx = np.fft.fftshift(kx)
+        ky = np.fft.fftshift(ky)
+        kxx, kyy = np.meshgrid(kx, ky)
+        kxx, kyy = kxx * 2 * np.pi, kyy * 2 * np.pi # Convert inverse length into wavenumber
+        ks = np.asarray([kxx, kyy])
+    elif dim == 3:
+        ncomp, height, width, depth, duration = udata.shape
+        # k space grid
+        kx = np.fft.fftfreq(width, d=dx)
+        ky = np.fft.fftfreq(height, d=dy)
+        kz = np.fft.fftfreq(depth, d=dz)
+        kx = np.fft.fftshift(kx)
+        ky = np.fft.fftshift(ky)
+        kz = np.fft.fftshift(kz)
+        kxx, kyy, kzz = np.meshgrid(ky, kx, kz)
+        kxx, kyy, kzz = kxx * 2 * np.pi, kyy * 2 * np.pi, kzz * 2 * np.pi
+        ks = np.asarray([kxx, kyy, kzz])
+
+    # Make radial k array
+    kr = np.zeros_like(kxx)
+    for i in range(dim):
+        kr += ks[i] ** 2
+    kr = np.sqrt(kr)
+    # Make a mask such that kr > kmax
+    mask = kr > kmax
+    print '# of Masked Elements / total: %d / %d = %.4f' % (np.sum(mask), n_samples, np.sum(mask) / float(n_samples))
+    # Let uk array into a masked array
+    ukdata = ma.asarray(ukdata)
+
+    mask = np.repeat(mask[..., np.newaxis], duration, axis=dim)
+    mask = np.repeat(mask[np.newaxis, ...], dim, axis=0)
+    ukdata.mask = mask
+    # Make all elements where kr > kmax = 0 (Low pass filter)
+    ukdata = ukdata.filled(fill_value=0)
+
+    # Inverse FT
+    ukdata = np.fft.ifftshift(ukdata, axes=range(1, dim + 1))
+    udata_ifft = np.fft.ifftn(ukdata, axes=range(1, dim + 1)).real# Use only a real part
+
+    return udata_ifft, coords
+
+
+
+
 ########## DISSIPATION RATE ##########
-def get_epsilon_using_sij(udata, dx=None, dy=None, dz=None, nu=1.004):
+
+def get_epsilon_using_sij(udata, dx=None, dy=None, dz=None, nu=1.004,
+                          x0=0, x1=None, y0=0, y1=None, z0=0, z1=None):
     """
     sij: numpy array with shape (nrows, ncols, duration, 2, 2) (dim=2) or (nrows, ncols, nstacks, duration, 3, 3) (dim=3)
     ... idea is... sij[spacial coordinates, time, tensor indices]
@@ -1148,6 +1302,13 @@ def get_epsilon_using_sij(udata, dx=None, dy=None, dz=None, nu=1.004):
     """
     udata = fix_udata_shape(udata)
     dim = len(udata)
+
+    if dim==2:
+        udata = udata[:, y0:y1, x0:x1, :]
+    elif dim == 3:
+        if z1 is None:
+            z1 = udata[0].shape[2]
+        udata = udata[:, y0:y1, x0:x1, z0:z1, :]
 
     if dx is None:
         raise ValueError('... dx is None. Provide int or float.')
@@ -1171,7 +1332,7 @@ def get_epsilon_using_sij(udata, dx=None, dy=None, dz=None, nu=1.004):
         epsilon = 6. * nu * (epsilon_0 + epsilon_1 + epsilon_2)
     return epsilon
 
-def get_epsilon_iso(udata, lambda_f=None, lambda_g=None, nu=1.004):
+def get_epsilon_iso(udata, lambda_f=None, lambda_g=None, nu=1.004, x=None, y=None, **kwargs):
     """
     Return epsilon computed by isotropic formula involving Taylor microscale
     Parameters
@@ -1190,7 +1351,16 @@ def get_epsilon_iso(udata, lambda_f=None, lambda_g=None, nu=1.004):
 
     # if both of lambda_g and lambda_f are provided, use lambdaf over lambdag
     if lambda_f is None and lambda_g is None:
-        raise ValueError('... Provide either or both Taylor microscales, lambda_f, lambda_g')
+        print '... Both of Taylor microscales, lambda_f, lambda_g, were not provided!'
+        print '... Compute lambdas from scratch. One must provide x and y.'
+        if x is None or y is None:
+            raise ValueError('... x and y were not provided! Exitting...')
+        else:
+            autocorrs = get_two_point_vel_corr_iso(udata, x, y, return_rij=False, **kwargs)
+            r_long, f_long, f_err_long, r_tran, g_tran, g_err_tran = autocorrs
+            lambda_f, lambda_g = get_taylor_microscales(r_long, f_long, r_tran, g_tran)
+            epsilon = 15. * nu * u2_irms / (lambda_g ** 2)
+
     elif lambda_f is not None and lambda_g is None:
         epsilon = 30. * nu * u2_irms / (lambda_f ** 2)
     else:
@@ -1217,9 +1387,8 @@ def get_epsilon_using_diss_spectrum(udata, nu=1.0034,x0=0, x1=None,
 
 ########## advanced analysis ##########
 ## Spatial autocorrelation functions
-def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=None, x1=None, y0=None, y1=None,
-                             t0=None, t1=None,
-                             coarse=1.0, coarse2=0.2, notebook=True):
+def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=0, x1=None, y0=0, y1=None,
+                             t0=None, t1=None, coarse=1.0, coarse2=0.2, notebook=True):
     """
     Compute spatial autocorrelation function of 2+1 velocity field
     Spatial autocorrelation function:
@@ -1283,9 +1452,15 @@ def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=None, x1=Non
         arr1, arr2 = zip(*sorted(zip(arr1, arr2)))
         return arr1, arr2
 
+
     if x0 is None:  # if None, use the whole space
-        x0, y0 = 0, 0
-        x1, y1 = ui.shape[1], ui.shape[0]
+        x0 = 0
+    if y0 is None:
+        y0 = 0
+    if x1 is None:  # if None, use the whole space
+        x1 = ui.shape[1]
+    if y1 is None:
+        y1 = ui.shape[0]
     if t0 is None:
         t0 = 0
     if t1 is None:
@@ -1330,9 +1505,15 @@ def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=None, x1=Non
         rr, corr = rr.flatten(), corr.flatten()
 
         # get a histogram
-        rr_, _, _ = binned_statistic(rr, rr, statistic='mean', bins=n_bins)
+        rr_means, rr_edges, binnumber = binned_statistic(rr, rr, statistic='mean', bins=n_bins)
         corr_, _, _ = binned_statistic(rr, corr, statistic='mean', bins=n_bins)
         corr_err, _, _ = binned_statistic(rr, corr, statistic='std', bins=n_bins)
+
+        # One may use rr_means or the middle point of each bin for plotting
+        # Default is the middle point
+        rr_binwidth = (rr_edges[1] - rr_edges[0])
+        rr_ = rr_edges[1:] - rr_binwidth / 2
+
 
         # Sort arrays
         rr, corr = sort2arr(rr_, corr_)
@@ -1348,9 +1529,12 @@ def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=None, x1=Non
         corr_err /= corr[0]
 
         # Insert to a big array
-        rrs[..., t] = rr
-        corrs[..., t] = corr
-        corr_errs[..., t] = corr_err
+        # rrs[0, t] = 0
+        # corrs[0, t] = 1.0
+        # corr_errs[0, t] = 0
+        rrs[:, t] = rr
+        corrs[:, t] = corr
+        corr_errs[:, t] = corr_err
 
     if notebook:
         from tqdm import tqdm as tqdm
@@ -1439,7 +1623,9 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None, x0=None, x
     limits = [ncolumns, nrows, nsteps]
     # Number of bins- if this is too small, correlation length would be overestimated. Keep it around ncolumns
     if n_bins is None:
-        n_bins = int(max(limits) * coarse)
+        n_bins = int(max(limits) * coarse) - 1
+    else:
+        n_bins = n_bins - 1
 
     # Use a portion of data
     z_grid, y_grid, x_grid = z[y0:y1, x0:x1, z0:z1], y[y0:y1, x0:x1, z0:z1], x[y0:y1, x0:x1, z0:z1]
@@ -1465,7 +1651,6 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None, x0=None, x
         corr = np.empty((n, m))
 
         for j, i in enumerate(tqdm(roll_indices, desc='computing correlation')):
-        # for i in range(int(coarse * limits[roll_axis])):
             uu_rolled = np.roll(uu, i, axis=roll_axis)
             x_grid_rolled, y_grid_rolled, z_grid_rolled = np.roll(x_grid, i, axis=roll_axis), \
                                                           np.roll(y_grid, i, axis=roll_axis), \
@@ -1479,9 +1664,12 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None, x0=None, x
         rr, corr = rr.flatten(), corr.flatten()
 
         # get a histogram
-        rr_, _, _ = binned_statistic(rr, rr, statistic='mean', bins=n_bins)
-        corr_, _, _ = binned_statistic(rr, corr, statistic='mean', bins=n_bins)
-        corr_err, _, _ = binned_statistic(rr, corr, statistic='std', bins=n_bins)
+        # rr_, _, _ = binned_statistic(rr, rr, statistic='mean', bins=n_bins)
+        rr_means, rr_edges, binnumber = binned_statistic(rr, rr, statistic='mean', bins=n_bins-1)
+        rr_binwidth = (rr_edges[1] - rr_edges[0])
+        rr_ = rr_edges[1:] - rr_binwidth / 2
+        corr_, _, _ = binned_statistic(rr, corr, statistic='mean', bins=n_bins-1)
+        corr_err, _, _ = binned_statistic(rr, corr, statistic='std', bins=n_bins-1)
 
         # # Sort arrays
         # rr, corr = sort2arr(rr_, corr_)
@@ -1493,16 +1681,19 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None, x0=None, x
         # corr_errs[:, t] = corr_err
 
         # This is faster?
-        _, corrs[:, t] = sort2arr(rr_, corr_)
-        rrs[:, t], corr_errs[:, t] = sort2arr(rr_, corr_err)
+        rrs[0:, t], corr_errs[0:, t] = 0, 1.
+        corrs[0, t] = 1.
+        _, corrs[1:, t] = sort2arr(rr_, corr_)
+        rrs[1:, t], corr_errs[1:, t] = sort2arr(rr_, corr_err)
 
     if notebook:
         from tqdm import tqdm as tqdm
     return rrs, corrs, corr_errs
 
 
-def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None, x0=None, x1=None, y0=None, y1=None, z0=0, z1=None, t0=None, t1=None,
-                             coarse=1.0, coarse2=0.2, notebook=True, return_rij=True):
+def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None,
+                               x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=None, t1=None,
+                             coarse=1.0, coarse2=0.2, notebook=True, return_rij=False, **kwargs):
     """
     Returns two-point velocity autocorrelation tensor, and autocorrelation functions.
     Uses the x-component of velocity. (CAUTION required for unisotropic flows)
@@ -1524,6 +1715,7 @@ def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None, x0=N
                         Rij (\vec{r} , t) = u_rms^2 [g(r,t) delta_ij + {f(r,t) - g(r,t)} r_i * r_j / r^2]
             where f, and g are long. and transverse autocorrelation functions.
     """
+
     udata = fix_udata_shape(udata)
     dim = len(udata)
     if dim == 2:
@@ -1536,9 +1728,11 @@ def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None, x0=N
     print 'Compute two-point velocity autocorrelation'
     if dim == 2:
         r_long, f_long, f_err_long = compute_spatial_autocorr(ux, x, y, roll_axis=1, n_bins=n_bins, x0=x0, x1=x1,
-                                                              y0=y0, y1=y1, t0=t0, t1=t1, coarse=coarse, coarse2=coarse2, notebook=notebook)
+                                                              y0=y0, y1=y1, t0=t0, t1=t1,
+                                                              coarse=coarse, coarse2=coarse2, notebook=notebook)
         r_tran, g_tran, g_err_tran = compute_spatial_autocorr(ux, x, y, roll_axis=0, n_bins=n_bins, x0=x0, x1=x1,
-                                                                y0=y0, y1=y1, t0=t0, t1=t1, coarse=coarse, coarse2=coarse2, notebook=notebook)
+                                                                y0=y0, y1=y1, t0=t0, t1=t1,
+                                                              coarse=coarse, coarse2=coarse2, notebook=notebook)
     elif dim == 3:
         r_long, f_long, f_err_long = compute_spatial_autocorr3d(ux, x, y, z, roll_axis=1, n_bins=n_bins, x0=x0, x1=x1,
                                                                 y0=y0, y1=y1, z0=z0, z1=z1,
@@ -1551,7 +1745,7 @@ def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None, x0=N
     autocorrs = (r_long, f_long, f_err_long, r_tran, g_tran, g_err_tran)
 
     if return_rij:
-        print 'Compute two-point velocity autocorrelation tensor Rij. (Requires '
+        print 'Compute two-point velocity autocorrelation tensor Rij.'
         # Make long./trans. autocorrelation functions
         ## make an additional list to use 2d interpolation: i.e. supply autocorrelation values as a function of (r, t)
         time_list = []
@@ -1612,8 +1806,7 @@ def get_autocorr_functions_int_list(r_long, f_long, r_tran, g_tran):
     for i, datum in enumerate(data):
         if ~np.isnan(data[i]).any():
             data[i] = data[i][~np.isnan(data[i])]
-    # inter
-    # polate data (3rd order spline)
+    # interpolate data (3rd order spline)
     fs, gs = [], []
     for t in range(duration):
         # if r_long contains nans, UnivariateSpline fails. so clean this up.
@@ -1679,12 +1872,31 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
     """
     Structure tensor Dij is essentially the covariance of the two-point velocity difference
     There is one-to-one correspondence between Dij and Rij. (Pope 6.36)
-    This method returns the LONGITUDINAL STRUCTURE FUNCTIONS.
+    This method returns the LONGITUDINAL STRUCTURE FUNCTION.
     If p=2, this returns D_LL.
 
     Parameters
     ----------
     udata
+    x
+    y
+    z
+    p
+    roll_axis
+    n_bins
+    nu
+    u
+    x0
+    x1
+    y0
+    y1
+    z0
+    z1
+    t0
+    t1
+    coarse
+    coarse2
+    notebook
 
     Returns
     -------
@@ -1785,21 +1997,15 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
             Dxx[:, j] = Dxx_raw.flatten()[:n]
 
         # flatten arrays to feed to binned_statistic
-        rr_raw, Dxx_raw = rr.flatten(), Dxx.flatten()
+        rr_flatten, Dxx_flatten = rr.flatten(), Dxx.flatten()
 
         # get a histogram
-        rr_, _, _ = binned_statistic(rr_raw, rr_raw, statistic='mean', bins=n_bins)
-        Dxx_, _, _ = binned_statistic(rr_raw, Dxx_raw, statistic='mean', bins=n_bins)
-        Dxx_err_, _, _ = binned_statistic(rr_raw, Dxx_raw, statistic='std', bins=n_bins)
-
-        # # Sort arrays
-        # rr, corr = sort2arr(rr_, corr_)
-        # rr, corr_err = sort2arr(rr_, corr_err)
-        #
-        # # Insert to a big array
-        # rrs[:, t] = rr
-        # corrs[:, t] = corr
-        # corr_errs[:, t] = corr_err
+        # rr_, _, _ = binned_statistic(rr_raw, rr_raw, statistic='mean', bins=n_bins)
+        rr_means, rr_edges, binnumber = binned_statistic(rr_flatten, rr_flatten, statistic='mean', bins=n_bins)
+        Dxx_, _, _ = binned_statistic(rr_flatten, Dxx_flatten, statistic='mean', bins=n_bins)
+        Dxx_err_, _, _ = binned_statistic(rr_flatten, Dxx_flatten, statistic='std', bins=n_bins)
+        rr_binwidth = (rr_edges[1] - rr_edges[0])
+        rr_ = rr_edges[1:] - rr_binwidth / 2.
 
         # This is faster?
         _, Dxxs[:, t] = sort2arr(rr_, Dxx_)
@@ -1809,7 +2015,7 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
     if dim == 3:
         dx, dy, dz = x[0, 1, 0] - x[0, 0, 0], y[1, 0, 0] - y[0, 0, 0], z[0, 0, 1] - z[0, 0, 0]
     elif dim == 2:
-        dx, dy = x[0, 1, 0] - x[0, 0, 0], y[1, 0, 0] - y[0, 0, 0]
+        dx, dy = x[0, 1] - x[0, 0], y[1, 0] - y[0, 0]
         dz = None
     epsilon = get_epsilon_using_sij(udata, dx=dx, dy=dy, dz=dz, nu=nu)
     eta = (nu **  3 / epsilon) ** 0.25
@@ -1955,7 +2161,7 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran):
     # polate data (3rd order spline)
     lambda_f, lambda_g = [], []
     for t in range(duration):
-        # if r_long contains nans, UnivariateSpline fails. so clean this up.
+        # if r_long contains nans, UnivariateSpline fails. so clean it up.
         r_long_tmp, f_long_tmp = remove_nans_for_array_pair(r_long[:, t], f_long[:, t])
         r_tran_tmp, g_tran_tmp = remove_nans_for_array_pair(r_tran[:, t], g_tran[:, t])
 
@@ -2280,7 +2486,7 @@ def rankine_vortex_2d(xx, yy, x0=0, y0=0, gamma=1., a=1.):
     udata: (ux, uy)
 
     """
-    rr, phi = fa.cart2pol(xx - x0, yy - y0)
+    rr, phi = cart2pol(xx - x0, yy - y0)
 
     cond = rr < a
     ux, uy = np.empty_like(rr), np.empty_like(rr)
@@ -2315,7 +2521,7 @@ def rankine_vortex_line_3d(xx, yy, zz, x0=0, y0=0, gamma=1., a=1., uz0=0):
     udata: (ux, uy, uz)
 
     """
-    rr, theta, phi = fa.cart2sph(xx - x0, yy - y0, zz)
+    rr, theta, phi = cart2sph(xx - x0, yy - y0, zz)
 
     cond = rr < a
     ux, uy, uz = np.empty_like(rr), np.empty_like(rr), np.empty_like(rr)
@@ -2333,14 +2539,15 @@ def rankine_vortex_line_3d(xx, yy, zz, x0=0, y0=0, gamma=1., a=1., uz0=0):
 
 
 def get_sample_turb_field_3d(return_coord=True):
+    # get module location
     mod_loc = os.path.abspath(__file__)
     pdir, filename = os.path.split(mod_loc)
-    datapath = os.path.join(pdir, 'sample_data/isoturb_slice2.h5')
-    data = rw.read_hdf5(datapath)
+    datapath = os.path.join(pdir, 'reference_data/isoturb_slice2.h5')
+    data = h5py.File(datapath, 'r')
 
     keys = data.keys()
     keys_u = [key for key in keys if 'u' in key]
-    keys_u = fa.natural_sort(keys_u)
+    keys_u = natural_sort(keys_u)
     duration = len(keys_u)
     depth, height, width, ncomp = data[keys_u[0]].shape
     udata = np.empty((ncomp, height, width, depth, duration))
@@ -2375,6 +2582,369 @@ def get_rescaled_energy_spectrum_saddoughi():
     e = np.asarray([0.00095661, 0.0581971, 2.84666, 11.283, 59.4552, 381.78, 2695.48, 30341.9, 122983, 728530])
     return e, k
 
+def get_energy_spectra_jhtd():
+    faqm_dir = os.path.split(os.path.realpath(__file__))[0]
+    datapath = faqm_dir + '/reference_data/jhtd_e_specs.h5'
+
+    datadict = {}
+    with h5py.File(datapath, 'r') as data:
+        keys = data.keys()
+        for key in keys:
+            if not '_s' in key:
+                datadict[key] = data[key][...]
+
+    return datadict
+
+def get_rescaled_energy_spectra_jhtd():
+    """
+    Returns values to plot rescaled energy spectrum from Saddoughi (1992)
+    Returns
+    -------
+
+    """
+    faqm_dir = os.path.split(os.path.realpath(__file__))[0]
+    datapath = faqm_dir + '/reference_data/jhtd_e_specs.h5'
+
+    datadict = {}
+    with h5py.File(datapath, 'r') as data:
+        keys = data.keys()
+        for key in keys:
+            if '_s' in key:
+                datadict[key] = data[key][...]
+    return datadict
+
+def get_rescaled_structure_function_saddoughi(p=2):
+    """
+    Returns the values of rescaled structure function reported in Saddoughi and Veeravalli 1994 paper
+    ... this is a curve about a specific Reynolds number! i.e. there is no universal structure function
+    ----------
+    p: int
+    ... order of the structure function
+
+    Returns
+    -------
+    r_scaled: nd array
+    dll: nd array
+    """
+    faqm_dir = os.path.split(os.path.realpath(__file__))[0]
+    if p==2:
+        datapath = faqm_dir + '/reference_data/sv_struc_func.txt'
+        data = np.loadtxt(datapath, skiprows=1, delimiter=',')
+        r_scaled, dll = data[:, 0], data[:, 1]
+        return r_scaled, dll
+    else:
+        print '... Only the rescaled, second-order structure function is available at the moment!'
+        return None, None
+
+########## FFT tools ########
+def get_window_radial(xx, yy, zz=None, wtype='hamming', rmax=None, duration=None,
+                    x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
+                      n=500):
+    """
+    General function to get a window
+    ...
+    ... Window types:
+        boxcar, triang, blackman, hamming, hann, bartlett, flattop, parzen, bohman, blackmanharris, nuttall, barthann,
+        kaiser (needs beta), gaussian (needs standard deviation), general_gaussian (needs power, width),
+        slepian (needs width), chebwin (needs attenuation), exponential (needs decay scale),
+        tukey (needs taper fraction)
+
+    Parameters
+    ----------
+    xx
+    yy
+    zz
+    wtype
+    rmax
+    duration
+    x0
+    x1
+    y0
+    y1
+    z0
+    z1
+    n
+
+    Returns
+    -------
+
+    """
+    # Let the center of the grid be the origin
+    if zz is None:
+        dim = 2
+        if x1 is None:
+            x1 = xx.shape[1]
+        if y1 is None:
+            y1 = xx.shape[0]
+        origin = ((xx[0, x1 - 1] + xx[0, x0]) / 2., (yy[y1 - 1, 0] + yy[y0, 0]) / 2.)
+        xx, yy = xx[y0:y1, x0:x1], yy[y0:y1, x0:x1]
+        rr = np.sqrt((xx - origin[0]) ** 2 + (yy - origin[1]) ** 2)
+    else:
+        dim = 3
+        if x1 is None:
+            x1 = xx.shape[1]
+        if y1 is None:
+            y1 = xx.shape[0]
+        if z1 is None:
+            z1 = xx.shape[2]
+
+        origin = ((xx[0, x1 - 1] + xx[0, x0]) / 2., (yy[y1 - 1, 0] + yy[y0, 0]) / 2., (zz[0, 0, z1-1] + zz[0, 0, z0]) / 2.)
+        xx, yy, zz = xx[y0:y1, x0:x1, z0:z1], yy[y0:y1, x0:x1, z0:z1], zz[y0:y1, x0:x1, z0:z1]
+        rr = np.sqrt((xx - origin[0]) ** 2 + (yy - origin[1]) ** 2 + (zz - origin[2]) ** 2)
+
+    if rmax is None:
+        xmax, ymax = np.nanmax(xx[0, :]), np.nanmax(yy[:, 0])
+        rmax = min(xmax, ymax)
+
+    # x = rr + rmax
+    # window = 0.54 - 0.46 * np.cos(2 * np.pi * (2 * rmax - x) / rmax / 2.)
+
+
+    r = np.linspace(-rmax, rmax, n)
+    window_1d = signal.get_window(wtype, n)
+    window_func = interpolate.interp1d(r, window_1d, bounds_error=False, fill_value=0)
+    window = window_func(rr)
+    window[rr > rmax] = 0
+    if duration is not None:
+        windows = np.repeat(window[..., np.newaxis], duration, axis=dim)
+        return windows
+    else:
+        return window
+
+def compute_signal_loss_due_to_windowing(xx, yy, window, x0=0, x1=None, y0=0, y1=None):
+    """
+    Returns the inverse of the signal-loss factor by the window
+    Signal loss factor: 1 (rectangle... no loss), 0.2-ish (flattop)
+
+    Parameters
+    ----------
+    xx: 2d/3d numpy array
+        x grid
+    yy: 2d/3d numpy array
+        y grid
+    window: str
+        name of the window: flattop, hamming, blackman, etc.
+    x0: int
+        index to specify the region to which the window applies: xx[y0:y1, x0:x1], yy[y0:y1, x0:x1]
+    x1: int
+        index to specify the region to which the window applies: xx[y0:y1, x0:x1], yy[y0:y1, x0:x1]
+    y0: int
+        index to specify the region to which the window applies: xx[y0:y1, x0:x1], yy[y0:y1, x0:x1]
+    y1: int
+        index to specify the region to which the window applies: xx[y0:y1, x0:x1], yy[y0:y1, x0:x1]
+
+    Returns
+    -------
+    gamma: float
+        inverse of the signal-loss factor
+
+    """
+    if window is 'rectangle' or window is None:
+        signal_intensity_loss = 1.
+    else:
+        window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
+        signal_intensity_loss =  np.nanmean(window_arr)
+    gamma = 1. / signal_intensity_loss
+    return gamma
+
+def get_hamming_window_radial(xx, yy, zz=None, rmax=None, duration=None,
+                          x0=0, x1=None, y0=0, y1=None, z0=0, z1=None):
+    """
+    Returns the Hamming window as a function of radius
+     ... r = 0 corresponds to the center of the window.
+
+    Parameters
+    ----------
+    r: nd array
+    ... radius from the center point
+    rmax: float
+    ...
+    duration: int
+    ... if None, this returns the hamming window with shape (height, width),  (height, width, depth)
+    ... Otherwise, this returns (height, width, duration),  (height, width, depth, duration)
+    ... duration = udata.shape[-1] should work for most of purposes.
+
+    Returns
+    -------
+    window/windows: nd array,
+    ... hamming window with shape
+
+    """
+    # Let the center of the grid be the origin
+    if zz is None:
+        dim = 2
+        if x1 is None:
+            x1 = xx.shape[1]
+        if y1 is None:
+            y1 = xx.shape[0]
+        origin = ((xx[0, x1-1] - xx[0, x0]) / 2., (yy[y1-1, 0] - yy[y0, 0]) / 2.)
+        xx, yy = xx[y0:y1, x0:x1], yy[y0:y1, x0:x1]
+        rr = np.sqrt((xx - origin[0]) ** 2 + (yy - origin[1]) ** 2)
+    else:
+        dim = 3
+        if x1 is None:
+            x1 = xx.shape[1]
+        if y1 is None:
+            y1 = xx.shape[0]
+        if z1 is None:
+            z1 = xx.shape[2]
+
+        origin = ((xx[0, x1-1] - xx[0, x0]) / 2., (yy[y1-1, 0] - yy[y0, 0]) / 2.)
+        xx, yy, zz = xx[y0:y1, x0:x1, z0:z1], yy[y0:y1, x0:x1, z0:z1], zz[y0:y1, x0:x1, z0:z1]
+        rr = np.sqrt((xx - origin[0]) ** 2 + (yy - origin[1]) ** 2 + (zz - origin[2]) ** 2)
+
+    if rmax is None:
+        rmax = np.nanmax(rr)
+
+    x = rr + rmax
+    window = 0.54 - 0.46 * np.cos(2*np.pi * (2*rmax-x)/rmax/2.)
+    window[rr > rmax] = 0
+    if duration is not None:
+        windows = np.repeat(window[..., np.newaxis], duration, axis=dim)
+        return windows
+    else:
+        return window
+
+# cleaning velocity field data
+def clean_vdata(udata, cutoffU=2000, fill_value=np.nan, verbose=True):
+    """
+    Clean M class objects.
+    Parameters
+    ----------
+    M
+    cutoffU
+    fill_value
+    verbose
+
+    Returns
+    -------
+
+    """
+    udata_cleaned = np.empty_like(udata)
+    print 'Cleaning M.Ux...'
+    mask = get_mask_for_unphysical(udata[0, ...], cutoffU=cutoffU, fill_value=fill_value, verbose=verbose)
+    Ux_filled_with_nans = fill_unphysical_with_sth(udata[0, ...], mask, fill_value=fill_value)
+    Ux_interpolated = interpolate_using_mask(Ux_filled_with_nans, mask)
+    udata_cleaned[0, ...]= Ux_interpolated[:]
+    print 'Cleaning M.Uy...'
+    mask = get_mask_for_unphysical(udata[1, ...], cutoffU=cutoffU, fill_value=fill_value, verbose=verbose)
+    Uy_filled_with_nans = fill_unphysical_with_sth(udata[1, ...], mask, fill_value=fill_value)
+    Uy_interpolated = interpolate_using_mask(Uy_filled_with_nans, mask)
+    udata_cleaned[1, ...]= Uy_interpolated[:]
+    print '...Cleaning Done.'
+    return udata_cleaned
+
+def get_mask_for_unphysical(U, cutoffU=2000., fill_value=99999., verbose=True):
+    """
+    Returns a mask (N-dim boolean array). If elements were below/above a cutoff, np.nan, or np.inf, then they get masked.
+    Parameters
+    ----------
+    U: array-like
+    cutoffU: float
+        if |value| > cutoff, this method considers those values unphysical.
+    fill_value:
+
+
+    Returns
+    -------
+    mask: multidimensional boolean array
+
+    """
+    U = np.array(U)
+    if verbose:
+        print '...Note that nan/inf values in U are replaced by ' + str(fill_value)
+        print '...number of invalid values (nan and inf) in the array: ' + str(np.isnan(U).sum() + np.isinf(U).sum())
+        print '...number of nan values in U: ' + str(np.isnan(U).sum())
+        print '...number of inf values in U: ' + str(np.isinf(U).sum()) + '\n'
+
+    # Replace all nan and inf values with fill_value.
+    # fix_invalid still enforces a mask on elements with originally invalid values
+    U_fixed = ma.fix_invalid(U, fill_value=fill_value)
+    n_invalid = ma.count_masked(U_fixed)
+    if verbose:
+        print '...number of masked elements by masked_invalid: ' + str(n_invalid)
+    # Update the mask to False (no masking)
+    U_fixed.mask = False
+
+
+
+    # Mask unreasonable values of U_fixed
+    b = ma.masked_greater(U_fixed, cutoffU)
+    c = ma.masked_less(U_fixed, -cutoffU)
+    n_greater = ma.count_masked(b) - n_invalid
+    n_less = ma.count_masked(c)
+    if verbose:
+        print '...number of masked elements greater than cutoff: ' + str(n_greater)
+        print '...number of masked elements less than -cutoff: ' + str(n_less)
+
+    # Generate a mask for all nonsense values in the array U
+    mask = ~(~b.mask * ~c.mask)
+
+    d = ma.array(U_fixed, mask=mask)
+    n_total = ma.count_masked(d)
+    # U_filled = ma.filled(d, fill_value)
+
+    #Total number of elements in U
+    N = 1
+    for i in range(len(U.shape)):
+        N *= U.shape[i]
+    print '...total number of unphysical values: ' + str(ma.count_masked(d)) + '  (' + str((float(n_total)/N*100)) + '%)\n'
+    return mask
+
+def fill_unphysical_with_sth(U, mask, fill_value=np.nan):
+    """
+    Returns an array whose elements are replaced by fill_value if its mask value is True
+    Parameters
+    ----------
+    U   array-like
+    mask   multidimensional boolean array
+    fill_value   value that replaces masked values
+
+    Returns
+    -------
+    U_filled  numpy array
+
+    """
+    U_masked = ma.array(U, mask=mask)
+    U_filled = ma.filled(U_masked, fill_value)  # numpy array. This is NOT a masked array.
+
+    return U_filled
+
+def interpolate_using_mask(arr, mask):
+    """
+    Conduct linear interpolation for data points where their mask values are True
+
+    ... This interpolation is not ideal because this flattens multidimensional array first, and takes a linear interpolation
+    for missing values. That is, the interpolated values at the edges of the multidimensional array are nonsense b/c
+    actual data does not have a periodic boundary condition.
+
+    Parameters
+    ----------
+    arr1 : array-like (n x m), float
+        array with unphysical values such as nan, inf, and ridiculously large/small values
+        assuming arr1 is your raw data
+    mask : array-like (n x m), bool
+
+    Returns
+    -------
+    arr : array-like (n x m), float
+        array with unphysical values replaced by appropriate values
+    """
+    arr1 = copy.deepcopy(arr)
+    arr2T = copy.deepcopy(arr).T
+
+    f0 = np.flatnonzero(mask)
+    f1 = np.flatnonzero(~mask)
+
+    arr1[mask] = np.interp(f0, f1, arr1[~mask])
+
+    f0 = np.flatnonzero(mask.T)
+    f1 = np.flatnonzero(~mask.T)
+    arr2T[mask.T] = np.interp(f0, f1, arr1.T[~(mask.T)])
+    arr2 = arr2T.T
+
+    arr = (arr1 + arr2) * 0.5
+    return arr
 
 ########## misc ###########
 def fix_udata_shape(udata):
@@ -2444,6 +3014,42 @@ def get_equally_spaced_grid(udata, spacing=1):
         xx, yy, zz = np.meshgrid(y, x, z)
         return xx * spacing, yy * spacing, zz * spacing
 
+def get_equally_spaced_kgrid(udata, dx=1):
+    """
+    Returns a grid to plot udata
+    Parameters
+    ----------
+    udata
+    spacing: spacing of the grid in the real space
+
+    Returns
+    -------
+    xx, yy, (zz): 2D or 3D numpy arrays
+    """
+    dim = len(udata)
+    if dim == 2:
+        ncomp, height, width, duration = udata.shape
+        # k space grid
+        kx = np.fft.fftfreq(width, d=dx)  # this returns FREQUENCY (JUST INVERSE LENGTH) not ANGULAR FREQUENCY
+        ky = np.fft.fftfreq(height, d=dx)
+        kx = np.fft.fftshift(kx)
+        ky = np.fft.fftshift(ky)
+        kxx, kyy = np.meshgrid(kx, ky)
+        kxx, kyy = kxx * 2 * np.pi, kyy * 2 * np.pi # Convert inverse length into wavenumber
+        return kxx, kyy
+    elif dim == 3:
+        ncomp, height, width, depth, duration = udata.shape
+        # k space grid
+        kx = np.fft.fftfreq(width, d=dx)
+        ky = np.fft.fftfreq(height, d=dx)
+        kz = np.fft.fftfreq(depth, d=dx)
+        kx = np.fft.fftshift(kx)
+        ky = np.fft.fftshift(ky)
+        kz = np.fft.fftshift(kz)
+        kxx, kyy, kzz = np.meshgrid(ky, kx, kz)
+        kxx, kyy, kzz = kxx * 2 * np.pi, kyy * 2 * np.pi, kzz * 2 * np.pi
+        return kxx, kyy, kzz
+
 def kolmogorov_53(k, k0=50):
     """
     Customizable Kolmogorov Energy spectrum
@@ -2464,9 +3070,15 @@ def kolmogorov_53_uni(k, epsilon, c=1.5):
     Universal Kolmogorov Energy spectrum
     Parameters
     ----------
-    k: array-like, wavenumber: convention is k= 1/L NOT 2pi/L
+    k: array-like, wavenumber
     epsilon: float, dissipation rate
-    c: float, Kolmogorov coefficient: resc
+    c: float, Kolmogorov constant c=1.5 (default)
+    ... E(k) = c epsilon^(2/3) k^(-5/3)
+    ... E11(k) = c1 epsilon^(2/3) k^(-5/3)
+    ... E22(k) = c2 epsilon^(2/3) k^(-5/3)
+    ... c1:c2:c = 1: 4/3: 55/18
+    ... If c = 1.5, c1 = 0.491, c2 = 1.125
+    ... Exp. values: c = 1.5, c1 = 0.5, c2 =
 
     Returns
     -------
@@ -2524,3 +3136,35 @@ def klonecker_delta(i, j):
     else:
         return 0
 
+def cart2pol(x, y):
+    """
+    Cartesian coord to polar coord
+    Parameters
+    ----------
+    x
+    y
+
+    Returns
+    -------
+    r
+    phi
+    """
+    r = np.sqrt(x**2 + y**2)
+    phi = np.arctan2(y, x)
+    return r, phi
+
+def natural_sort(arr):
+    def atoi(text):
+        'natural sorting'
+        return int(text) if text.isdigit() else text
+
+    def natural_keys(text):
+        '''
+        natural sorting
+        alist.sort(key=natural_keys) sorts in human order
+        http://nedbatchelder.com/blog/200712/human_sorting.html
+        (See Toothy's implementation in the comments)
+        '''
+        return [atoi(c) for c in re.split('(\d+)', text)]
+
+    return sorted(arr, key=natural_keys)
