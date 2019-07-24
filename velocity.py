@@ -13,6 +13,8 @@ import scipy.integrate as integrate
 import matplotlib.pyplot as plt
 import numpy.ma as ma
 from scipy import signal
+from scipy import interpolate
+from scipy.interpolate import griddata
 import os
 import copy
 
@@ -1799,6 +1801,7 @@ def get_autocorr_functions(r_long, f_long, r_tran, g_tran, time):
     g = interp2d(r_tran.flatten(), time_list, g_tran.flatten())
     return f, g
 
+
 def get_autocorr_functions_int_list(r_long, f_long, r_tran, g_tran):
     n, duration = r_long.shape
     data = [r_long, f_long, r_tran, g_tran]
@@ -1829,6 +1832,7 @@ def get_autocorr_functions_int_list(r_long, f_long, r_tran, g_tran):
         fs.append(f_spl)
         gs.append((g_spl))
     return fs, gs
+
 
 def get_autocorrelation_tensor_iso(r_long, f_long, r_tran, g_tran, time):
     """
@@ -1865,6 +1869,7 @@ def get_autocorrelation_tensor_iso(r_long, f_long, r_tran, g_tran, time):
 
     rij = two_pt_velocity_autocorrelation_tensor
     return rij
+
 
 def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=None, nu=1.004, u='ux',
                                 x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None,
@@ -1978,9 +1983,8 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
         rr = np.empty((n, m))
         Dxx = np.empty((n, m))
 
-        for j, i in enumerate(tqdm(roll_indices, desc='computing DL^(%d)' % p)):
+        for j, i in enumerate(roll_indices):
             # for i in range(int(coarse * limits[roll_axis])):
-            uu_rolled = np.roll(uu, i, axis=roll_axis)
             if dim == 3:
                 x_grid_rolled, y_grid_rolled, z_grid_rolled = np.roll(x_grid, i, axis=roll_axis), \
                                                           np.roll(y_grid, i, axis=roll_axis), \
@@ -1998,6 +2002,10 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
 
         # flatten arrays to feed to binned_statistic
         rr_flatten, Dxx_flatten = rr.flatten(), Dxx.flatten()
+        # Nans are not handled very well in binned_statistic
+        # Get rid of nans from rr_flatten and Dxx_flatten
+        mask = ~np.isnan(Dxx_flatten)
+        rr_flatten, Dxx_flatten = rr_flatten[mask], Dxx_flatten[mask]
 
         # get a histogram
         # rr_, _, _ = binned_statistic(rr_raw, rr_raw, statistic='mean', bins=n_bins)
@@ -2126,6 +2134,7 @@ def remove_nans_for_array_pair(arr1, arr2):
     compressed_arr2 = arr2.compressed()
     return compressed_arr1, compressed_arr2
 
+
 def get_taylor_microscales(r_long, f_long, r_tran, g_tran):
     """
     Returns Taylor microscales as the curvature of the autocorrelation functions at r=0
@@ -2199,6 +2208,7 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran):
         lambda_f.append(lambda_f_)
         lambda_g.append(lambda_g_)
     return np.asarray(lambda_f), np.asarray(lambda_g)
+
 
 # Taylor microscales 2: isotropic formula. Must know epsilon beforehand
 def get_taylor_microscales_iso(udata, epsilon, nu=1.004):
@@ -2278,6 +2288,7 @@ def get_integral_scales_using_rij(udata, Rij, rmax, n=100):
         L22.append(np.trapz(integrand22[1:], x[1:]))
     return L11, L22
 
+
 # Integral scales 3: isotropic, using E(k). Must know a full 1d spectrum
 def get_integral_scales_iso_spec(udata, e_k, k):
     """
@@ -2300,6 +2311,7 @@ def get_integral_scales_iso_spec(udata, e_k, k):
         L_iso_spec.append(np.pi / (2. * u2_irms[t]) * np.trapz(e_k[1:, t] / k[1:, t], k[1:, t]))
     return np.asarray(L_iso_spec)
 
+
 # Integral scales 4: characteristic size of Large-eddies
 def get_integral_scale_large_eddy(udata, epsilon):
     """
@@ -2321,6 +2333,7 @@ def get_integral_scale_large_eddy(udata, epsilon):
     L = u_irms ** 3 / epsilon
     return L
 
+
 def get_integral_velocity_scale(udata):
     """
     Return integral velocity scale which is identical to u' (characteristic velocity)
@@ -2333,6 +2346,7 @@ def get_integral_velocity_scale(udata):
     u_irms: See get_characteristic_velocity()
     """
     return get_characteristic_velocity(udata)
+
 
 ## KOLMOGOROV SCALES ##
 ### DEFAULT ###
@@ -2381,6 +2395,7 @@ def get_integral_scales_all(udata, dx, dy, dz=None, nu=1.004):
     tau_L = L_le / u_L
     return L_le, u_L, tau_L
 
+
 def get_taylor_microscales_all(udata, r_long, f_long, r_tran, g_tran):
     """
     Returns Taylor microscales
@@ -2402,6 +2417,7 @@ def get_taylor_microscales_all(udata, r_long, f_long, r_tran, g_tran):
     u_lambda = get_characteristic_velocity(udata) # u_irms = u_lambda
     tau_lambda = lambda_g / u_lambda # other way to define the time scale is through temporal autocorrelation
     return lambda_g, u_lambda, tau_lambda
+
 
 def get_kolmogorov_scales_all(udata, dx, dy, dz, nu=1.004):
     """
@@ -2446,6 +2462,7 @@ def get_turbulence_re(udata, dx, dy, dz=None,  nu=1.004):
     L, u_L, tau_L = get_integral_scales_all(udata, dx, dy, dz,  nu=nu)
     Re_L = u_L * L / nu
     return Re_L
+
 
 def get_taylor_re(udata, r_long, f_long, r_tran, g_tran, nu=1.004):
     """
@@ -2582,6 +2599,7 @@ def get_rescaled_energy_spectrum_saddoughi():
     e = np.asarray([0.00095661, 0.0581971, 2.84666, 11.283, 59.4552, 381.78, 2695.48, 30341.9, 122983, 728530])
     return e, k
 
+
 def get_energy_spectra_jhtd():
     faqm_dir = os.path.split(os.path.realpath(__file__))[0]
     datapath = faqm_dir + '/reference_data/jhtd_e_specs.h5'
@@ -2594,6 +2612,7 @@ def get_energy_spectra_jhtd():
                 datadict[key] = data[key][...]
 
     return datadict
+
 
 def get_rescaled_energy_spectra_jhtd():
     """
@@ -2612,6 +2631,7 @@ def get_rescaled_energy_spectra_jhtd():
             if '_s' in key:
                 datadict[key] = data[key][...]
     return datadict
+
 
 def get_rescaled_structure_function_saddoughi(p=2):
     """
@@ -2635,6 +2655,7 @@ def get_rescaled_structure_function_saddoughi(p=2):
     else:
         print '... Only the rescaled, second-order structure function is available at the moment!'
         return None, None
+
 
 ########## FFT tools ########
 def get_window_radial(xx, yy, zz=None, wtype='hamming', rmax=None, duration=None,
@@ -2711,6 +2732,7 @@ def get_window_radial(xx, yy, zz=None, wtype='hamming', rmax=None, duration=None
     else:
         return window
 
+
 def compute_signal_loss_due_to_windowing(xx, yy, window, x0=0, x1=None, y0=0, y1=None):
     """
     Returns the inverse of the signal-loss factor by the window
@@ -2746,6 +2768,7 @@ def compute_signal_loss_due_to_windowing(xx, yy, window, x0=0, x1=None, y0=0, y1
         signal_intensity_loss =  np.nanmean(window_arr)
     gamma = 1. / signal_intensity_loss
     return gamma
+
 
 def get_hamming_window_radial(xx, yy, zz=None, rmax=None, duration=None,
                           x0=0, x1=None, y0=0, y1=None, z0=0, z1=None):
@@ -2805,13 +2828,18 @@ def get_hamming_window_radial(xx, yy, zz=None, rmax=None, duration=None,
     else:
         return window
 
+
 # cleaning velocity field data
-def clean_vdata(udata, cutoffU=2000, fill_value=np.nan, verbose=True):
+def clean_udata_cheap(udata, cutoffU=2000, fill_value=np.nan, verbose=True):
     """
-    Clean M class objects.
+    ONLY WORKS FOR THE 2D data
+    Conducts a cheap bilinear interpolation for missing data.
+    ... literally, computes the average of the values interpolated in the x- and y-directions
+    ... griddata performs a better interpolation but this method is much faster.
+    ... values near the edges should not be trusted.
     Parameters
     ----------
-    M
+    udata
     cutoffU
     fill_value
     verbose
@@ -2820,19 +2848,57 @@ def clean_vdata(udata, cutoffU=2000, fill_value=np.nan, verbose=True):
     -------
 
     """
+
+    def interpolate_using_mask(arr, mask):
+        """
+        Conduct linear interpolation for data points where their mask values are True
+
+        ... This interpolation is not ideal because this flattens multidimensional array first, and takes a linear interpolation
+        for missing values. That is, the interpolated values at the edges of the multidimensional array are nonsense b/c
+        actual data does not have a periodic boundary condition.
+
+        Parameters
+        ----------
+        arr1 : array-like (n x m), float
+            array with unphysical values such as nan, inf, and ridiculously large/small values
+            assuming arr1 is your raw data
+        mask : array-like (n x m), bool
+
+        Returns
+        -------
+        arr : array-like (n x m), float
+            array with unphysical values replaced by appropriate values
+        """
+        arr1 = copy.deepcopy(arr)
+        arr2T = copy.deepcopy(arr).T
+
+        f0 = np.flatnonzero(mask)
+        f1 = np.flatnonzero(~mask)
+
+        arr1[mask] = np.interp(f0, f1, arr1[~mask])
+
+        f0 = np.flatnonzero(mask.T)
+        f1 = np.flatnonzero(~mask.T)
+        arr2T[mask.T] = np.interp(f0, f1, arr1.T[~(mask.T)])
+        arr2 = arr2T.T
+
+        arr = (arr1 + arr2) * 0.5
+        return arr
+
     udata_cleaned = np.empty_like(udata)
-    print 'Cleaning M.Ux...'
+    print 'Cleaning ux...'
     mask = get_mask_for_unphysical(udata[0, ...], cutoffU=cutoffU, fill_value=fill_value, verbose=verbose)
     Ux_filled_with_nans = fill_unphysical_with_sth(udata[0, ...], mask, fill_value=fill_value)
     Ux_interpolated = interpolate_using_mask(Ux_filled_with_nans, mask)
     udata_cleaned[0, ...]= Ux_interpolated[:]
-    print 'Cleaning M.Uy...'
+    print 'Cleaning uy...'
     mask = get_mask_for_unphysical(udata[1, ...], cutoffU=cutoffU, fill_value=fill_value, verbose=verbose)
     Uy_filled_with_nans = fill_unphysical_with_sth(udata[1, ...], mask, fill_value=fill_value)
     Uy_interpolated = interpolate_using_mask(Uy_filled_with_nans, mask)
     udata_cleaned[1, ...]= Uy_interpolated[:]
     print '...Cleaning Done.'
     return udata_cleaned
+
 
 def get_mask_for_unphysical(U, cutoffU=2000., fill_value=99999., verbose=True):
     """
@@ -2847,10 +2913,10 @@ def get_mask_for_unphysical(U, cutoffU=2000., fill_value=99999., verbose=True):
 
     Returns
     -------
-    mask: multidimensional boolean array
+    mask: nd boolean array
 
     """
-    U = np.array(U)
+    U = np.asarray(U)
     if verbose:
         print '...Note that nan/inf values in U are replaced by ' + str(fill_value)
         print '...number of invalid values (nan and inf) in the array: ' + str(np.isnan(U).sum() + np.isinf(U).sum())
@@ -2858,7 +2924,6 @@ def get_mask_for_unphysical(U, cutoffU=2000., fill_value=99999., verbose=True):
         print '...number of inf values in U: ' + str(np.isinf(U).sum()) + '\n'
 
     # Replace all nan and inf values with fill_value.
-    # fix_invalid still enforces a mask on elements with originally invalid values
     U_fixed = ma.fix_invalid(U, fill_value=fill_value)
     n_invalid = ma.count_masked(U_fixed)
     if verbose:
@@ -2869,27 +2934,27 @@ def get_mask_for_unphysical(U, cutoffU=2000., fill_value=99999., verbose=True):
 
 
     # Mask unreasonable values of U_fixed
+    a = ma.masked_invalid(U_fixed)
     b = ma.masked_greater(U_fixed, cutoffU)
     c = ma.masked_less(U_fixed, -cutoffU)
-    n_greater = ma.count_masked(b) - n_invalid
+    n_greater = ma.count_masked(b)
     n_less = ma.count_masked(c)
     if verbose:
         print '...number of masked elements greater than cutoff: ' + str(n_greater)
         print '...number of masked elements less than -cutoff: ' + str(n_less)
 
     # Generate a mask for all nonsense values in the array U
-    mask = ~(~b.mask * ~c.mask)
+    mask = ~(~a.mask * ~b.mask * ~c.mask)
 
     d = ma.array(U_fixed, mask=mask)
     n_total = ma.count_masked(d)
     # U_filled = ma.filled(d, fill_value)
 
     #Total number of elements in U
-    N = 1
-    for i in range(len(U.shape)):
-        N *= U.shape[i]
+    N = U.size
     print '...total number of unphysical values: ' + str(ma.count_masked(d)) + '  (' + str((float(n_total)/N*100)) + '%)\n'
     return mask
+
 
 def fill_unphysical_with_sth(U, mask, fill_value=np.nan):
     """
@@ -2910,41 +2975,58 @@ def fill_unphysical_with_sth(U, mask, fill_value=np.nan):
 
     return U_filled
 
-def interpolate_using_mask(arr, mask):
-    """
-    Conduct linear interpolation for data points where their mask values are True
 
-    ... This interpolation is not ideal because this flattens multidimensional array first, and takes a linear interpolation
-    for missing values. That is, the interpolated values at the edges of the multidimensional array are nonsense b/c
-    actual data does not have a periodic boundary condition.
+def clean_udata(udata, xx, yy, cutoffU=2000, fill_value=np.nan, verbose=True, method='linear', notebook=True):
+    """
+    Conducts 2d interpolation for udata
+    ... applies a mask to ignore the values whose magnitudes are greater than the cutoff
+    ... interpolates the missing data (np.nan or np.inf)
 
     Parameters
     ----------
-    arr1 : array-like (n x m), float
-        array with unphysical values such as nan, inf, and ridiculously large/small values
-        assuming arr1 is your raw data
-    mask : array-like (n x m), bool
+    udata
+    xx
+    yy
+    cutoffU
+    fill_value
+    verbose
+    method
+    notebook
 
     Returns
     -------
-    arr : array-like (n x m), float
-        array with unphysical values replaced by appropriate values
+
     """
-    arr1 = copy.deepcopy(arr)
-    arr2T = copy.deepcopy(arr).T
 
-    f0 = np.flatnonzero(mask)
-    f1 = np.flatnonzero(~mask)
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+        print 'Using tqdm_notebook. If this is a mistake, set notebook=False'
+    else:
+        from tqdm import tqdm
 
-    arr1[mask] = np.interp(f0, f1, arr1[~mask])
+    mask_ux = get_mask_for_unphysical(udata[0, ...], cutoffU=cutoffU, fill_value=fill_value, verbose=verbose)
+    mask_uy = get_mask_for_unphysical(udata[1, ...], cutoffU=cutoffU, fill_value=fill_value, verbose=verbose)
 
-    f0 = np.flatnonzero(mask.T)
-    f1 = np.flatnonzero(~mask.T)
-    arr2T[mask.T] = np.interp(f0, f1, arr1.T[~(mask.T)])
-    arr2 = arr2T.T
+    udata_i = np.empty_like(udata)
+    for t0 in tqdm(range(udata.shape[-1])):
+        x_ux, y_ux = xx[~mask_ux[..., t0]].flatten(), yy[~mask_ux[..., t0]].flatten()
+        x_uy, y_uy = xx[~mask_uy[..., t0]].flatten(), yy[~mask_uy[..., t0]].flatten()
+        pts_ux = zip(x_ux, y_ux)
+        pts_uy = zip(x_uy, y_uy)
+        ux_values = udata[0, ..., t0][~mask_ux[..., t0]].flatten()
+        uy_values = udata[1, ..., t0][~mask_uy[..., t0]].flatten()
 
-    arr = (arr1 + arr2) * 0.5
-    return arr
+        ux_grid_d = griddata(pts_ux, ux_values, (xx, yy), method=method)
+        uy_grid_d = griddata(pts_uy, uy_values, (xx, yy), method=method)
+
+        udata_i[0, ..., t0] = ux_grid_d[...]
+        udata_i[1, ..., t0] = uy_grid_d[...]
+
+    if notebook:
+        from tqdm import tqdm as tqdm
+
+    return udata_i
+
 
 ########## misc ###########
 def fix_udata_shape(udata):
@@ -2990,6 +3072,7 @@ def fix_udata_shape(udata):
             uz = uz.reshape((uz.shape[0], uz.shape[1], uz.shape[2], duration))
             return np.stack((ux, uy, uz))
 
+
 def get_equally_spaced_grid(udata, spacing=1):
     """
     Returns a grid to plot udata
@@ -3013,6 +3096,7 @@ def get_equally_spaced_grid(udata, spacing=1):
         x, y, z = range(width), range(height), range(depth)
         xx, yy, zz = np.meshgrid(y, x, z)
         return xx * spacing, yy * spacing, zz * spacing
+
 
 def get_equally_spaced_kgrid(udata, dx=1):
     """
@@ -3050,6 +3134,7 @@ def get_equally_spaced_kgrid(udata, dx=1):
         kxx, kyy, kzz = kxx * 2 * np.pi, kyy * 2 * np.pi, kzz * 2 * np.pi
         return kxx, kyy, kzz
 
+
 def kolmogorov_53(k, k0=50):
     """
     Customizable Kolmogorov Energy spectrum
@@ -3064,6 +3149,7 @@ def kolmogorov_53(k, k0=50):
     """
     e_k = k0*k**(-5./3)
     return e_k
+
 
 def kolmogorov_53_uni(k, epsilon, c=1.5):
     """
@@ -3087,6 +3173,7 @@ def kolmogorov_53_uni(k, epsilon, c=1.5):
     e_k = c*epsilon**(2./3)*k**(-5./3)
     return e_k
 
+
 def compute_kolmogorov_lengthscale_simple(epsilon, nu):
     """
     Return Kolmogorov length scale for a given set of dissipation rate and viscosity
@@ -3100,6 +3187,7 @@ def compute_kolmogorov_lengthscale_simple(epsilon, nu):
     float, Kolmogorov length scale
     """
     return (nu ** 3 / epsilon) ** (0.25)
+
 
 def get_characteristic_velocity(udata):
     """
@@ -3117,6 +3205,7 @@ def get_characteristic_velocity(udata):
     dim = len(udata)
     u_irms = np.sqrt(2. / dim * get_spatial_avg_energy(udata)[0])
     return u_irms
+
 
 def klonecker_delta(i, j):
     """
@@ -3136,6 +3225,7 @@ def klonecker_delta(i, j):
     else:
         return 0
 
+
 def cart2pol(x, y):
     """
     Cartesian coord to polar coord
@@ -3152,6 +3242,7 @@ def cart2pol(x, y):
     r = np.sqrt(x**2 + y**2)
     phi = np.arctan2(y, x)
     return r, phi
+
 
 def natural_sort(arr):
     def atoi(text):

@@ -24,8 +24,8 @@ import cv2
 
 
 #----------LOCAL DEPENDENCE----------
-import fapm.cine_local.cine.cine as cine  # use local cine package
-import fapm.cine_local.cine.tiff as tiff  # use local cine package
+import tflow.cine_local.cine.cine as cine  # use local cine package
+import tflow.cine_local.cine.tiff as tiff  # use local cine package
 
 
 description= '---------------------------------------------------------------------\n' \

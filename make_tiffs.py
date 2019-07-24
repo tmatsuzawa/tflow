@@ -29,8 +29,8 @@ import cv2
 sys.path.append('/Users/stephane/Documents/git/takumi/fapm/cine_local')
 #----------LOCAL DEPENDENCE----------
 import library.field.velocity as vel
-import fapm.cine_local.cine.cine as cine  # use local cine package
-import fapm.cine_local.cine.tiff as tiff  # use local cine package
+import tflow.cine_local.cine.cine as cine  # use local cine package
+import tflow.cine_local.cine.tiff as tiff  # use local cine package
 # To find out where Matlab is installed, type matlabroot on Matlab.
 matlab_path = '/Applications/MATLAB_R2019a.app/bin/matlab'
 

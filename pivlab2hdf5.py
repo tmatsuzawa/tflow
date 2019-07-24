@@ -31,8 +31,8 @@ import h5py
 from tqdm import tqdm
 from scipy import integrate, interpolate
 import sys
-import fapm.formatarray as fa
-import fapm.cine_local.cine.cine as cine  # use local cine package
+import tflow.formatarray as fa
+import tflow.cine_local.cine.cine as cine  # use local cine package
 
 def read_exp_settings(cinedir):
     exp_settings_path= cinedir + '/setup.txt'

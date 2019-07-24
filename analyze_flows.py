@@ -1041,6 +1041,6 @@ if __name__ == "__main__":
                         type=bool,
                         default=True)
     args = parser.parse_args()
-    main(args.h5data, overwrite=args.overwrite, t=args.t0, save=args.save)
+    main(args.h5data, overwrite=args.overwrite, t=args.t, save=args.save)
 
 
