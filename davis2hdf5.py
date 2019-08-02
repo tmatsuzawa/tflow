@@ -11,7 +11,7 @@ import velocity as vel
 import os
 import re
 
-def write_hdf5_dict(filepath, data_dict):
+def write_hdf5_dict(filepath, data_dict, chunks=None):
     """
     Stores data_dict
     Parameters
@@ -33,7 +33,11 @@ def write_hdf5_dict(filepath, data_dict):
     filename = filepath + ext
     hf = h5py.File(filename, 'w')
     for key in data_dict:
-        hf.create_dataset(key, data=data_dict[key])
+        if chunks is None or (key == 'x' or key == 'y'):
+            hf.create_dataset(key, data=data_dict[key])
+        else:
+            hf.create_dataset(key, data=data_dict[key], chunks=chunks)
+
     hf.close()
     print 'Data was successfully saved as ' + filename
 
@@ -64,7 +68,7 @@ def davis2hdf5_dirbase(dirbase, savedir=None, header='B', scale=1000.):
     print '... Done'
 
 
-def davis2hdf5(datadir, savedir=None, savepath=None, header='B', scale=1000.):
+def davis2hdf5(datadir, use_chunks, savedir=None, savepath=None, header='B', scale=1000., chunks=None):
     """
      Convert multiple davis outputs into hdf5 files
 
@@ -128,35 +132,14 @@ def davis2hdf5(datadir, savedir=None, savepath=None, header='B', scale=1000.):
     data2write['uy'] = udata_d[1, ...]
     data2write['x'] = x_arr
     data2write['y'] = y_arr
-    write_hdf5_dict(savepath, data2write)
+    if use_chunks:
+        chunks = tuple(list(udata_d.shape[1:-1]) + [1])
+        print chunks
+    else:
+        chunks = None
+    write_hdf5_dict(savepath, data2write, chunks=chunks)
     print '... Done'
 
-# make a hdf5 file from a simple dictionary
-def write_hdf5_dict(filepath, data_dict):
-    """
-    Stores data_dict
-    Parameters
-    ----------
-    filepath :  str
-                file path where data will be stored. (Do not include extension- .h5)
-    data_dict : dictionary
-                data should be stored as data_dict[key]= data_arrays
-
-    Returns
-    -------
-
-    """
-    filedir = os.path.split(filepath)[0]
-    if not os.path.exists(filedir):
-        os.makedirs(filedir)
-
-    ext = '.h5'
-    filename = filepath + ext
-    hf = h5py.File(filename, 'w')
-    for key in data_dict:
-        hf.create_dataset(key, data=data_dict[key])
-    hf.close()
-    print 'Data was successfully saved as ' + filename
 
 ##### misc. ####
 def natural_sort(arr):
@@ -181,10 +164,10 @@ def natural_sort(arr):
 def main(args):
     if args.dir is None:
         print 'Make hdf5 files for directories under ' + args.dirbase
-        davis2hdf5_dirbase(args.dirbase)
+        davis2hdf5_dirbase(args.dirbase, args.chunks)
     else:
         print 'Make a hdf5 file for the following directory: ' + args.dir
-        davis2hdf5(args.dir)
+        davis2hdf5(args.dir, args.chunks)
 
 
 if __name__ == "__main__":
@@ -193,6 +176,8 @@ if __name__ == "__main__":
                         default=None)
     parser.add_argument('-dir', '--dir', help='Name of a directory which contains pivlab txt outputs', type=str,
                         default=None)
+    parser.add_argument('-chunks', '--chunks', help='Use chunked storage. default: True', type=bool,
+                        default=True)
     args = parser.parse_args()
 
     main(args)

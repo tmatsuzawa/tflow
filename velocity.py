@@ -10,6 +10,7 @@ from scipy.interpolate import interp2d
 from scipy.interpolate import UnivariateSpline
 from scipy import interpolate
 import scipy.integrate as integrate
+from scipy.optimize import minimize
 import matplotlib.pyplot as plt
 import numpy.ma as ma
 from scipy import signal
@@ -17,6 +18,8 @@ from scipy import interpolate
 from scipy.interpolate import griddata
 import os
 import copy
+import tflow.graph as graph
+
 
 """
 Philosophy:
@@ -438,6 +441,41 @@ def get_spatial_avg_enstrophy(udata, x0=0, x1=None, y0=0, y1=None,
     enstrophy_vs_t_err = np.nanstd(enstrophy, axis=tuple(range(dim)))
     return enstrophy_vs_t, enstrophy_vs_t_err
 
+def get_turbulence_intensity_local(udata):
+    """
+    Turbulence intensity is defined as u/U where
+    u = sqrt((ux**2 + uy**2 + uz**2)/3) # characteristic turbulent velocity
+    U = sqrt((Ux**2 + Uy**2 + Uz**2))   # mean flow speed
+
+    This is somewhat ill-defined for turbulence with zero-mean flow !
+
+    Parameters
+    ----------
+    udata
+
+    Returns
+    -------
+
+    """
+    dim = udata.shape[0]
+    udata_mean, udata_t = reynolds_decomposition(udata)
+
+    u_rms = np.zeros_like(udata_mean[0])
+    u_t_rms = np.zeros_like(udata_t[0])
+    ti_local = np.zeros_like(u_t_rms)
+    for d in range(dim):
+        u_rms += udata_mean[d, ...] ** 2
+        u_t_rms += udata_t[d, ...] ** 2
+    u_rms = np.sqrt(u_rms)
+    u_t_rms = np.sqrt(u_t_rms / float(dim))
+    for t in range(u_t_rms.shape[-1]):
+        ti_local[..., t] = u_t_rms[..., t] / u_rms
+    return ti_local
+
+
+
+
+
 
 ########## Energy spectrum, Dissipation spectrum ##########
 
@@ -561,7 +599,7 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
     if window is not None:
         if dim == 2:
             xx, yy = get_equally_spaced_grid(udata, spacing=dx)
-            windows =get_window_radial(xx, yy, wtype=window, duration=duration)
+            windows = get_window_radial(xx, yy, wtype=window, duration=duration)
             # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
             udata_tapered = np.empty_like(udata)
             for i in range(dim):
@@ -596,17 +634,17 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
 
 
     if correct_signal_loss:
-        if window is not None:
-            if dim == 2:
-                xx, yy = get_equally_spaced_grid(udata, spacing=dx)
-                window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
-                signal_intensity_loss = np.nanmean(window_arr)
-            elif dim == 3:
-                xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
-                window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
-                signal_intensity_loss = np.nanmean(window_arr)
-        else:
-            signal_intensity_loss = 1.
+        # if window is not None:
+        #     if dim == 2:
+        #         xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+        #         window_arr = get_window_radial(xx, yy, wtype=window)
+        #         signal_intensity_loss = np.nanmean(window_arr)
+        #     elif dim == 3:
+        #         xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+        #         window_arr = get_window_radial(xx, yy, wtype=window)
+        #         signal_intensity_loss = np.nanmean(window_arr)
+        # else:
+        #     signal_intensity_loss = 1.
         # ek /= signal_intensity_loss
         for t in range(duration):
             # print signal_intensity_losses[t]
@@ -1387,6 +1425,56 @@ def get_epsilon_using_diss_spectrum(udata, nu=1.0034,x0=0, x1=None,
     return epsilon
 
 
+def get_epsilon_using_struc_func(rrs, Dxxs, epsilon_guess=100000, r0=1.0, r1=10.0, p=2, method='Nelder-Mead'):
+    def find_nearest(array, value, option='normal'):
+        """
+        Find an element and its index closest to 'value' in 'array'
+        Parameters
+        ----------
+        array
+        value
+
+        Returns
+        -------
+        idx: index of the array where the closest value to 'value' is stored in 'array'
+        array[idx]: value closest to 'value' in 'array'
+
+        """
+        # get the nearest value such that the element in the array is LESS than the specified 'value'
+        if option == 'less':
+            array_new = copy.copy(array)
+            array_new[array_new > value] = np.nan
+            idx = np.nanargmin(np.abs(array_new - value))
+            return idx, array_new[idx]
+        # get the nearest value such that the element in the array is GREATER than the specified 'value'
+        if option == 'greater':
+            array_new = copy.copy(array)
+            array_new[array_new < value] = np.nan
+            idx = np.nanargmin(np.abs(array_new - value))
+            return idx, array_new[idx]
+        else:
+            idx = (np.abs(array - value)).argmin()
+            return idx, array[idx]
+    def func(epsilon, rr, Dxx, r0, r1, p, c=2.0):
+        ind0 = find_nearest(rr, r0)[0]
+        ind1 = find_nearest(rr, r1)[0]
+        residue = np.nansum((Dxx[ind0:ind1] - c * (rr[ind0:ind1] * epsilon) ** (p / 3.)) ** 2)
+        return residue
+
+    if len(rrs.shape) != 0:
+        duration = rrs.shape[-1]
+    else:
+        duration = 1
+    epsilons = np.empty(duration)
+    for t in range(duration):
+        result = minimize(func, epsilon_guess, (rrs[..., t], Dxxs[..., t], r0, r1, p), method=method)
+        if result.success:
+            epsilons[t] = result.x
+        else:
+            epsilons[t] = np.nan
+    return epsilons
+
+
 ########## advanced analysis ##########
 ## Spatial autocorrelation functions
 def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=0, x1=None, y0=0, y1=None,
@@ -1490,6 +1578,7 @@ def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=0, x1=None, 
         n = int(x_grid.size * coarse2)
 
         uu2_norm = np.nanmean(ui[y0:y1, x0:x1, ...] ** 2, axis=(0, 1))  # mean square velocity (avg over space)
+        # uu2_norm = np.nanmean(ui[y0:y1, x0:x1, 0] ** 2)  # mean square velocity (avg over space)
 
         rr = np.empty((n, m))
         corr = np.empty((n, m))
@@ -1506,13 +1595,17 @@ def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=0, x1=None, 
         # flatten arrays to feed to binned_statistic
         rr, corr = rr.flatten(), corr.flatten()
 
+        # make sure rr and corr do not contain nans
+        mask = ~np.isnan(corr)
+        rr, corr = rr[mask], corr[mask]
+
         # get a histogram
         rr_means, rr_edges, binnumber = binned_statistic(rr, rr, statistic='mean', bins=n_bins)
         corr_, _, _ = binned_statistic(rr, corr, statistic='mean', bins=n_bins)
         corr_err, _, _ = binned_statistic(rr, corr, statistic='std', bins=n_bins)
 
         # One may use rr_means or the middle point of each bin for plotting
-        # Default is the middle point
+        # Default is to use the middle point
         rr_binwidth = (rr_edges[1] - rr_edges[0])
         rr_ = rr_edges[1:] - rr_binwidth / 2
 
@@ -1879,7 +1972,7 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
     There is one-to-one correspondence between Dij and Rij. (Pope 6.36)
     This method returns the LONGITUDINAL STRUCTURE FUNCTION.
     If p=2, this returns D_LL.
-
+    ... Returns rrs, Dxxs, Dxx_errs, rrs_scaled, Dxxs_scaled, Dxx_errs_scaled
     Parameters
     ----------
     udata
@@ -1910,6 +2003,7 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
     if notebook:
         from tqdm import tqdm_notebook as tqdm
         print 'Using tqdm_notebook. If this is a mistake, set notebook=False'
+
     # Array sorting
     def sort2arr(arr1, arr2):
         """
@@ -1941,6 +2035,12 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
         x1 = ui.shape[1]
     if y1 is None:
         y1 = ui.shape[0]
+    if x1 < 0:
+        x1 = ui.shape[1] - x1
+    if y1 < 0:
+        y1 = ui.shape[0] - y1
+
+
     # Some useful numbers for processing
     nrows, ncolumns = y1 - y0, x1 - x0
     limits = [ncolumns, nrows]
@@ -2030,6 +2130,7 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
     rrs_scaled = rrs / eta
     Dxxs_scaled = Dxxs / ((epsilon * rrs) ** (float(p) / 3.))
     Dxx_errs_scaled = Dxx_errs / ((epsilon * rrs) ** (float(p) / 3.))
+
     if notebook:
         from tqdm import tqdm as tqdm
     return rrs, Dxxs, Dxx_errs, rrs_scaled, Dxxs_scaled, Dxx_errs_scaled
@@ -2166,8 +2267,7 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran):
     for i, datum in enumerate(data):
         if ~np.isnan(data[i]).any():
             data[i] = data[i][~np.isnan(data[i])]
-    # inter
-    # polate data (3rd order spline)
+    # interpolate data (3rd order spline)
     lambda_f, lambda_g = [], []
     for t in range(duration):
         # if r_long contains nans, UnivariateSpline fails. so clean it up.
@@ -2228,6 +2328,22 @@ def get_taylor_microscales_iso(udata, epsilon, nu=1.004):
     lambda_g_iso = np.sqrt(15. * nu * u_irms ** 2 / epsilon)
     lambda_f_iso = np.sqrt(30. * nu * u_irms ** 2 / epsilon)
     return lambda_f_iso, lambda_g_iso
+
+
+# def get_taylor_microscale_heatmaps(udata, dx, dy, dz=None):
+#     dim = udata.shape[0]
+#     duidxj = get_duidxj_tensor(udata, dx=dx, dy=dy, dz=dz)
+#
+#     uu2 = np.zeros_like(udata[0])
+#     for d in range(dim):
+#         uu2 += udata[d, ...] ** 2
+#     uu2 /= float(dim)
+#
+#     lambda_f = np.sqrt(2 * uu2 / duidxj[..., 0, 0] ** 2)
+#     lambda_g = np.sqrt(2 * uu2 / duidxj[..., 0, 1] ** 2)
+#     return lambda_f, lambda_g
+#
+
 
 
 ## INTEGRAL SCALES ##
@@ -2350,7 +2466,7 @@ def get_integral_velocity_scale(udata):
 
 ## KOLMOGOROV SCALES ##
 ### DEFAULT ###
-def get_kolmogorov_scale(udata, dx, dy, dz, nu=1.004):
+def get_kolmogorov_scale(udata, dx, dy, dz=None, nu=1.004):
     """
     Returns kolmogorov LENGTh scale
     Parameters
@@ -2646,11 +2762,15 @@ def get_rescaled_structure_function_saddoughi(p=2):
     r_scaled: nd array
     dll: nd array
     """
-    faqm_dir = os.path.split(os.path.realpath(__file__))[0]
+    tflow_dir = os.path.split(os.path.realpath(__file__))[0]
     if p==2:
-        datapath = faqm_dir + '/reference_data/sv_struc_func.txt'
-        data = np.loadtxt(datapath, skiprows=1, delimiter=',')
-        r_scaled, dll = data[:, 0], data[:, 1]
+        datapath = tflow_dir + '/reference_data/sv_struc_func.h5'
+        # datapath = tflow_dir + '/reference_data/sv_struc_func.txt'
+        # data = np.loadtxt(datapath, skiprows=1, delimiter=',')
+        # r_scaled, dll = data[:, 0], data[:, 1]
+        with h5py.File(datapath, 'r') as ff:
+            r_scaled = np.asarray(ff['r_s'])
+            dll = np.asarray(ff['dll'])
         return r_scaled, dll
     else:
         print '... Only the rescaled, second-order structure function is available at the moment!'
@@ -3026,6 +3146,98 @@ def clean_udata(udata, xx, yy, cutoffU=2000, fill_value=np.nan, verbose=True, me
         from tqdm import tqdm as tqdm
 
     return udata_i
+
+# plotting usual stuff
+def plot_energy_spectra(udata, dx, dy, dz=None, x0=0, x1=None, y0=0, y1=None, window='flattop', epsilon_guess=10**5, nu=1.004, label='',
+                            plot_e22=False, plot_ek=False, fignum=1, t0=0, legend=True, loc=3):
+    """
+    A method to quickly plot the 1D energy spectra
+    Parameters
+    ----------
+    udata
+    dx
+    dy
+    dz
+    x0
+    x1
+    y0
+    y1
+    window
+    epsilon_guess
+    nu
+    plot_e22
+    plot_ek
+    fignum
+    t0
+    legend
+
+    Returns
+    -------
+    fig1, (ax1, ax2)
+
+    """
+    __fontsize__ = 25
+    __figsize__ = (16, 8)
+    # See all available arguments in matplotlibrc
+    params = {'figure.figsize': __figsize__,
+              'font.size': __fontsize__,  # text
+              'legend.fontsize': 18,  # legend
+              'axes.labelsize': __fontsize__,  # axes
+              'axes.titlesize': __fontsize__,
+              'xtick.labelsize': __fontsize__,  # tick
+              'ytick.labelsize': __fontsize__,
+              'lines.linewidth': 5,
+              'axes.titlepad': 10}
+    graph.update_figure_params(params)
+
+    ax1_ylabel = '$E_{11}$ ($mm^3/s^2$)'
+    ax2_ylabel = '$E_{11} / (\epsilon\\nu^5)^{1/4}$'
+
+
+    eiis, err, k11 = get_1d_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
+    if epsilon_guess is not None:
+        e11_s, k11_s = scale_energy_spectrum(eiis[0, ...], k11, epsilon=epsilon_guess, nu=nu)
+        e22_s, k22_s = scale_energy_spectrum(eiis[1, ...], k11, epsilon=epsilon_guess, nu=nu)
+        eiis_s = np.stack((e11_s, e22_s))
+        epsilon = epsilon_guess
+    else:
+        eiis_s, _, k11_s = get_1d_rescaled_energy_spectrum(udata, dx=dx, dy=dy, dz=dz, nu=nu)
+        epsilon = get_epsilon_using_sij(udata, dx, dy, dz, nu=nu)[t0]
+    fig1, ax1 = graph.plot(k11[1:], kolmogorov_53_uni(k11[1:], epsilon, c=0.5), label='$C_1\epsilon^{2/3}\kappa^{-5/3}$', fignum=1, subplot=121, color='k')
+    fig1, ax2 = graph.plot_saddoughi(fignum=fignum, subplot=122, color='k', label='Scaled $E_{11}$ (SV 1994)')
+
+    fig1, ax1 = graph.plot(k11[1:], eiis[0, 1:, t0], label='$E_{11}$' + label, fignum=1, subplot=121)
+    fig1, ax2 = graph.plot(k11_s[1:], eiis_s[0, 1:, t0], label='Scaled $E_{11}$' + label, fignum=1, subplot=122)
+
+    if plot_e22:
+        fig1, ax1 = graph.plot(k11[1:], eiis[1, 1:, t0], label='$E_{22}$' + label, fignum=1, subplot=121)
+        fig1, ax2 = graph.plot(k11_s[1:], eiis_s[1, 1:, t0], label='Scaled $E_{22}$' + label, fignum=1, subplot=122)
+        ax1_ylabel = ax1_ylabel[:-13] + ', $E_{22}$ ($mm^3/s^2$)'
+        ax2_ylabel = ax2_ylabel + ', $E_{22} / (\epsilon\\nu^5)^{1/4}$'
+
+    if plot_ek:
+        ek, _, kk = get_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
+        ek_s, kk_s = scale_energy_spectrum(ek, kk, epsilon=epsilon, nu=nu)
+        fig1, ax1 = graph.plot(kk[:, t0], ek[:, t0], label='$E$' + label, fignum=1, subplot=121)
+        fig1, ax2 = graph.plot(kk_s[:, t0], ek_s[:, t0], label='Scaled $E$' + label, fignum=1, subplot=122)
+
+        ax1_ylabel = ax1_ylabel[:-13] + ', $E$ ($mm^3/s^2$)'
+        ax2_ylabel = ax2_ylabel + ', $E / (\epsilon\\nu^5)^{1/4}$'
+
+    graph.tologlog(ax1)
+    graph.tologlog(ax2)
+    if legend:
+        ax1.legend(loc=loc)
+        ax2.legend(loc=loc)
+
+    graph.labelaxes(ax1, '$\kappa$ ($mm^{-1}$)', ax1_ylabel)
+    graph.labelaxes(ax2, '$\kappa \eta $ ', ax2_ylabel)
+
+    # graph.setaxes(ax1, 10 ** -1.5, 10 ** 0.8, 10 ** 0.3, 10 ** 5.3)
+    graph.setaxes(ax2, 10 ** -3.8, 2, 10 ** -3.5, 10 ** 6.5)
+
+    fig1.tight_layout(rect=[0, 0.03, 1, 0.95])
+    return fig1, (ax1, ax2)
 
 
 ########## misc ###########
