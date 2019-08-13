@@ -93,12 +93,10 @@ def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, over
 
 
     if verbose:
-        print("Saving figure to '%s'... \n" % savepath)
+        print("Saving figure to '%s'..." % savepath)
 
     # Save the figure
-    print 'eeee'
     plt.savefig(savepath, dpi=dpi, **kwargs)
-    print 'fffff'
     # Close it
     if close:
         plt.close()
@@ -1249,8 +1247,8 @@ def draw_power_triangle(ax, x, y, exponent, w=None, h=None, facecolor='none', ed
     else:
         # get the numbers to put on the graph to indicate the power
         exponent_rational = approximate_fraction(exponent, 0.0001)
-        ax.text(x_base, y_base, str(np.abs(exponent_rational.denominator)), fontsize=fontsize)
-        ax.text(x_height, y_height, str(np.abs(exponent_rational.numerator)), fontsize=fontsize)
+        ax.text(x_base, y_base, str(np.abs(exponent_rational.denominator)), fontsize=fontsize, **kwargs)
+        ax.text(x_height, y_height, str(np.abs(exponent_rational.numerator)), fontsize=fontsize, **kwargs)
 
 
 
@@ -1301,6 +1299,22 @@ def create_cmap_using_values(colors=None, color1='greenyellow', color2='darkgree
     return newcmap
 
 def get_colors_and_cmap_using_values(values, cmap=None, color1='greenyellow', color2='darkgreen', vmin=None, vmax=None, n=100):
+    """
+    Returns colors (list), cmap instance, mpl.colors.Normalize instance
+    Parameters
+    ----------
+    values
+    cmap
+    color1
+    color2
+    vmin
+    vmax
+    n
+
+    Returns
+    -------
+
+    """
     values = np.asarray(values)
     if vmin is None:
         vmin = np.nanmin(values)
@@ -1470,10 +1484,112 @@ def add_subplot_axes(ax, rect, axisbg='w'):
 
 # sketches
 def draw_rectangle(ax, x, y, width, height, angle=0.0, linewidth=1, edgecolor='r', facecolor='none', **kwargs):
+    """
+    Draws a rectangle in a figure (ax)
+    Parameters
+    ----------
+    ax
+    x
+    y
+    width
+    height
+    angle
+    linewidth
+    edgecolor
+    facecolor
+    kwargs
+
+    Returns
+    -------
+
+    """
     rect = mpatches.Rectangle((x, y), width, height, angle=angle, linewidth=linewidth, edgecolor=edgecolor,
                               facecolor=facecolor, **kwargs)
     ax.add_patch(rect)
+    ax.axis('equal') # this ensures to show the rectangle if the rectangle is bigger than the original size
     return rect
+
+
+def draw_box(ax, xx, yy, w_box=325., h_box=325., xoffset=0, yoffset=0, linewidth=5,
+             scalebar=True, sb_length=50., sb_units='$mm$', sb_loc=(0.95, 0.1), sb_txtloc=(0.0, 0.4), sb_lw=10, sb_txtcolor='white',
+             facecolor='k', fluidcolor='skyblue'):
+    """
+    Draws a box and fills the surrounding area with color (default: skyblue)
+    Adds a scalebar by default
+    ... drawn box center coincides with the center of given grids(xx, yy)
+    ... in order to shift the center of the box, use xoffset any yoffset
+    Parameters
+    ----------
+    ax: matplotlib.axes.Axes instance
+    xx: 2d numpy array
+        x coordinates
+    yy: 2d numpy array
+        y coordinates
+    w_box: float/int
+        width of the box
+    h_box: float/int
+        height of the box
+    xoffset: float/int
+        real number to shift the box center in the x direction
+    yoffset:
+        real number to shift the box center in the x direction
+    linewidth: int
+        linewidth of drawn box
+    scalebar: bool (default: True)
+        ... draws a scalebar inside the drawn box
+    sb_length: int
+        ... length of the scale bar in physical units.
+        ...... In principle, this can be float. If you want that, edit the code where ax.text() is called.
+        ...... Generalizing to accept the float requires a format which could vary everytime, so just accept integer.
+    sb_units: str
+        ... units of the sb_length. Default: '$mm$'
+    sb_loc: tuple, (x, y)
+        ... location of the scale bar. Range: [0, 1]
+        ... the units are with respect the width and height of the box
+    sb_txtloc: tuple, (x, y)
+        ... location of the TEXT of the scale bar. Range: [0, 1]
+        ... x=0: LEFT of the scale bar, x=1: RIGHT of the scale bar
+        ... y=0: LEFT of the scale bar, x=1: RIGHT of the scale bar
+
+    sb_lw:
+
+    facecolor
+    fluidcolor
+
+    Returns
+    -------
+
+    """
+    xmin, xmax = np.nanmin(xx), np.nanmax(xx)
+    ymin, ymax = np.nanmin(yy), np.nanmax(yy)
+    if np.nanmean(yy) > 0:
+        xc, yc = (xmax - xmin) / 2., (ymax - ymin) / 2.
+    else:
+        xc, yc = (xmax - xmin) / 2., -(ymax - ymin) / 2.
+    x0, y0 = xc - w_box / 2. + xoffset, yc - h_box / 2. + yoffset
+    draw_rectangle(ax, x0, y0, w_box, h_box, linewidth=linewidth, facecolor=facecolor, zorder=0)
+    ax.set_facecolor(fluidcolor)
+
+    if scalebar:
+        #         x0_sb, y0_sb = x0 + 0.8 * w_box, y0 + 0.1*h_box
+        x1_sb, y1_sb = x0 + sb_loc[0] * w_box, y0 + sb_loc[1] * h_box
+        x0_sb, y0_sb = x1_sb - sb_length, y1_sb
+        if sb_loc[1] < 0.5:
+            x_sb_txt, y_sb_txt = x0_sb + sb_txtloc[0] * sb_length, y0 + sb_loc[1] * h_box * sb_txtloc[1]
+        else:
+            x_sb_txt, y_sb_txt = x0_sb + sb_txtloc[0] * sb_length, y0 - (1 - sb_loc[1]) * h_box * sb_txtloc[1] + sb_loc[1] * h_box
+        x_sb, y_sb = [x0_sb, x1_sb], [y0_sb, y1_sb]
+        xmin, xmax, ymin, ymax = ax.axis()
+        width, height = xmax - xmin, ymax - ymin
+        ax.plot(x_sb, y_sb, linewidth=sb_lw, color=sb_txtcolor)
+        ax.text(x_sb_txt, y_sb_txt, '%d %s' % (sb_length, sb_units), color=sb_txtcolor)
+    ax.get_xaxis().set_visible(False)
+    ax.get_yaxis().set_visible(False)
+
+    ax.spines["top"].set_visible(False)
+    ax.spines["bottom"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(False)
 
 ## misc.
 def simplest_fraction_in_interval(x, y):

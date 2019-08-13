@@ -558,7 +558,7 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
     ux = np.sin(2.5*xx + yy)
     uy = np.sin(yy) * 0
     udata_test = np.stack((ux, uy))
-    ek, ks = vel.get_energy_spectrum_nd(udata_test, dx=dx, dy=dy)
+    ek, ks = get_energy_spectrum_nd(udata_test, dx=dx, dy=dy)
     graph.color_plot(xx, yy, (ux**2 + uy**2 ) /2., fignum=2, subplot=121)
     fig22, ax22, cc22 = graph.color_plot(ks[0], ks[1], ek.real[..., 0], fignum=2, subplot=122, figsize=(16, 8))
     graph.setaxes(ax22, -10, 10, -10, 10)
@@ -1326,7 +1326,7 @@ def get_large_scale_vel_field(udata, kmax, x0=0, x1=None, y0=0, y1=None, z0=0, z
 ########## DISSIPATION RATE ##########
 
 def get_epsilon_using_sij(udata, dx=None, dy=None, dz=None, nu=1.004,
-                          x0=0, x1=None, y0=0, y1=None, z0=0, z1=None):
+                          x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None):
     """
     sij: numpy array with shape (nrows, ncols, duration, 2, 2) (dim=2) or (nrows, ncols, nstacks, duration, 3, 3) (dim=3)
     ... idea is... sij[spacial coordinates, time, tensor indices]
@@ -1344,11 +1344,11 @@ def get_epsilon_using_sij(udata, dx=None, dy=None, dz=None, nu=1.004,
     dim = len(udata)
 
     if dim==2:
-        udata = udata[:, y0:y1, x0:x1, :]
+        udata = udata[:, y0:y1, x0:x1, t0:t1]
     elif dim == 3:
         if z1 is None:
             z1 = udata[0].shape[2]
-        udata = udata[:, y0:y1, x0:x1, z0:z1, :]
+        udata = udata[:, y0:y1, x0:x1, z0:z1, t0:t1]
 
     if dx is None:
         raise ValueError('... dx is None. Provide int or float.')
@@ -1549,12 +1549,18 @@ def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=0, x1=None, 
         y0 = 0
     if x1 is None:  # if None, use the whole space
         x1 = ui.shape[1]
+    elif x1 < 0:
+        x1 = ui.shape[1] - x1
     if y1 is None:
         y1 = ui.shape[0]
+    elif y1 < 0:
+        y1 = ui.shape[0] - y1
     if t0 is None:
         t0 = 0
     if t1 is None:
         t1 = ui.shape[2]
+    elif t1 < 0:
+        t1 = ui.shape[2] - t1
 
     # Some useful numbers for processing
     nrows, ncolumns = y1 - y0, x1 - x0
@@ -2125,7 +2131,7 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
     elif dim == 2:
         dx, dy = x[0, 1] - x[0, 0], y[1, 0] - y[0, 0]
         dz = None
-    epsilon = get_epsilon_using_sij(udata, dx=dx, dy=dy, dz=dz, nu=nu)
+    epsilon = get_epsilon_using_sij(udata, dx=dx, dy=dy, dz=dz, nu=nu, t0=t0, t1=t1)
     eta = (nu **  3 / epsilon) ** 0.25
     rrs_scaled = rrs / eta
     Dxxs_scaled = Dxxs / ((epsilon * rrs) ** (float(p) / 3.))
@@ -2751,7 +2757,7 @@ def get_rescaled_energy_spectra_jhtd():
 
 def get_rescaled_structure_function_saddoughi(p=2):
     """
-    Returns the values of rescaled structure function reported in Saddoughi and Veeravalli 1994 paper
+    Returns the values of rescaled structure function reported in Saddoughi and Veeravalli 1994 paper: r_scaled, dll
     ... this is a curve about a specific Reynolds number! i.e. there is no universal structure function
     ----------
     p: int
@@ -3238,6 +3244,410 @@ def plot_energy_spectra(udata, dx, dy, dz=None, x0=0, x1=None, y0=0, y1=None, wi
 
     fig1.tight_layout(rect=[0, 0.03, 1, 0.95])
     return fig1, (ax1, ax2)
+
+def plot_energy_spectra_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=None, y0=0, y1=None, window='flattop', epsilon_guess=10**5, nu=1.004, label='',
+                            plot_e22=False, plot_ek=False, fignum=1, t0=0, legend=True, loc=3, crop_edges=5, yoffset_box=20, sb_txtloc=(-0.1, 0.4)):
+    """
+    A method to quickly plot the energy spectra (snapshot) and time-averaged energy
+
+    Parameters
+    ----------
+    udata
+    dx
+    dy
+    dz
+    x0
+    x1
+    y0
+    y1
+    window
+    epsilon_guess
+    nu
+    label
+    plot_e22
+    plot_ek
+    fignum
+    t0
+    legend
+    loc
+    crop_edges
+    yoffset_box
+    sb_txtloc
+
+    Returns
+    -------
+
+    """
+    __fontsize__ = 25
+    __figsize__ = (24, 8)
+    # See all available arguments in matplotlibrc
+    params = {'figure.figsize': __figsize__,
+              'font.size': __fontsize__,  # text
+              'legend.fontsize': 18,  # legend
+              'axes.labelsize': __fontsize__,  # axes
+              'axes.titlesize': __fontsize__,
+              'xtick.labelsize': __fontsize__,  # tick
+              'ytick.labelsize': __fontsize__,
+              'lines.linewidth': 5,
+              'axes.titlepad': 10}
+    graph.update_figure_params(params)
+
+    dim = udata.shape[0]
+    n = crop_edges
+    if x1 is None:
+        x1 = udata.shape[2]-1
+    if y1 is None:
+        y1 = udata.shape[1]-1
+
+    ax2_ylabel = '$E_{11}$ ($mm^3/s^2$)'
+    ax3_ylabel = '$E_{11} / (\epsilon\\nu^5)^{1/4}$'
+
+    # Compute energy heatmap and draw rectangle
+    energy_avg = np.nanmean(get_energy(udata), axis=dim)
+    xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+    # Time-averaged Energy
+    fig1, ax1, cc1 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], energy_avg[n:-n, n:-n],
+                                         label='$\\frac{1}{2} \langle U_i   U_i \\rangle$ ($mm^2/s^2$)',
+                                         vmin=0, vmax=10 ** 4.8, fignum=1, subplot=131)
+    graph.draw_box(ax1, xx, yy, yoffset=yoffset_box, sb_txtloc=sb_txtloc)
+    print xx[y0, x1]
+    print np.abs(xx[y0, x1]-xx[y0, x0]), np.abs(yy[y1, x0]-yy[y0, x0])
+    graph.draw_rectangle(ax1, xx[y0, x0], yy[y0, x0], np.abs(xx[y0, x1]-xx[y0, x0]), np.abs(yy[y1, x0]-yy[y0, x0]), edgecolor='C0', linewidth=5)
+
+    # Coompute energy spectra
+    eiis, err, k11 = get_1d_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
+    if epsilon_guess is not None:
+        e11_s, k11_s = scale_energy_spectrum(eiis[0, ...], k11, epsilon=epsilon_guess, nu=nu)
+        e22_s, k22_s = scale_energy_spectrum(eiis[1, ...], k11, epsilon=epsilon_guess, nu=nu)
+        eiis_s = np.stack((e11_s, e22_s))
+        epsilon = epsilon_guess
+    else:
+        eiis_s, _, k11_s = get_1d_rescaled_energy_spectrum(udata, dx=dx, dy=dy, dz=dz, nu=nu)
+        epsilon = get_epsilon_using_sij(udata, dx, dy, dz, nu=nu)[t0]
+    fig1, ax2 = graph.plot(k11[1:], kolmogorov_53_uni(k11[1:], epsilon, c=0.5), label='$C_1\epsilon^{2/3}\kappa^{-5/3}$', fignum=1, subplot=132, color='k')
+    fig1, ax3 = graph.plot_saddoughi(fignum=fignum, subplot=133, color='k', label='Scaled $E_{11}$ (SV 1994)')
+
+    fig1, ax2 = graph.plot(k11[1:], eiis[0, 1:, t0], label='$E_{11}$' + label, fignum=1, subplot=132)
+    fig1, ax3 = graph.plot(k11_s[1:], eiis_s[0, 1:, t0], label='Scaled $E_{11}$' + label, fignum=1, subplot=133)
+
+    if plot_e22:
+        fig1, ax2 = graph.plot(k11[1:], eiis[1, 1:, t0], label='$E_{22}$' + label, fignum=1, subplot=132)
+        fig1, ax3 = graph.plot(k11_s[1:], eiis_s[1, 1:, t0], label='Scaled $E_{22}$' + label, fignum=1, subplot=133)
+        ax2_ylabel = ax2_ylabel[:-13] + ', $E_{22}$ ($mm^3/s^2$)'
+        ax3_ylabel = ax3_ylabel + ', $E_{22} / (\epsilon\\nu^5)^{1/4}$'
+
+    if plot_ek:
+        ek, _, kk = get_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
+        ek_s, kk_s = scale_energy_spectrum(ek, kk, epsilon=epsilon, nu=nu)
+        fig1, ax2 = graph.plot(kk[:, t0], ek[:, t0], label='$E$' + label, fignum=1, subplot=132)
+        fig1, ax3 = graph.plot(kk_s[:, t0], ek_s[:, t0], label='Scaled $E$' + label, fignum=1, subplot=133)
+
+        ax2_ylabel = ax2_ylabel[:-13] + ', $E$ ($mm^3/s^2$)'
+        ax3_ylabel = ax3_ylabel + ', $E / (\epsilon\\nu^5)^{1/4}$'
+
+    graph.tologlog(ax2)
+    graph.tologlog(ax3)
+    if legend:
+        ax2.legend(loc=loc)
+        ax3.legend(loc=loc)
+
+    graph.labelaxes(ax2, '$\kappa$ ($mm^{-1}$)', ax2_ylabel)
+    graph.labelaxes(ax3, '$\kappa \eta $ ', ax3_ylabel)
+
+    # graph.setaxes(ax1, 10 ** -1.5, 10 ** 0.8, 10 ** 0.3, 10 ** 5.3)
+    graph.setaxes(ax3, 10 ** -3.8, 2, 10 ** -3.5, 10 ** 6.5)
+
+    fig1.tight_layout(rect=[0, 0.03, 1, 0.95])
+    return fig1, (ax1, ax2, ax3)
+
+
+
+def plot_energy_spectra_avg_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=None, y0=0, y1=None, window='flattop',
+                                         epsilon_guess=10 ** 5, nu=1.004, label='',
+                                         plot_e22=False, plot_ek=False, fignum=1, legend=True, loc=3,
+                                         crop_edges=5, yoffset_box=20, sb_txtloc=(-0.1, 0.4)):
+    """
+    A method to quickly plot the energy spectra (Time-averaged) and time-averaged energy
+
+    Parameters
+    ----------
+    udata
+    dx
+    dy
+    dz
+    x0
+    x1
+    y0
+    y1
+    window
+    epsilon_guess
+    nu
+    label
+    plot_e22
+    plot_ek
+    fignum
+    t0
+    legend
+    loc
+    crop_edges
+    yoffset_box
+    sb_txtloc
+
+    Returns
+    -------
+
+    """
+    __fontsize__ = 25
+    __figsize__ = (24, 8)
+    # See all available arguments in matplotlibrc
+    params = {'figure.figsize': __figsize__,
+              'font.size': __fontsize__,  # text
+              'legend.fontsize': 18,  # legend
+              'axes.labelsize': __fontsize__,  # axes
+              'axes.titlesize': __fontsize__,
+              'xtick.labelsize': __fontsize__,  # tick
+              'ytick.labelsize': __fontsize__,
+              'lines.linewidth': 5,
+              'axes.titlepad': 10}
+    graph.update_figure_params(params)
+
+    dim = udata.shape[0]
+    n = crop_edges
+
+    ax2_ylabel = '$E_{11}$ ($mm^3/s^2$)'
+    ax3_ylabel = '$E_{11} / (\epsilon\\nu^5)^{1/4}$'
+
+    # Compute energy heatmap and draw rectangle
+    energy_avg = np.nanmean(get_energy(udata), axis=dim)
+    xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+    # Time-averaged Energy
+    fig1, ax1, cc1 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], energy_avg[n:-n, n:-n],
+                                      label='$\\frac{1}{2} \langle U_i   U_i \\rangle$ ($mm^2/s^2$)',
+                                      vmin=0, vmax=10 ** 5, fignum=1, subplot=131)
+    graph.draw_box(ax1, xx, yy, yoffset=yoffset_box, sb_txtloc=sb_txtloc)
+    graph.draw_rectangle(ax1, xx[y0, x0], yy[y0, x0], np.abs(xx[y0, x1] - xx[y0, x0]), np.abs(yy[y1, x0] - yy[y0, x0]),
+                         edgecolor='C0', linewidth=5)
+
+    # Coompute energy spectra
+    eiis_raw, err, k11 = get_1d_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
+    eiis = np.nanmean(eiis_raw, axis=2)
+    eii_errs = np.nanstd(eiis_raw, axis=2)
+    if epsilon_guess is not None:
+        e11_s, k11_s = scale_energy_spectrum(eiis_raw[0, ...], k11, epsilon=epsilon_guess, nu=nu)
+        e22_s, k22_s = scale_energy_spectrum(eiis_raw[1, ...], k11, epsilon=epsilon_guess, nu=nu)
+        eiis_s = np.stack((np.nanmean(e11_s, axis=1), np.nanmean(e22_s, axis=1)))
+        eii_errs_s = np.stack((np.nanstd(e11_s, axis=1), np.nanstd(e22_s, axis=1)))
+        epsilon = epsilon_guess
+    else:
+        eiis_s_raw, _, k11_s = get_1d_rescaled_energy_spectrum(udata, dx=dx, dy=dy, dz=dz, nu=nu)
+        eiis_s = np.nanmean(eiis_s_raw, axis=2)
+        eii_errs_s = np.nanstd(eiis_s_raw, axis=2)
+        epsilon = np.nanmean(get_epsilon_using_sij(udata, dx, dy, dz, nu=nu))
+    fig1, ax2 = graph.plot(k11[1:], kolmogorov_53_uni(k11[1:], epsilon, c=0.5),
+                           label='$C_1\epsilon^{2/3}\kappa^{-5/3}$', fignum=1, subplot=132, color='k')
+    fig1, ax3 = graph.plot_saddoughi(fignum=fignum, subplot=133, color='k', label='Scaled $E_{11}$ (SV 1994)')
+
+    # fig1, ax2 = graph.plot(k11[1:], eiis[0, 1:], label='$E_{11}$' + label, fignum=1, subplot=132)
+    # fig1, ax3 = graph.plot(k11_s[1:], eiis_s[0, 1:], label='Scaled $E_{11}$' + label, fignum=1, subplot=133)
+    fig1, ax2, _ = graph.errorfill(k11[1:], eiis[0, 1:], eii_errs[0, 1:], label='$E_{11}$' + label, fignum=1, subplot=132)
+    fig1, ax3, _ = graph.errorfill(k11_s[1:], eiis_s[0, 1:], eii_errs_s[0, 1:], label='Scaled $E_{11}$' + label, fignum=1, subplot=133)
+
+
+    if plot_e22:
+        # fig1, ax2 = graph.plot(k11[1:], eiis[1, 1:], label='$E_{22}$' + label, fignum=1, subplot=132)
+        # fig1, ax3 = graph.plot(k11_s[1:], eiis_s[1, 1:], label='Scaled $E_{22}$' + label, fignum=1, subplot=133)
+        fig1, ax2, _ = graph.errorfill(k11[1:], eiis[1, 1:], eii_errs[1, 1:],label='$E_{22}$' + label, fignum=1, subplot=132)
+        fig1, ax3, _ = graph.errorfill(k11_s[1:], eiis_s[1, 1:], eii_errs_s[1, 1:],label='Scaled $E_{22}$' + label, fignum=1, subplot=133)
+        ax2_ylabel = ax2_ylabel[:-13] + ', $E_{22}$ ($mm^3/s^2$)'
+        ax3_ylabel = ax3_ylabel + ', $E_{22} / (\epsilon\\nu^5)^{1/4}$'
+
+    if plot_ek:
+        ek_raw, _, kk = get_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
+        ek_s_raw, kk_s = scale_energy_spectrum(ek_raw, kk, epsilon=epsilon, nu=nu)
+
+        ek, ek_s = np.nanmean(ek_raw, axis=1), np.nanmean(ek_s_raw, axis=1)
+        ek_err, ek_s_err = np.nanstd(ek_raw, axis=1), np.nanstd(ek_s_raw, axis=1)
+        # fig1, ax2 = graph.plot(kk[:, 0], ek, label='$E$' + label, fignum=1, subplot=132)
+        # fig1, ax3 = graph.plot(kk_s[:, 0], ek_s, label='Scaled $E$' + label, fignum=1, subplot=133)
+        fig1, ax2, _ = graph.errorfill(kk[:, 0], ek, ek_err, label='$E$' + label, fignum=1, subplot=132)
+        fig1, ax3, _ = graph.errorfill(kk_s[:, 0], ek_s, ek_s_err, label='Scaled $E$' + label, fignum=1, subplot=133)
+
+
+        ax2_ylabel = ax2_ylabel[:-13] + ', $E$ ($mm^3/s^2$)'
+        ax3_ylabel = ax3_ylabel + ', $E / (\epsilon\\nu^5)^{1/4}$'
+
+    graph.tologlog(ax2)
+    graph.tologlog(ax3)
+    if legend:
+        ax2.legend(loc=loc)
+        ax3.legend(loc=loc)
+
+    graph.labelaxes(ax2, '$\kappa$ ($mm^{-1}$)', ax2_ylabel)
+    graph.labelaxes(ax3, '$\kappa \eta $ ', ax3_ylabel)
+
+    # graph.setaxes(ax1, 10 ** -1.5, 10 ** 0.8, 10 ** 0.3, 10 ** 5.3)
+    graph.setaxes(ax3, 10 ** -3.8, 2, 10 ** -3.5, 10 ** 6.5)
+
+    fig1.tight_layout(rect=[0, 0.03, 1, 0.95])
+    return fig1, (ax1, ax2, ax3)
+
+
+def plot_mean_flow(udata, xx, yy, f_p=5., crop_edges=4, fps=1000., data_spacing=1, umin=-200, umax=200, tau0=0, tau1=10, yoffset_box=20.):
+    """
+    A method to quickly plot the mean flow
+    Parameters
+    ----------
+    udata
+    xx
+    yy
+    f_p
+    crop_edges
+    fps
+    data_spacing
+    umin
+    umax
+    tau0
+    tau1
+    yoffset_box
+
+    Returns
+    -------
+
+    """
+    __figsize__, __fontsize__ = (24, 20), 16
+    params = {'figure.figsize': __figsize__,
+              'font.size': __fontsize__,  # text
+              'legend.fontsize': 16,  # legend
+              'axes.labelsize': __fontsize__,  # axes
+              'axes.titlesize': __fontsize__,
+              'xtick.labelsize': __fontsize__,  # tick
+              'ytick.labelsize': __fontsize__,
+              'axes.edgecolor': 'black',
+              'axes.linewidth': 0.8,
+              'lines.linewidth': 5.}
+    graph.update_figure_params(params)
+    # Forcing Period
+    tau_p = int(1. / f_p * fps / data_spacing)  # 1/f *(fps/data_spacing) in frames
+    # no. of pixels to ignore at the edge
+    n = crop_edges
+
+    # PLOTTING
+    gridshape = (7, 6)
+    ax_evst = plt.subplot2grid(gridshape, (0, 0), colspan=6)
+    ax_enstvst = ax_evst.twinx()
+
+    ax_eavg = plt.subplot2grid(gridshape, (1, 1), colspan=2, rowspan=2)
+    ax_e_mf = plt.subplot2grid(gridshape, (1, 3), colspan=2, rowspan=2)
+
+    ax_enstavg = plt.subplot2grid(gridshape, (3, 1), colspan=2, rowspan=2)
+    ax_enst_mf = plt.subplot2grid(gridshape, (3, 3), colspan=2, rowspan=2)
+
+    ax_ux_mf = plt.subplot2grid(gridshape, (5, 0), colspan=2, rowspan=2)
+    ax_uy_mf = plt.subplot2grid(gridshape, (5, 2), colspan=2, rowspan=2)
+    ax_omega_mf = plt.subplot2grid(gridshape, (5, 4), colspan=2, rowspan=2)
+
+    mask = np.empty(udata.shape[-1])
+    for i in range(len(mask)):
+        if (i - tau0) % tau_p < tau1:
+            mask[i] = True
+        else:
+            mask[i] = False
+    mask = mask.astype('bool')
+
+    # Compute quantities
+    ## spacing
+    dx = np.abs(xx[0, 1] - xx[0, 0])
+    dy = np.abs(yy[1, 0] - yy[0, 0])
+    ## time average using all data
+    udata_m_all, udata_t_all = reynolds_decomposition(udata)
+    e_avg_all, _ = get_spatial_avg_energy(udata, x0=n, x1=-n, y0=n, y1=-n)
+    e_t_avg_all, _ = get_spatial_avg_energy(udata_t_all, x0=n, x1=-n, y0=n, y1=-n)
+    enst_avg_all, _ = get_spatial_avg_enstrophy(udata, x0=n, x1=-n, y0=n, y1=-n, dx=dx, dy=dy)
+
+    ## Reynolds decomposition (For a specified region)
+    udata_m, udata_t = reynolds_decomposition(udata[..., mask])
+    ## energy / enstrophy 
+    time = np.arange(udata.shape[-1]) / (fps / data_spacing)
+    e_t_avg, _ = get_spatial_avg_energy(udata_t, x0=n, x1=-n, y0=n, y1=-n)
+
+    energy = get_energy(udata[..., mask])
+    enstrophy = get_enstrophy(udata[..., mask], dx=dx, dy=dy)
+
+    e = np.nanmean(energy, axis=2)
+    enst = np.nanmean(enstrophy, axis=2)
+    energy_m = get_energy(udata_m)
+    omega_m = curl(udata_m, dx=dx, dy=dy)
+    enst_m = omega_m ** 2
+
+    # PLOT
+    # E vs t
+    l_e = ax_evst.plot(time, e_avg_all, label='$\langle E \\rangle_{space}$', alpha=0.8)
+    l_k = ax_evst.plot(time, e_t_avg_all, label='$\langle k \\rangle_{space}$', alpha=0.8)
+    l_enst = ax_enstvst.plot(time, enst_avg_all, label='$\langle \omega_z^2 \\rangle_{space}$', color='C2',
+                             alpha=0.8)
+    graph.tosemilogy(ax_evst)
+    graph.tosemilogy(ax_enstvst)
+    ax_evst.set_ylim(10 ** 3.5, 10 ** 5)
+    ax_enstvst.set_ylim(10 ** 2.5, 10 ** 4)
+    ax_enstvst.set_xlim(time[0], time[0] + (time[-1] - time[0]) * 1.01)
+    graph.labelaxes(ax_evst, '$t$ ($s$)', '$E, k$ ($mm^2/s^2$)')
+    graph.labelaxes(ax_enstvst, '$t$ ($s$)', '$\langle \omega_z^2 \\rangle$ ($1/s^2$)')
+    ## Vertical Bands
+    t0 = tau0 * data_spacing / fps
+    t1 = t0 + tau1 * data_spacing / fps
+    while t1 < time[-1]:
+        graph.axvband(ax_enstvst, t0, t1, zorder=0)
+        t0 += 1. / f_p
+        t1 += 1. / f_p
+    ## Label
+    lns = l_e + l_k + l_enst
+    labs = [l.get_label() for l in lns]
+    ax_evst.legend(lns, labs, loc=1, ncol=3, facecolor='white', framealpha=1.0, frameon=False)
+
+    # Time-averaged Energy
+    fig, ax_eavg, cc1 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], e[n:-n, n:-n], ax=ax_eavg,
+                                         label='$\\frac{1}{2} \langle U_i   U_i \\rangle$ ($mm^2/s^2$)',
+                                         vmin=0, vmax=10 ** 4.8)
+    # Mean Flow Energy
+    fig, ax_e_mf, cc2 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], energy_m[n:-n, n:-n], ax=ax_e_mf,
+                                         label='$\\frac{1}{2} \langle U_i  \\rangle  \langle U_i  \\rangle$ ($mm^2/s^2$)',
+                                         vmin=0, vmax=10 ** 4.2)
+
+    # Time-averaged Enstrophy
+    fig, ax_enstavg, cc3 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], enst[n:-n, n:-n], ax=ax_enstavg,
+                                            label='$\langle \omega_z^2 \\rangle$ ($1/s^2$)', vmin=0,
+                                            vmax=10 ** 3.7)
+
+    # Mean Flow Enstrophy
+    fig, ax_enst_mf, cc4 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], enst_m[n:-n, n:-n, 0],
+                                            ax=ax_enst_mf, vmin=0, vmax=250,
+                                            label='$\langle \Omega_z  \\rangle  ^2$ ($1/s^2$)')
+
+    # Mean Flow Ux
+    fig, ax_ux_mf, cc5 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], udata_m[0, n:-n, n:-n],
+                                          ax=ax_ux_mf, cmap='bwr',
+                                          label='$\langle U_x \\rangle$ ($mm/s$)', vmin=umin, vmax=umax)
+
+    # Mean Flow Uy
+    fig5, ax_uy_mf, cc6 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], udata_m[1, n:-n, n:-n],
+                                           ax=ax_uy_mf, cmap='bwr',
+                                           label='$\langle U_y \\rangle$ ($mm/s$)', vmin=umin, vmax=umax)
+
+    # Mean Flow Vorticity
+    fig, ax_omega_mf, cc = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], omega_m[n:-n, n:-n, 0],
+                                             ax=ax_omega_mf, cmap='bwr',
+                                             label='$\langle \Omega_z \\rangle$ ($1/s$)', vmin=-20, vmax=20)
+
+    axes_to_add_box = [ax_eavg, ax_e_mf, ax_enstavg, ax_enst_mf, ax_ux_mf, ax_uy_mf, ax_omega_mf]
+    for ax in axes_to_add_box:
+        if ax in [ax_ux_mf, ax_uy_mf, ax_omega_mf]:
+            graph.draw_box(ax, xx, yy, yoffset=yoffset_box, facecolor='white', sb_txtcolor='k', sb_txtloc=(-0.1, 0.4))
+        else:
+            graph.draw_box(ax, xx, yy, yoffset=yoffset_box, sb_txtloc=(-0.1, 0.4))
+    fig.tight_layout()
+
+    axes = [ax_evst, ax_enstvst] + axes_to_add_box
+    return fig, axes
 
 
 ########## misc ###########

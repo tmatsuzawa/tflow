@@ -134,7 +134,6 @@ def davis2hdf5(datadir, use_chunks, savedir=None, savepath=None, header='B', sca
     data2write['y'] = y_arr
     if use_chunks:
         chunks = tuple(list(udata_d.shape[1:-1]) + [1])
-        print chunks
     else:
         chunks = None
     write_hdf5_dict(savepath, data2write, chunks=chunks)
@@ -163,10 +162,10 @@ def natural_sort(arr):
 ##### main method ####
 def main(args):
     if args.dir is None:
-        print 'Make hdf5 files for directories under ' + args.dirbase
+        print '... Making hdf5 files for directories under ' + args.dirbase
         davis2hdf5_dirbase(args.dirbase, args.chunks)
     else:
-        print 'Make a hdf5 file for the following directory: ' + args.dir
+        print '... Making a hdf5 file for the following directory: ' + args.dir
         davis2hdf5(args.dir, args.chunks)
 
 
