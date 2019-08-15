@@ -3650,6 +3650,24 @@ def plot_mean_flow(udata, xx, yy, f_p=5., crop_edges=4, fps=1000., data_spacing=
     return fig, axes
 
 
+# movie
+def make_time_evo_movie_from_udata(qty, xx, yy, time, t=1, label='$\\frac{1}{U_i U_i$ ($mm^2/s^2$)',
+                                   x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, vmin=0, vmax=None,
+                                   draw_box=True, xlabel='$x$ ($mm$)', ylabel='$y$ ($mm$)'):
+    if t != 1:
+        qty_ravg = get_running_avg_nd(qty, t)
+    else:
+        qty_ravg = qty
+    for t0 in range(time[:-t]):
+        fig1, ax1, cc1 = graph.color_plot(xx[y0:y1, x0:x1], yy[y0:y1, x0:x1], qty_ravg[y0:y1, x0:x1, t0], fignum=1,
+                                      vmin=vmin, vmax=vmax, label=label)
+    if draw_box:
+        graph.draw_box(ax1, xx, yy)
+    else:
+        graph.labelaxes(xlabel, ylabel)
+    graph.title(ax1, '$t=%02.3f$')
+
+
 ########## misc ###########
 def fix_udata_shape(udata):
     """
@@ -3881,3 +3899,26 @@ def natural_sort(arr):
         return [atoi(c) for c in re.split('(\d+)', text)]
 
     return sorted(arr, key=natural_keys)
+
+
+def get_running_avg_1d(x, t):
+    """
+    Returns a running average of 1D array x. The number of elements to average over is specified by t.
+    """
+    y = np.zeros(len(x)-t)
+    for i in range(t):
+        y += np.roll(x, -i)[:-t]
+    y /= float(t)
+    return y
+
+def get_running_avg_nd(udata, t, axis=-1):
+    """
+    Returns a running average of nD array x. The number of elements to average over is specified by t.
+    """
+    shape = udata.shape
+    newshape = tuple(list(shape)[:-1] + [shape[-1]-t])
+    vdata = np.zeros(newshape)
+    for i in range(t):
+        vdata += np.roll(udata, -i, axis=axis)[..., :-t]
+    vdata /= float(t)
+    return vdata

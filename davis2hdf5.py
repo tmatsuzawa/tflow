@@ -42,7 +42,7 @@ def write_hdf5_dict(filepath, data_dict, chunks=None):
     print 'Data was successfully saved as ' + filename
 
 
-def davis2hdf5_dirbase(dirbase, savedir=None, header='B', scale=1000.):
+def davis2hdf5_dirbase(dirbase, use_chunks, savedir=None, header='B', scale=1000., fps=1.):
     """
     Convert multiple davis outputs into hdf5 files
 
@@ -64,11 +64,11 @@ def davis2hdf5_dirbase(dirbase, savedir=None, header='B', scale=1000.):
 
     datadirs = glob.glob(dirbase + '/*')
     for datadir in tqdm(datadirs, desc='datadir'):
-        davis2hdf5(datadir, savedir=savedir, header=header, scale=scale)
+        davis2hdf5(datadir, use_chunks, savedir=savedir, header=header, scale=scale, fps=fps)
     print '... Done'
 
 
-def davis2hdf5(datadir, use_chunks, savedir=None, savepath=None, header='B', scale=1000., chunks=None):
+def davis2hdf5(datadir, use_chunks, savedir=None, savepath=None, header='B', scale=1000., chunks=None, fps=1.):
     """
      Convert multiple davis outputs into hdf5 files
 
@@ -92,6 +92,25 @@ def davis2hdf5(datadir, use_chunks, savedir=None, savepath=None, header='B', sca
             height, width = int(lines[0].split()[4]), int(lines[0].split()[5])
             shape = (height, width)
             for i, line in enumerate(lines):
+                if i==0:
+                    if line.__contains__("\"Position\" \"mm\""):
+                        scale = 1.
+                        pos_unit = 'mm'
+                    else:
+                        pos_unit = 'px'
+                    if line.__contains__("\"velocity\" \"m/s\""):
+                        vscale = 1000.
+                        vel_unit = 'm/s'
+                    elif line.__contains__("\"displacement\" \"pixel\""):
+                        vscale = scale * fps
+                        vel_unit = 'px/frame'
+                    else:
+                        vscale = 1.
+                        vel_unit = '????'
+                    if t==0:
+                        print '\n Units of Position and Velocity: ' + pos_unit, vel_unit
+                        if vel_unit == 'px/frame':
+                            print 'scale (mm/px), frame rate(fps): %.5f, %.1f' % (scale, fps)
                 if i > 0:
                     line = line.replace(',', '.').split()
                     x, y, u, v = [float(i) for i in line]
@@ -103,14 +122,14 @@ def davis2hdf5(datadir, use_chunks, savedir=None, savepath=None, header='B', sca
                     ylist.append(y)
                     ulist.append(u)
                     vlist.append(v)
-            x_arr = np.asarray(xlist).reshape(shape)
-            y_arr = np.asarray(ylist).reshape(shape)
+            x_arr = np.asarray(xlist).reshape(shape) * scale
+            y_arr = np.asarray(ylist).reshape(shape) * scale
 
             # dx_d = x_arr[0, 1] - x_arr[0, 0]
             # dy_d = y_arr[1, 0] - y_arr[0, 0]
 
-            u_arr = np.asarray(ulist).reshape(shape) * scale  # davis data is already converted to physical dimensions.
-            v_arr = np.asarray(vlist).reshape(shape) * scale
+            u_arr = np.asarray(ulist).reshape(shape) * vscale  # davis data is already converted to physical dimensions.
+            v_arr = np.asarray(vlist).reshape(shape) * vscale
 
         if t == 0:
             shape_d = (shape[0], shape[1], duration)
@@ -163,10 +182,10 @@ def natural_sort(arr):
 def main(args):
     if args.dir is None:
         print '... Making hdf5 files for directories under ' + args.dirbase
-        davis2hdf5_dirbase(args.dirbase, args.chunks)
+        davis2hdf5_dirbase(args.dirbase, args.chunks, scale=args.scale, fps=args.fps)
     else:
         print '... Making a hdf5 file for the following directory: ' + args.dir
-        davis2hdf5(args.dir, args.chunks)
+        davis2hdf5(args.dir, args.chunks, scale=args.scale, fps=args.fps)
 
 
 if __name__ == "__main__":
@@ -177,6 +196,10 @@ if __name__ == "__main__":
                         default=None)
     parser.add_argument('-chunks', '--chunks', help='Use chunked storage. default: True', type=bool,
                         default=True)
+    parser.add_argument('-scale', '--scale', help='In mm/px. ux = ux*scale*fps', type=float,
+                        default=1000.)
+    parser.add_argument('-fps', '--fps', help='In frame per second. ux = ux*scale*fps.', type=float,
+                        default=1.)
     args = parser.parse_args()
 
     main(args)
