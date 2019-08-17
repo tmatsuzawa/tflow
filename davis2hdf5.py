@@ -57,10 +57,9 @@ def davis2hdf5_dirbase(dirbase, use_chunks, savedir=None, header='B', scale=1000
     """
     if savedir is None:
         if dirbase[-1] == '/':
-            savedir = os.path.split(dirbase[:-1])
+            savedir = os.path.split(dirbase[:-1])[0]
         else:
-            savedir = os.path.split(dirbase)
-
+            savedir = os.path.split(dirbase)[0]
 
     datadirs = glob.glob(dirbase + '/*')
     for datadir in tqdm(datadirs, desc='datadir'):
@@ -139,12 +138,14 @@ def davis2hdf5(datadir, use_chunks, savedir=None, savepath=None, header='B', sca
     udata_d = np.stack((uxdata_d, uydata_d))
     # xx_d, yy_d = vel.get_equally_spaced_grid(udata_d)
 
+    # Path where hdf5 is stored
+    if datadir[-1] == '/':
+        savedir_default, dirname = os.path.split(datadir[:-1])
+    else:
+        savedir_default, dirname = os.path.split(datadir)
     if savedir is None:
-        if datadir[-1] == '/':
-            savedir, dirname = os.path.split(datadir[:-1])
-        else:
-            savedir, dirname = os.path.split(datadir)
-        savepath = savedir + '/davis_piv_outputs/' + dirname
+        savedir = savedir_default
+    savepath = savedir + '/davis_piv_outputs/' + dirname
 
     data2write = {}
     data2write['ux'] = udata_d[0, ...]
@@ -155,6 +156,7 @@ def davis2hdf5(datadir, use_chunks, savedir=None, savepath=None, header='B', sca
         chunks = tuple(list(udata_d.shape[1:-1]) + [1])
     else:
         chunks = None
+
     write_hdf5_dict(savepath, data2write, chunks=chunks)
     print '... Done'
 
