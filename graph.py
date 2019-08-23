@@ -39,7 +39,8 @@ params = {'figure.figsize': __figsize__,
          'axes.labelsize': __fontsize__, # axes
          'axes.titlesize': __fontsize__,
          'xtick.labelsize': __fontsize__, # tick
-         'ytick.labelsize': __fontsize__}
+         'ytick.labelsize': __fontsize__,
+          'lines.linewidth': 5}
 
 
 ## Save a figure
@@ -1230,10 +1231,10 @@ def draw_power_triangle(ax, x, y, exponent, w=None, h=None, facecolor='none', ed
     # beta = 20. # greater beta corresponds to less spacing between the texts and the triangle edges
     if exponent >= 0 and not flip:
         x_base, y_base = 10 ** (exp_x + exp_w * 0.4), 10 ** (exp_y - (exp_ymax - exp_ymin) / beta)
-        x_height, y_height = 10 ** (exp_x + (exp_xmax - exp_xmin) / beta), 10 ** (exp_y + exp_h * 0.6)
+        x_height, y_height = 10 ** (exp_w * 0.7 + exp_x + (exp_xmax - exp_xmin) / beta), 10 ** (exp_y + exp_h * 0.6)
     elif exponent < 0 and not flip:
-        x_base, y_base = 10 ** (exp_x + exp_w * 0.4), 10 ** (exp_y + (exp_ymax - exp_ymin) / beta)
-        x_height, y_height = 10 ** (exp_x + (exp_xmax - exp_xmin) / beta), 10 ** (exp_y + exp_h * 0.6)
+        x_base, y_base = 10 ** (exp_x + exp_w * 0.4), 10 ** (exp_y + (exp_ymax - exp_ymin) / beta * 0.3)
+        x_height, y_height = 10 ** (exp_w * 0.7 + exp_x + (exp_xmax - exp_xmin) / beta * 0.3), 10 ** (exp_y + exp_h * 0.6)
     elif exponent >= 0 and flip:
         x_base, y_base = 10 ** (exp_x + exp_w * 0.4), 10 ** (exp_y + (exp_ymax - exp_ymin) / beta)
         x_height, y_height = 10 ** (exp_x - (exp_xmax - exp_xmin) / beta), 10 ** (exp_y + exp_h * 0.6)
