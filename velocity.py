@@ -1633,9 +1633,9 @@ def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=0, x1=None, 
         # rrs[0, t] = 0
         # corrs[0, t] = 1.0
         # corr_errs[0, t] = 0
-        rrs[:, t] = rr
-        corrs[:, t] = corr
-        corr_errs[:, t] = corr_err
+        rrs[:, t-t0] = rr
+        corrs[:, t-t0] = corr
+        corr_errs[:, t-t0] = corr_err
 
     if notebook:
         from tqdm import tqdm as tqdm
@@ -2242,20 +2242,24 @@ def remove_nans_for_array_pair(arr1, arr2):
     return compressed_arr1, compressed_arr2
 
 
-def get_taylor_microscales(r_long, f_long, r_tran, g_tran):
+def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.015, deg=2, return_err=False, npt_min=4):
     """
     Returns Taylor microscales as the curvature of the autocorrelation functions at r=0
-    ... First, it spline-interpolates the autocorr. functions, and compute the curvature at r=0
+    ... Algorithm:
+    ...     (1) Polynomial fit (cubic) the long./trans. autocorr functions
+    ...     (2) Evaluate its second derivate at r=0.
+    ...     (3) Relate that value to the taylor microscale
+    ... Use the first p*100 % of the autocorrelation values.
     ... Designed to use the results of get_two_point_vel_corr_iso().
 
     Parameters
     ----------
     r_long: numpy 2d array with shape (no. of elements, duration)
-        ... r for longitudinal autoorrelation functon
+        ... r for longitudinal autoorrelation function
     f_long: numpy 2d array with shape (no. of elements, duration)
         ... longitudinal autoorrelation values
     r_tran: numpy 2d array with shape (no. of elements, duration)
-        ... r for longitudinal autoorrelation functon
+        ... r for longitudinal autoorrelation function
     g_tran: numpy 2d array with shape (no. of elements, duration)
         ... longitudinal autoorrelation values
 
@@ -2267,53 +2271,95 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran):
         Transverse Taylor microscale
 
     """
+
+    def compute_lambda_from_autocorr_func(r, g, deg=2):
+        """
+
+        Parameters
+        ----------
+        r: numpy 1d array
+        ... r for longitudinal autoorrelation function
+        g: numpy 1d array
+        ... longitudinal autoorrelation values
+        n: degree of polynomial fit, default: 3
+
+        Returns
+        -------
+        lambdag: taylor microscale
+        """
+        import warnings
+        warnings.simplefilter('ignore', np.RankWarning)
+
+        # Make autocorrelation function an even function. This helps computing the second derivative robustly
+        r_tmp = np.concatenate((-np.flip(r, axis=0)[:-1], r))
+        g_tmp = np.concatenate((np.flip(g, axis=0)[:-1], g))
+
+        z, residual, rank, singular_values, rcond = np.polyfit(r_tmp, g_tmp, deg, full=True)
+        p = np.poly1d(z) #poly class instance
+        p_der2 = np.polyder(p, m=2) # take the second derivative
+        lambdag = (-p_der2(0) / 2.) ** -0.5
+        return lambdag, residual
+
+
+
     n, duration = r_long.shape
-    data = [r_long, f_long, r_tran, g_tran]
-    # Remove nans if necessary
-    for i, datum in enumerate(data):
-        if ~np.isnan(data[i]).any():
-            data[i] = data[i][~np.isnan(data[i])]
-    # interpolate data (3rd order spline)
-    lambda_f, lambda_g = [], []
+    # data = [r_long, f_long, r_tran, g_tran]
+    # # Remove nans if necessary
+    # for i, datum in enumerate(data):
+    #     if ~np.isnan(data[i]).any():
+    #         data[i] = data[i][~np.isnan(data[i])]
+
+    # initialize
+    lambda_f, lambda_g, lambda_err_f, lambda_err_g  = [], [], [], []
     for t in range(duration):
-        # if r_long contains nans, UnivariateSpline fails. so clean it up.
+
+        # if r_long contains nans, polynomial fitting fails. so clean it up.
         r_long_tmp, f_long_tmp = remove_nans_for_array_pair(r_long[:, t], f_long[:, t])
         r_tran_tmp, g_tran_tmp = remove_nans_for_array_pair(r_tran[:, t], g_tran[:, t])
-
 
         # Make sure that f(r=0, t)=g(r=0,t)=1
         f_long_tmp /= f_long_tmp[0]
         g_tran_tmp /= g_tran_tmp[0]
 
+        # f_long_tmp = np.interp(r_long[:, t], r_long_tmp, f_long_tmp)
+        # g_tran_tmp = np.interp(r_tran[:, t], r_tran_tmp, g_tran_tmp)
 
-        # Make autocorrelation function an even function for curvature calculation
-        r_long_tmp = np.concatenate((-np.flip(r_long_tmp, axis=0)[:-1], r_long_tmp))
-        f_long_tmp = np.concatenate((np.flip(f_long_tmp, axis=0)[:-1], f_long_tmp))
-        r_tran_tmp = np.concatenate((-np.flip(r_tran_tmp, axis=0)[:-1], r_tran_tmp))
-        g_tran_tmp = np.concatenate((np.flip(g_tran_tmp, axis=0)[:-1], g_tran_tmp))
+        lambdafs, lambdags = [], []
+        residuals_f, residuals_g = [], []
+        for n in range(npt_min, len(f_long_tmp)):
+            lambda_f_tmp, residual_f = compute_lambda_from_autocorr_func(r_long_tmp[:n], f_long_tmp[:n], deg=deg)
+            if len(residual_f) == 0:
+                residual_f = 0
+            else:
+                residual_f = residual_f[0]
+
+            if residual_f < residual_thd:
+                lambdafs.append(lambda_f_tmp)
+                residuals_f.append(residual_f)
+            else:
+                break
+        for n in range(npt_min, len(g_tran_tmp)):
+            lambda_g_tmp, residual_g = compute_lambda_from_autocorr_func(r_tran_tmp[:n], g_tran_tmp[:n], deg=deg)
+            if len(residual_g) == 0:
+                residual_g = 0
+            else:
+                residual_g = residual_g[0]
+            if residual_g < residual_thd:
+                lambdags.append(lambda_g_tmp)
+                residuals_g.append(residual_g)
+            else:
+                break
 
 
-        f_spl = UnivariateSpline(r_long_tmp, f_long_tmp, s=0, k=3) # longitudinal autocorrelation func.
-        g_spl = UnivariateSpline(r_tran_tmp, g_tran_tmp, s=0, k=3) # transverse autocorrelation func.
+        lambda_f.append(np.nanmean(lambdafs))
+        lambda_g.append(np.nanmean(lambdags))
+        lambda_err_f.append(np.nanstd(lambdafs))
+        lambda_err_g.append(np.nanstd(lambdags))
 
-
-        # take the second derivate of the spline function
-        f_spl_2d = f_spl.derivative(n=2)
-        g_spl_2d = g_spl.derivative(n=2)
-
-        lambda_f_ = (- f_spl_2d(0) / 2.) ** (-0.5)  # Compute long. Taylor microscale
-        lambda_g_ = (- g_spl_2d(0) / 2.) ** (-0.5)  # Compute trans. Taylor microscale
-
-        # # Show Taylor microscale (debugging)
-        # fig, ax = plt.subplots(num=5)
-        # ax.plot(r_tran_tmp, g_tran_tmp)
-        # ax.plot(r_tran_tmp, g_spl_2d(0) / 2. * r_tran_tmp ** 2 + 1)
-        # ax.set_ylim(-0.2, 1.1)
-        # plt.show()
-
-        lambda_f.append(lambda_f_)
-        lambda_g.append(lambda_g_)
-    return np.asarray(lambda_f), np.asarray(lambda_g)
+    if not return_err:
+        return np.asarray(lambda_f), np.asarray(lambda_g)
+    else:
+        return np.asarray(lambda_f), np.asarray(lambda_g), np.asarray(lambda_err_f), np.asarray(lambda_err_g)
 
 
 # Taylor microscales 2: isotropic formula. Must know epsilon beforehand
