@@ -22,11 +22,18 @@ import tflow.graph as graph
 
 
 """
-Philosophy:
+Module designed to process a planar/volumetric velocity field
+- energy, enstrophy, vorticity fields
+- energy spectra
+- n-th order structure functions
+
+
+
+Philosophy: 
 udata = (ux, uy, uz) or (ux, uy)
 each ui has a shape (height, width, (depth), duration)
 
-If ui's are individually given, make udata like 
+If ui-s are individually given, make udata like 
 udata = np.stack((ux, uy))
 """
 
@@ -36,6 +43,7 @@ def get_duidxj_tensor(udata, dx=1., dy=1., dz=1.):
     """
     Assumes udata has a shape (d, nrows, ncols, duration) or  (d, nrows, ncols)
     ... one can easily make udata by np.stack((ux, uy))
+
     Parameters
     ----------
     udata: numpy array with shape (ux, uy) or (ux, uy, uz)
@@ -48,8 +56,6 @@ def get_duidxj_tensor(udata, dx=1., dy=1., dz=1.):
         ... idea is... sij[spacial coordinates, time, tensor indices]
             e.g.-  sij(x, y, t) = sij[y, x, t, i, j]
         ... sij = d ui / dxj
-
-
     """
     shape = udata.shape #shape=(dim, nrows, ncols, nstacks) if nstacks=0, shape=(dim, nrows, ncols)
     if shape[0] == 2:
@@ -104,13 +110,15 @@ def get_duidxj_tensor(udata, dx=1., dy=1., dz=1.):
         sij[..., 2, 1] = duzdy
         sij[..., 2, 2] = duzdz
     elif shape[0] > 3:
-        print 'Not implemented yet.'
+        print '...Not implemented yet.'
         return None
     return sij
 
 def decompose_duidxj(sij):
     """
     Decompose a duidxj tensor into a symmetric and an antisymmetric parts
+    Returns symmetric part (eij) and anti-symmetric part (gij)
+
     Parameters
     ----------
     sij, 5d or 6d numpy array (x, y, t, i, j) or (x, y, z, t, i, j)
@@ -147,6 +155,7 @@ def decompose_duidxj(sij):
 def reynolds_decomposition(udata):
     """
     Apply the Reynolds decomposition to a velocity field
+    Returns a mean field (time-averaged) and a fluctuating field
 
     Parameters
     ----------
@@ -175,74 +184,13 @@ def reynolds_decomposition(udata):
             u_turb[i, ..., t] = udata[i,...,t] - u_mean[i]
     return u_mean, u_turb
 
-def fft_velocity(udata, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, dx=None, dy=None, dz=None):
-    """
-    Return Fourier transform of velocity
-    Parameters
-    ----------
-    udata
-
-    Returns
-    -------
-    ukdata
-    """
-    if dx is None or dy is None:
-        print 'ERROR: dx or dy is not provided! dx is grid spacing in real space.'
-        print '... k grid will be computed based on this spacing! Please provide.'
-        raise ValueError
-    if x1 is None:
-        x1 = udata[0].shape[1]
-    if y1 is None:
-        y1 = udata[0].shape[0]
-
-    udata = udata[:, y0:y1, x0:x1, :]
-    dim = udata.shape[0]
-    if dim == 2:
-        udata = udata[:, y0:y1, x0:x1, :]
-    elif dim == 3:
-        if z1 is None:
-            z1 = udata[0].shape[2]
-        if dz is None:
-            print 'ERROR: dz is not provided! dx is grid spacing in real space.'
-            print '... k grid will be computed based on this spacing! Please provide.'
-            raise ValueError
-        udata = udata[:, y0:y1, x0:x1, z0:z1, :]
-
-    udata = fix_udata_shape(udata)
-    ukdata = np.zeros_like(udata)
-
-    for i in range(dim):
-        ukdata[i, ...] = np.fft.fftn(udata[i, ...], axes=range(dim))
-        ukdata[i, ...] = np.fft.fftshift(ukdata[i, ...], axes=range(dim))
-
-    if dim == 2:
-        ncomp, height, width, duration = ukdata.shape
-        kx = np.fft.fftfreq(width, d=dx)  # this returns FREQUENCY (JUST INVERSE LENGTH) not ANGULAR FREQUENCY
-        ky = np.fft.fftfreq(height, d=dy)
-        kx = np.fft.fftshift(kx)
-        ky = np.fft.fftshift(ky)
-        kxx, kyy = np.meshgrid(kx, ky)
-        kxx, kyy = kxx * 2 * np.pi, kyy * 2 * np.pi # Convert inverse length into wavenumber
-
-        return ukdata, np.asarray([kxx, kyy])
-
-    elif dim == 3:
-        ncomp, height, width, depth, duration = ukdata.shape
-        kx = np.fft.fftfreq(width, d=dx)
-        ky = np.fft.fftfreq(height, d=dy)
-        kz = np.fft.fftfreq(depth, d=dz)
-        kx = np.fft.fftshift(kx)
-        ky = np.fft.fftshift(ky)
-        kz = np.fft.fftshift(kz)
-        kxx, kyy, kzz = np.meshgrid(ky, kx, kz)
-        kxx, kyy, kzz = kxx * 2 * np.pi, kyy * 2 * np.pi, kzz * 2 * np.pi
-        return ukdata, np.asarray([kxx, kyy, kzz])
 
 
 ########## vector operations ##########
 def div(udata):
     """
     Computes divergence of a velocity field
+
     Parameters
     ----------
     udata: numpy array
@@ -275,7 +223,8 @@ def curl(udata, dx=1., dy=1., dz=1.):
 
     Returns
     -------
-    omega: numpy array with shape (height, width, duration) (2D) or (height, width, duration) (2D)
+    omega: numpy array
+        shape: (height, width, duration) (2D) or (height, width, duration) (2D)
 
     """
     sij = get_duidxj_tensor(udata, dx=dx, dy=dy, dz=dz)
@@ -292,26 +241,34 @@ def curl(udata, dx=1., dy=1., dz=1.):
         return None
     return omega
 
-def curl_2d(ux, uy):
+def curl_2d(ux, uy, dx=1., dy=1.):
     """
-    Calculate curl of 2D field
+    Calculate curl of 2D (or 2D+1) field
+    ... A simple method but
+
     Parameters
     ----------
-    var: 2d array
-        element of var must be 2d array
+    ux: 2D array
+        x component of a 2D field
+    uy: 2D array
+        y component of a 2D field
+    dx: float
+        data spacing (mm/px)
+    dy: float
+        data spacing (mm/px)
 
     Returns
     -------
-
+    omega: 2D numpy array
+        vorticity field
     """
 
     #ux, uy = var[0], var[1]
-    xx, yy = ux.shape[0], uy.shape[1]
+    xx, yy = ux.shape[0], ux.shape[1]
 
-    omega = np.zeros((xx, yy))
     # duxdx = np.gradient(ux, axis=1)
-    duxdy = np.gradient(ux, axis=0)
-    duydx = np.gradient(uy, axis=1)
+    duxdy = np.gradient(ux, dy, axis=0)
+    duydx = np.gradient(uy, dx, axis=1)
     # duydy = np.gradient(uy, axis=0)
 
     omega = duydx - duxdy
@@ -321,6 +278,25 @@ def curl_2d(ux, uy):
 
 ########## Elementary analysis ##########
 def get_energy(udata):
+    """
+    Returns energy(\vec{x}, t) of udata
+    ... Assumes udata is equally spaced data.
+
+    Parameters
+    ----------
+    udata: nd array
+    dx: float
+        data spacing along z (mm/px)
+    dy: float
+        data spacing along z (mm/px)
+    dz: float
+        data spacing along z (mm/px)
+
+    Returns
+    -------
+    energy: nd array
+        energy
+    """
     shape = udata.shape  # shape=(dim, nrows, ncols, nstacks) if nstacks=0, shape=(dim, nrows, ncols)
     dim = udata.shape[0]
     energy = np.zeros(shape[1:])
@@ -330,6 +306,25 @@ def get_energy(udata):
     return energy
 
 def get_enstrophy(udata, dx=1., dy=1., dz=1.):
+    """
+    Returns enstrophy(\vec{x}, t) of udata
+    ... Assumes udata is equally spaced data.
+
+    Parameters
+    ----------
+    udata: nd array
+    dx: float
+        data spacing along z (mm/px)
+    dy: float
+        data spacing along z (mm/px)
+    dz: float
+        data spacing along z (mm/px)
+
+    Returns
+    -------
+    enstrophy: nd array
+        enstrophy
+    """
     dim = udata.shape[0]
     omega = curl(udata, dx=dx, dy=dy, dz=dz)
     shape = omega.shape # shape=(dim, nrows, ncols, nstacks, duration) if nstacks=0, shape=(dim, nrows, ncols, duration)
@@ -344,14 +339,17 @@ def get_enstrophy(udata, dx=1., dy=1., dz=1.):
 
 def get_time_avg_energy(udata):
     """
-    Returns time-averaged-energy
+    Returns a time-averaged-energy field
+    ... NOT MEAN FLOW ENERGY
+
     Parameters
     ----------
-    udata
+    udata: nd array
 
     Returns
     -------
-
+    energy_avg:
+        time-averaged energy field
     """
     dim = udata.shape[0]
     energy = get_energy(udata)
@@ -360,14 +358,17 @@ def get_time_avg_energy(udata):
 
 def get_time_avg_enstrophy(udata, dx=1., dy=1., dz=1.):
     """
-    Returns time-averaged-enstrophy
+    Returns a time-averaged-enstrophy field
+    ... NOT MEAN FLOW ENSTROPHY
+
     Parameters
     ----------
-    udata
+    udata: nd array
 
     Returns
     -------
-
+    enstrophy_avg: nd array
+        time-averaged enstrophy field
     """
     dim = udata.shape[0]
     enstrophy = get_enstrophy(udata, dx=dx, dy=dy, dz=dz)
@@ -380,12 +381,14 @@ def get_spatial_avg_energy(udata, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None):
 
     Parameters
     ----------
-    udata
+    udata: nd array
 
     Returns
     -------
-    energy_vs_t
-
+    energy_vs_t: 1d numpy array
+        average energy in a field at each time
+    energy_vs_t_err
+        standard deviation of energy in a field at each time
     """
     if x1 is None:
         x1 = udata[0].shape[1]
@@ -414,12 +417,14 @@ def get_spatial_avg_enstrophy(udata, x0=0, x1=None, y0=0, y1=None,
 
     Parameters
     ----------
-    udata
+    udata: nd array
 
     Returns
     -------
-    enstrophy_vs_t
-
+    enstrophy_vs_t: 1d numpy array
+        average enstrophy in a field at each time
+    enstrophy_vs_t_err
+        standard deviation of enstrophy in a field at each time
     """
     if x1 is None:
         x1 = udata[0].shape[1]
@@ -447,7 +452,7 @@ def get_turbulence_intensity_local(udata):
     u = sqrt((ux**2 + uy**2 + uz**2)/3) # characteristic turbulent velocity
     U = sqrt((Ux**2 + Uy**2 + Uz**2))   # mean flow speed
 
-    This is somewhat ill-defined for turbulence with zero-mean flow !
+    This is ill-defined for turbulence with zero-mean flow !
 
     Parameters
     ----------
@@ -455,6 +460,8 @@ def get_turbulence_intensity_local(udata):
 
     Returns
     -------
+    ti_local: nd array
+        turbulent intensity field (scaler field)
 
     """
     dim = udata.shape[0]
@@ -471,8 +478,6 @@ def get_turbulence_intensity_local(udata):
     for t in range(u_t_rms.shape[-1]):
         ti_local[..., t] = u_t_rms[..., t] / u_rms
     return ti_local
-
-
 
 
 
@@ -512,7 +517,7 @@ def fft_nd(field, dx=1, dy=1, dz=1):
         kxx, kyy = np.meshgrid(kx, ky)
         kxx, kyy = kxx * 2 * np.pi, kyy * 2 * np.pi # Convert inverse length into wavenumber
 
-        return ek, np.asarray([kxx, kyy])
+        return field_fft, np.asarray([kxx, kyy])
 
     elif dim == 3:
         height, width, depth, duration = field.shape
@@ -524,20 +529,41 @@ def fft_nd(field, dx=1, dy=1, dz=1):
         kz = np.fft.fftshift(kz)
         kxx, kyy, kzz = np.meshgrid(ky, kx, kz)
         kxx, kyy, kzz = kxx * 2 * np.pi, kyy * 2 * np.pi, kzz * 2 * np.pi
-
+        return field_fft, np.asarray([kxx, kyy, kzz])
 
 def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
                            z0=0, z1=None, dx=None, dy=None, dz=None,
                            window=None, correct_signal_loss=True):
 
     """
-    Returns nd energy spectrum from velocity data
+    Returns nd energy spectrum from velocity data (FFT of a velocity field)
+
     Parameters
     ----------
-    udata
+    udata: nd array
     dx: data spacing in x (units: mm/px)
     dy: data spacing in y (units: mm/px)
     dz: data spacing in z (units: mm/px)
+    dx: float
+        spacing in x
+    dy: float
+        spacing in y
+    dz: float
+        spacing in z
+    nkout: int, default: None
+        number of bins to compute energy/dissipation spectrum
+    window: str
+        Windowing reduces undesirable effects due to the discreteness of the data.
+        A wideband window such as 'flattop' is recommended for turbulent energy spectra.
+
+        For the type of applying window function, choose from below:
+        boxcar, triang, blackman, hamming, hann, bartlett, flattop, parzen, bohman, blackmanharris, nuttall, barthann,
+        kaiser (needs beta), gaussian (needs standard deviation), general_gaussian (needs power, width),
+        slepian (needs width), chebwin (needs attenuation), exponential (needs decay scale),
+        tukey (needs taper fraction)
+    correct_signal_loss: bool, default: True
+        If True, it would compensate for the loss of the signals due to windowing.
+        Always recommended to obtain accurate spectral densities.
 
     Returns
     -------
@@ -686,30 +712,66 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
         return ek, np.asarray([kxx, kyy, kzz])
 
 def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
-                           z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
-                        window=None, remove_undersampled_region=True, cc=1.75, notebook=True):
+                        z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
+                        window=None, correct_signal_loss=True,remove_undersampled_region=True,
+                        cc=1.75, notebook=True):
     """
     Returns 1D energy spectrum from velocity field data
 
     Parameters
     ----------
-    udata
-    x0
-    x1
-    y0
-    y1
-    z0
-    z1
-    z
-    dx
-    dy
-    dz
-    nkout: int, number of bins to take histograms from nd fft output
-    notebook: bool, if True, use tqdm_notebook instead of tqdm.
-        Set it False if you are NOT calling this function from notebook.
+    udata: nd array
+    epsilon: nd array or float, default: None
+        dissipation rate used for scaling energy spectrum
+        If not given, it uses the values estimated using the rate-of-strain tensor
+    nu: flaot, viscosity
+    x0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    x1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    dx: float
+        spacing in x
+    dy: float
+        spacing in y
+    dz: float
+        spacing in z
+    nkout: int, default: None
+        number of bins to compute energy/dissipation spectrum
+    notebook: bool, default: True
+        Use tqdm.tqdm_notebook if True. Use tqdm.tqdm otherwise
+    window: str
+        Windowing reduces undesirable effects due to the discreteness of the data.
+        A wideband window such as 'flattop' is recommended for turbulent energy spectra.
 
+        For the type of applying window function, choose from below:
+        boxcar, triang, blackman, hamming, hann, bartlett, flattop, parzen, bohman, blackmanharris, nuttall, barthann,
+        kaiser (needs beta), gaussian (needs standard deviation), general_gaussian (needs power, width),
+        slepian (needs width), chebwin (needs attenuation), exponential (needs decay scale),
+        tukey (needs taper fraction)
+    correct_signal_loss: bool, default: True
+        If True, it would compensate for the loss of the signals due to windowing.
+        Always recommended to obtain accurate spectral densities.
+    remove_undersampled_region: bool, default: True
+        If True, it will not sample the region with less statistics.
+    cc: float, default: 1.75
+        A numerical factor to compensate for the signal loss due to approximations.
+        ... cc=1.75 was obtained from the JHTD data.
     Returns
     -------
+    e_k: numpy array
+        Energy spectrum with shape (number of data points, duration)
+    e_k_err: numpy array
+        Energy spectrum error with shape (number of data points, duration)
+    kk: numpy array
+        Wavenumber with shape (number of data points, duration)
 
     """
     if notebook:
@@ -849,7 +911,8 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
 
     dim, duration = len(udata), udata.shape[-1]
 
-    e_ks, ks = get_energy_spectrum_nd(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz, window=window)
+    e_ks, ks = get_energy_spectrum_nd(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz,
+                                      window=window, correct_signal_loss=correct_signal_loss)
     # OLD: only capable to convert 2d spectra to one
     # if dim == 3:
     #     kx, ky, kz = ks[0], ks[1], ks[2]
@@ -880,33 +943,60 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
     if notebook:
         from tqdm import tqdm as tqdm
 
-    return e_k[0:], e_k_err[0:], kk[0:]
+    return e_k, e_k_err, kk
 
 def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
                            z0=0, z1=None, dx=None, dy=None, dz=None,
-                           window=None, correct_signal_loss=True, notebook=True):
+                           window=None, correct_signal_loss=True):
     """
     Returns 1D energy spectrum from velocity field data
 
     Parameters
     ----------
-    udata
-    x0
-    x1
-    y0
-    y1
-    z0
-    z1
-    dx
-    dy
-    dz
-    nkout: int, number of bins to take histograms from nd fft output
-    notebook: bool, if True, use tqdm_notebook instead of tqdm.
-        Set it False if you are NOT calling this function from notebook.
+    udata: nd array
+    k: str, default: 'kx'
+        string to specify the direction along which the given velocity field is Fourier-transformed
+    x0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    x1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    dx: float
+        spacing in x
+    dy: float
+        spacing in y
+    dz: float
+        spacing in z
+    window: str
+        Windowing reduces undesirable effects due to the discreteness of the data.
+        A wideband window such as 'flattop' is recommended for turbulent energy spectra.
+
+        For the type of available window function, choose from below:
+        boxcar, triang, blackman, hamming, hann, bartlett, flattop, parzen, bohman, blackmanharris, nuttall, barthann,
+        kaiser (needs beta), gaussian (needs standard deviation), general_gaussian (needs power, width),
+        slepian (needs width), chebwin (needs attenuation), exponential (needs decay scale),
+        tukey (needs taper fraction)
+    correct_signal_loss: bool
+        If True, it would compensate for the loss of the signals due to windowing.
+        Always recommended to obtain accurate spectral densities.
 
     Returns
     -------
-
+    eiis: numpy array
+        eiis[0] = E11, eiis[1] = E22
+        ... 1D energy spectra with argument k="k" (kx by default)
+    eii_errs: numpy array:
+        eiis[0] = E11_error, eiis[1] = E22_error
+    k: 1d numpy array
+        Wavenumber with shape (number of data points, )
+        ... Unlike get_energy_spectrum(...), this method NEVER outputs the wavenumber array with shape (number of data points, duration)
     """
     if x0 is None:
         x0 = 0
@@ -1034,33 +1124,66 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
 
 def get_dissipation_spectrum(udata, nu, x0=0, x1=None, y0=0, y1=None,
                            z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
-                        notebook=True):
+                             window='flattop', correct_signal_loss=True, notebook=True):
     """
     Returns dissipation spectrum D(k) = 2 nu k^2 E(k) where E(k) is the 1d energy spectrum
+
     Parameters
     ----------
-    udata
-    nu
-    x0
-    x1
-    y0
-    y1
-    z0
-    z1
-    dx
-    dy
-    dz
-    nkout
-    notebook
+    udata: nd array
+    epsilon: nd array or float, default: None
+        dissipation rate used for scaling energy spectrum
+        If not given, it uses the values estimated using the rate-of-strain tensor
+    nu: flaot, viscosity
+    x0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    x1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    dx: float
+        spacing in x
+    dy: float
+        spacing in y
+    dz: float
+        spacing in z
+    nkout: int, default: None
+        number of bins to compute energy/dissipation spectrum
+    notebook: bool, default: True
+        Use tqdm.tqdm_notebook if True. Use tqdm.tqdm otherwise
+    window: str
+        Windowing reduces undesirable effects due to the discreteness of the data.
+        A wideband window such as 'flattop' is recommended for turbulent energy spectra.
+
+        For the type of available window function, choose from below:
+        boxcar, triang, blackman, hamming, hann, bartlett, flattop, parzen, bohman, blackmanharris, nuttall, barthann,
+        kaiser (needs beta), gaussian (needs standard deviation), general_gaussian (needs power, width),
+        slepian (needs width), chebwin (needs attenuation), exponential (needs decay scale),
+        tukey (needs taper fraction)
+    correct_signal_loss: bool
+        If True, it would compensate for the loss of the signals due to windowing.
+        Always recommended to obtain accurate spectral densities.
 
     Returns
     -------
-    D_k: nd arraay
-    D_k_err: nd arraay
-    k1d: nd arraay
+    D_k: numpy array
+        Dissipation spectrum with shape (number of data points, duration)
+    D_k_err: numpy array
+        Dissipation spectrum error with shape (number of data points, duration)
+    k1d: numpy array
+        Wavenumber with shape (number of data points, duration)
+
     """
-    e_k, e_k_err, k1d = get_energy_spectrum(udata, dx=dx, dy=dy, dz=dz, nkout=nkout, x0=x0, x1=x1, y0=y0, y1=y1,
-                                                z0=z0, z1=z1, notebook=notebook)
+    e_k, e_k_err, k1d = get_energy_spectrum(udata, x0=x0, x1=x1,
+                                 y0=y0, y1=y1, z0=z0, z1=z1,
+                                 dx=dx, dy=dy, dz=dz, nkout=nkout, window=window, correct_signal_loss=correct_signal_loss,
+                                 notebook=notebook)
     # Plot dissipation spectrum
     D_k, D_k_err = 2 * nu * e_k * (k1d ** 2), 2 * nu * e_k_err * (k1d ** 2)
     return D_k, D_k_err, k1d
@@ -1068,11 +1191,72 @@ def get_dissipation_spectrum(udata, nu, x0=0, x1=None, y0=0, y1=None,
 def get_rescaled_energy_spectrum(udata, epsilon=10**5, nu=1.0034,x0=0, x1=None,
                                  y0=0, y1=None, z0=0, z1=None,
                                  dx=1, dy=1, dz=1, nkout=None,
-                                 window=None, notebook=True):
+                                 window=None, correct_signal_loss=True, notebook=True):
+    """
+    Returns SCALED energy spectrum E(k), its error, and wavenumber.
+        - E(k) is sometimes called the 3D energy spectrum since it involves 3D FT of a velocity field.
+        - ALWAYS greater than E11(k) and E22(k) which involve 1D FT of the velocity field along a specific direction.
+        - Returns wavenumber with shape (# of data points, duration) instead of (# of data points, ).
+        ... This seems redundant; however, values in the wavenumber array at a given time may fluctuate in principle
+        due to a method how it computes the histogram (spectrum.) It should never fluctuate with the current method but
+        is subject to a change by altering the method of determining the histogram. Therefore, this method outputs
+        the wavenumber array with shape (# of data points, duration).
+
+    Parameters
+    ----------
+    udata: nd array
+    epsilon: nd array or float, default: None
+        dissipation rate used for scaling energy spectrum
+        If not given, it uses the values estimated using the rate-of-strain tensor
+    nu: flaot, viscosity
+    x0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    x1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    dx: float
+        spacing in x
+    dy: float
+        spacing in y
+    dz: float
+        spacing in z
+    nkout: int, default: None
+        number of bins to compute energy/dissipation spectrum
+    notebook: bool, default: True
+        Use tqdm.tqdm_notebook if True. Use tqdm.tqdm otherwise
+    window: str
+        Windowing reduces undesirable effects due to the discreteness of the data.
+        A wideband window such as 'flattop' is recommended for turbulent energy spectra.
+
+        For the type of available window function, choose from below:
+        boxcar, triang, blackman, hamming, hann, bartlett, flattop, parzen, bohman, blackmanharris, nuttall, barthann,
+        kaiser (needs beta), gaussian (needs standard deviation), general_gaussian (needs power, width),
+        slepian (needs width), chebwin (needs attenuation), exponential (needs decay scale),
+        tukey (needs taper fraction)
+    correct_signal_loss: bool
+        If True, it would compensate for the loss of the signals due to windowing.
+        Always recommended to obtain accurate spectral densities.
+
+    Returns
+    -------
+    e_k_norm: numpy array
+        Scaled energy spectrum with shape (number of data points, duration)
+    e_k_err_norm: numpy array
+        Scaled energy spectrum with shape (number of data points, duration)
+    k_norm: numpy array
+        Scaled energy spectrum with shape (number of data points, duration)
+    """
     # get energy spectrum
     e_k, e_k_err, kk = get_energy_spectrum(udata, x0=x0, x1=x1,
                                  y0=y0, y1=y1, z0=z0, z1=z1,
-                                 dx=dx, dy=dy, dz=dz, nkout=nkout, window=window,
+                                 dx=dx, dy=dy, dz=dz, nkout=nkout, window=window, correct_signal_loss=True,
                                  notebook=notebook)
 
     # Kolmogorov length scale
@@ -1092,7 +1276,62 @@ def get_rescaled_energy_spectrum(udata, epsilon=10**5, nu=1.0034,x0=0, x1=None,
 
 def get_1d_rescaled_energy_spectrum(udata, epsilon=None, nu=1.0034, x0=0, x1=None,
                                  y0=0, y1=None, z0=0, z1=None,
-                                 dx=1, dy=1, dz=1, notebook=True, window=None, correct_signal_loss=True):
+                                 dx=1, dy=1, dz=1, notebook=True, window='flattop', correct_signal_loss=True):
+    """
+    Returns SCALED 1D energy spectra (E11 and E22)
+    ... Applies the flattop window function by default
+    ... Uses dissipation rate estimated by the rate-of-strain tensor unless given]
+
+
+    Parameters
+    ----------
+    udata: nd array
+    epsilon: nd array or float, default: None
+        dissipation rate used for scaling energy spectrum
+        If not given, it uses the values estimated using the rate-of-strain tensor
+    nu: flaot, viscosity
+    x0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    x1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    dx: float
+        spacing in x
+    dy: float
+        spacing in y
+    dz: float
+        spacing in z
+    notebook: bool, default: True
+        Use tqdm.tqdm_notebook if True. Use tqdm.tqdm otherwise
+    window: str
+        Windowing reduces undesirable effects due to the discreteness of the data.
+        A wideband window such as 'flattop' is recommended for turbulent energy spectra.
+
+        For the type of available window function, choose from below:
+        boxcar, triang, blackman, hamming, hann, bartlett, flattop, parzen, bohman, blackmanharris, nuttall, barthann,
+        kaiser (needs beta), gaussian (needs standard deviation), general_gaussian (needs power, width),
+        slepian (needs width), chebwin (needs attenuation), exponential (needs decay scale),
+        tukey (needs taper fraction)
+    correct_signal_loss: bool
+        If True, it would compensate for the loss of the signals due to windowing.
+        Always recommended to obtain accurate spectral densities.
+
+    Returns
+    -------
+    eii_arr_norm: nd array
+        Scaled spectral densities (Scaled E11 and Scaled E22)
+    eii_err_arr_norm: nd array
+        Scaled errors for (Scaled E11 and Scaled E22)
+    k_norm: nd array
+        Scaled wavenumber
+    """
     dim = len(udata)
     duration = udata.shape[-1]
     # get energy spectrum
@@ -1129,7 +1368,7 @@ def get_1d_rescaled_energy_spectrum(udata, epsilon=None, nu=1.0034, x0=0, x1=Non
 
 
 def get_rescaled_dissipation_spectrum(udata, epsilon=10**5, nu=1.0034,x0=0, x1=None,
-                                 y0=0, y1=None, z0=0, z1=None, z=0,
+                                 y0=0, y1=None, z0=0, z1=None,
                                  dx=1, dy=1, dz=1, nkout=None, notebook=True):
     """
     Return rescaled dissipation spectra
@@ -1138,27 +1377,40 @@ def get_rescaled_dissipation_spectrum(udata, epsilon=10**5, nu=1.0034,x0=0, x1=N
 
     Parameters
     ----------
-    udata
-    epsilon
-    nu
-    x0
-    x1
-    y0
-    y1
-    z0
-    z1
-    z
-    dx
-    dy
-    dz
-    nkout
-    notebook
+    udata: nd array
+    nu: flaot, viscosity
+    x0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    x1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    dx: float
+        spacing in x
+    dy: float
+        spacing in y
+    dz: float
+        spacing in z
+    nkout: int, default: None
+        number of bins to compute energy/dissipation spectrum
+    notebook: bool, default: True
+        Use tqdm.tqdm_notebook if True. Use tqdm.tqdm otherwise
+
 
     Returns
     -------
-    D_k_norm:
-    D_k_err_norm:
-    k_norm:
+    D_k_norm: nd array
+        Scaled dissipation spectrum values with shape (# of data points, duration)
+    D_k_err_norm: nd array
+        Scaled dissipation spectrum error with shape (# of data points, duration)
+    k_norm: nd array
+        Scaled wavenumber with shape (# of data points, duration)
     """
     # get dissipation spectrum
     D_k, D_k_err, k1d = get_dissipation_spectrum(udata, nu=nu, x0=x0, x1=x1,
@@ -1176,6 +1428,26 @@ def get_rescaled_dissipation_spectrum(udata, epsilon=10**5, nu=1.0034,x0=0, x1=N
     return D_k_norm, D_k_err_norm, k_norm
 
 def scale_energy_spectrum(e_k, kk, epsilon=10**5, nu=1.0034, e_k_err=None):
+    """
+    Scales raw energy spectrum by given dissipation rate and viscosity
+
+    Parameters
+    ----------
+    e_k: numpy array
+        spectral energy density
+    kk: numpy array
+        wavenumber
+    epsilon: numpy array or float
+        dissipation rate used for scaling. It could be 1D numpy array or float.
+    nu numpy array or float
+        viscosity used for scaling. It could be 1D numpy array or float.
+    e_k_err: numpy array
+        error of dissipation rate used for scaling. It could be 1D numpy array or float.
+    Returns
+    -------
+    e_k_norm, k_norm if e_k_err is not given
+    e_k_norm, e_k_err_norm, k_norm if e_k_err is given
+    """
     # Kolmogorov length scale
     eta = (nu ** 3 / epsilon) ** (0.25)  # mm
     # print 'dissipation rate, Kolmogorov scale: ', epsilon, eta
@@ -1192,6 +1464,7 @@ def get_large_scale_vel_field(udata, kmax, x0=0, x1=None, y0=0, y1=None, z0=0, z
                               dx=None, dy=None, dz=None):
     """
     Returns a velocity field which satisfies k = sqrt(kx^2 + ky^2) < kmax in the original vel. field (udata)
+
     Parameters
     ----------
     udata: nd array
@@ -1328,17 +1601,39 @@ def get_large_scale_vel_field(udata, kmax, x0=0, x1=None, y0=0, y1=None, z0=0, z
 def get_epsilon_using_sij(udata, dx=None, dy=None, dz=None, nu=1.004,
                           x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None):
     """
+    Returns the dissipation rate computed using the rate-of-strain tensor
+
     sij: numpy array with shape (nrows, ncols, duration, 2, 2) (dim=2) or (nrows, ncols, nstacks, duration, 3, 3) (dim=3)
     ... idea is... sij[spacial coordinates, time, tensor indices]
         e.g.-  sij(x, y, t) can be accessed by sij[y, x, t, i, j]
     ... sij = d ui / dxj
     Parameters
     ----------
-    udata
+    udata: nd array
+    nu: flaot, viscosity
+    x0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    x1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    dx: float
+        spacing in x
+    dy: float
+        spacing in y
+    dz: float
+        spacing in z
 
     Returns
     -------
-
+    epsilon: numpy array
+        dissipation rate
     """
     udata = fix_udata_shape(udata)
     dim = len(udata)
@@ -1375,16 +1670,21 @@ def get_epsilon_using_sij(udata, dx=None, dy=None, dz=None, nu=1.004,
 def get_epsilon_iso(udata, lambda_f=None, lambda_g=None, nu=1.004, x=None, y=None, **kwargs):
     """
     Return epsilon computed by isotropic formula involving Taylor microscale
+
     Parameters
     ----------
     udata
-    lambda_f
-    lambda_g
-    nu
+    lambda_f: numpy array
+        long. Taylor microscale
+    lambda_g: numpy array
+        transverse. Taylor microscale
+    nu: float
+        viscosity
 
     Returns
     -------
-
+    epsilon: numpy array
+        dissipation rate
     """
     dim = len(udata)
     u2_irms = 2. / dim * get_spatial_avg_energy(udata)[0]
@@ -1410,6 +1710,42 @@ def get_epsilon_iso(udata, lambda_f=None, lambda_g=None, nu=1.004, x=None, y=Non
 def get_epsilon_using_diss_spectrum(udata, nu=1.0034,x0=0, x1=None,
                                  y0=0, y1=None, z0=0, z1=None,
                                  dx=1, dy=1, dz=1, nkout=None, notebook=True):
+    """
+    Returns dissipation rate computed by integrated the dissipation specrtrum
+    ... must have fully resolved spectrum to yield a reasonable result
+
+    Parameters
+    ----------
+    udata: nd array
+    nu: flaot, viscosity
+    x0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    x1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    dx: float
+        spacing in x
+    dy: float
+        spacing in y
+    dz: float
+        spacing in z
+    nkout: int, default: None
+        number of bins to compute energy/dissipation spectrum
+    notebook: bool, default: True
+        Use tqdm.tqdm_notebook if True. Use tqdm.tqdm otherwise
+
+    Returns
+    -------
+    epsilon: numpy array
+        dissipation rate
+    """
     # get dissipation spectrum
     D_k, D_k_err, k1d = get_dissipation_spectrum(udata, nu=nu, x0=x0, x1=x1,
                                                  y0=y0, y1=y1, z0=z0, z1=z1,
@@ -1426,9 +1762,36 @@ def get_epsilon_using_diss_spectrum(udata, nu=1.0034,x0=0, x1=None,
 
 
 def get_epsilon_using_struc_func(rrs, Dxxs, epsilon_guess=100000, r0=1.0, r1=10.0, p=2, method='Nelder-Mead'):
+    """
+    Returns the values of estimated dissipation rate using a long. structure function
+
+    Parameters
+    ----------
+    rrs: numpy array
+        separation length for long. transverse function
+    Dxxs: numpy array
+        values of long. transverse function
+    epsilon_guess: numpy array
+        initial guess for dissipation rate
+    r0: float
+        The scaled structure function is expected to have a plateau [r0, r1]
+    r1: float
+        The scaled structure function is expected to have a plateau [r0, r1]
+    p: float/int
+        order of structure function
+        ... smaller order is better due to intermittency
+    method: str, default: 'Nelder-Mead'
+        method used to find the minimum of the test function
+
+    Returns
+    -------
+    epsilons: numpy array
+        estimated dissipation rate
+    """
     def find_nearest(array, value, option='normal'):
         """
         Find an element and its index closest to 'value' in 'array'
+
         Parameters
         ----------
         array
@@ -1438,7 +1801,6 @@ def get_epsilon_using_struc_func(rrs, Dxxs, epsilon_guess=100000, r0=1.0, r1=10.
         -------
         idx: index of the array where the closest value to 'value' is stored in 'array'
         array[idx]: value closest to 'value' in 'array'
-
         """
         # get the nearest value such that the element in the array is LESS than the specified 'value'
         if option == 'less':
@@ -1455,7 +1817,24 @@ def get_epsilon_using_struc_func(rrs, Dxxs, epsilon_guess=100000, r0=1.0, r1=10.
         else:
             idx = (np.abs(array - value)).argmin()
             return idx, array[idx]
+
     def func(epsilon, rr, Dxx, r0, r1, p, c=2.0):
+        """
+        Test function to be minimized to estimate dissipation rate from the longitudinal structure function
+        Parameters
+        ----------
+        epsilon
+        rr
+        Dxx
+        r0
+        r1
+        p
+        c
+
+        Returns
+        -------
+
+        """
         ind0 = find_nearest(rr, r0)[0]
         ind1 = find_nearest(rr, r1)[0]
         residue = np.nansum((Dxx[ind0:ind1] - c * (rr[ind0:ind1] * epsilon) ** (p / 3.)) ** 2)
@@ -1879,14 +2258,21 @@ def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None,
 def get_autocorr_functions(r_long, f_long, r_tran, g_tran, time):
     """
     Return interpolated functions using the outputs of get_two_point_vel_corr_iso()
+    ... the returned objects are functions NOT arrays
 
     Parameters
     ----------
-    r_long
-    f_long
-    r_tran
-    g_tran
-    time
+    r_long: numpy array
+        output of get_two_point_vel_corr_iso()
+    f_long: numpy array
+        output of get_two_point_vel_corr_iso()
+    r_tran: numpy array
+        output of get_two_point_vel_corr_iso()
+    g_tran: numpy array
+        output of get_two_point_vel_corr_iso()
+    time: numpy array
+        time corresponding to the given autocorrelation functions
+
 
     Returns
     -------
@@ -1902,6 +2288,33 @@ def get_autocorr_functions(r_long, f_long, r_tran, g_tran, time):
 
 
 def get_autocorr_functions_int_list(r_long, f_long, r_tran, g_tran):
+    """
+    Returns lists of INTERPOLATED autocorrelation function values
+    ... outputs of get_two_point_vel_corr_iso() may contain np.nan and np.inf which could be troublesome
+    ... this method gets rid of these values, and interpolates the missing values (third-order spline)
+    ... the arguments should have a shape (# of data points, duration)
+    ... this method conducts intepoltation at given time respectively
+    because 2D interpolation often raises an error due to the discontinuity of the autocorrelation functions
+    along the temporal axis.
+
+    Parameters
+    ----------
+    r_long: numpy array
+        output of get_two_point_vel_corr_iso()
+    f_long: numpy array
+        output of get_two_point_vel_corr_iso()
+    r_tran: numpy array
+        output of get_two_point_vel_corr_iso()
+    g_tran: numpy array
+        output of get_two_point_vel_corr_iso()
+
+    Returns
+    -------
+    fs: list with length = duration = f_long.shape[-1]
+        list of interpolated longitudinal structure function
+    gs: list with length = duration = f_long.shape[-1]
+        list of interpolated transverse structure function
+    """
     n, duration = r_long.shape
     data = [r_long, f_long, r_tran, g_tran]
     # Remove nans if necessary
@@ -1919,35 +2332,43 @@ def get_autocorr_functions_int_list(r_long, f_long, r_tran, g_tran):
         f_long_tmp /= f_long_tmp[0]
         g_tran_tmp /= g_tran_tmp[0]
 
-        # Make autocorrelation function an even function for curvature calculation
+        # Make autocorrelation functions even
         r_long_tmp = np.concatenate((-np.flip(r_long_tmp, axis=0)[:-1], r_long_tmp))
         f_long_tmp = np.concatenate((np.flip(f_long_tmp, axis=0)[:-1], f_long_tmp))
         r_tran_tmp = np.concatenate((-np.flip(r_tran_tmp, axis=0)[:-1], r_tran_tmp))
         g_tran_tmp = np.concatenate((np.flip(g_tran_tmp, axis=0)[:-1], g_tran_tmp))
 
+        # Interpolate
         f_spl = UnivariateSpline(r_long_tmp, f_long_tmp, s=0, k=3)  # longitudinal autocorrelation func.
         g_spl = UnivariateSpline(r_tran_tmp, g_tran_tmp, s=0, k=3)  # transverse autocorrelation func.
 
         fs.append(f_spl)
-        gs.append((g_spl))
+        gs.append(g_spl)
     return fs, gs
 
 
 def get_autocorrelation_tensor_iso(r_long, f_long, r_tran, g_tran, time):
     """
     Returns autocorrelation tensor with isotropy assumption
+    ... not recommended for practical use due to long convergence time
 
     Parameters
     ----------
-    r_long
-    f_long
-    r_tran
-    g_tran
-    time
+    r_long: numpy array
+        output of get_two_point_vel_corr_iso()
+    f_long: numpy array
+        output of get_two_point_vel_corr_iso()
+    r_tran: numpy array
+        output of get_two_point_vel_corr_iso()
+    g_tran: numpy array
+        output of get_two_point_vel_corr_iso()
+    time: numpy array
+        time corresponding to the given autocorrelation functions
 
     Returns
     -------
-
+    rij: autocorrelation tensor
+        technically a function with arguments: i, j, r, t, udata (tensor indices, separation distance, time index, udata)
     """
     f, g = get_autocorr_functions(r_long, f_long, r_tran, g_tran, time)
 
@@ -1982,29 +2403,71 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
     Parameters
     ----------
     udata
-    x
-    y
-    z
-    p
-    roll_axis
-    n_bins
-    nu
-    u
-    x0
-    x1
-    y0
-    y1
-    z0
-    z1
-    t0
-    t1
-    coarse
-    coarse2
-    notebook
+    x: numpy array
+        x-coordinate of the spatial grid corresponding to the given udata
+        ... it does not have to ve equally spaced
+    y: numpy array
+        y-coordinate of the spatial grid corresponding to the given udata
+        ... it does not have to ve equally spaced
+    z: numpy array
+        z-coordinate of the spatial grid corresponding to the given udata
+        ... it does not have to ve equally spaced
+    p: float or int
+        order of structure function
+    roll_axis: int
+        "u" and "roll_axis" determines whether this method returns the longitudinal or transverse structure function
+        If you want longitudinal, match "u" and "roll_axis". e.g.- u='ux' and roll_axis=1, u='uy' and roll_axis=0
+        If you want transverse, do not match "u" and "roll_axis". e.g.- u='ux' and roll_axis=0, u='uy' and roll_axis=1
+    n_bins: int, default=None
+        number of bins used to take a histogram of velocity difference
+    nu: float
+        viscosity
+    u: str, default='ux'
+        velocity component used to compute the structure functions. Choices are 'ux', 'uy', 'uz'
+    x0: int, default: 0
+        Specified the region of udata to compute the structure function.
+        This method uses only udata[y0:y1, x0:x1, z0:z1, t0:t1].
+    x1: int, default: None
+        This method uses only udata[y0:y1, x0:x1, z0:z1, t0:t1].
+    y0: int, default: 0
+        This method uses only udata[y0:y1, x0:x1, z0:z1, t0:t1].
+    y1 int, default: None
+        This method uses only udata[y0:y1, x0:x1, z0:z1, t0:t1].
+    z0: int, default: 0
+        This method uses only udata[y0:y1, x0:x1, z0:z1, t0:t1].
+    z1 int, default: None
+        This method uses only udata[y0:y1, x0:x1, z0:z1, t0:t1].
+    t0: int, default: 0
+        This method uses only udata[y0:y1, x0:x1, z0:z1, t0:t1].
+    t1 int, default: None
+        This method uses only udata[y0:y1, x0:x1, z0:z1, t0:t1].
+    coarse: float, (0, 1], default: 1
+        the first parameter to save computation time related sampling frequency
+        ... The higher "coarse" is, it samples more possible data points.
+        ... If "coarse" == 1, it samples all possible data points.
+        ... If "coarse" == 0.5, it samples only a half of possible data points. Could overestimate Taylor microscale.
+    coarse2: float, (0, 1], default: 0.2
+        the second parameter to save computation time related to making a histogram
+        ... Determines how many sampled data points to be used to make a histogram
+        ... If "coarse" == 1, it uses all data points to make a histogram.
+        ... If "coarse" == 0.5, it uses only a half of data points to make a histogram
+    notebook: bool
+        ... if True, it uses tqdm.tqdm_notebook instead of tqdm.tqdm
 
     Returns
     -------
-
+    rrs: numpy array
+        two-point separation distance for the structure function
+    Dxxs: numpy array
+        values of the structure function
+    Dxx_errs: numpy array
+        error of the structure function
+    rrs_scaled: numpy array
+        two-point separation distance for the SCALED structure function
+    Dxxs_scaled: numpy array
+        values of the SCALED structure function
+    Dxx_errs_scaled: numpy array
+        error of the SCALED structure function
     """
     if notebook:
         from tqdm import tqdm_notebook as tqdm
@@ -2022,7 +2485,7 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
 
         Returns
         -------
-        Sorted arr1, and arr2
+        Sorted arr1, and Sorted arr2
 
         """
         arr1, arr2 = zip(*sorted(zip(arr1, arr2)))
@@ -2181,16 +2644,27 @@ def scale_raw_structure_funciton_long(rrs, Dxxs, Dxx_errs, epsilon, nu=1.004, p=
 
     Parameters
     ----------
-    rrs
-    Dxxs
-    Dxx_errs
-    epsilon
-    nu
-    p
+    rrs: numpy array
+        separation between two points, output of get_two_point_vel_corr_iso()
+    Dxxs: numpy array
+        longitudinal structure function, output of get_two_point_vel_corr_iso()
+    Dxx_errs: numpy array
+        error of longitudinal structure function, output of get_two_point_vel_corr_iso()
+    epsilon: numpy array or float
+        dissipation rate
+    nu: float
+        viscosity
+    p: int/float
+        order of structure function
 
     Returns
     -------
-    rrs_s, Dxxs_s, Dxx_errs_s: Scaled r, DLL, DLL error
+    rrs_s: numpy array
+        Scaled r
+    Dxxs_s: numpy array
+        Scaled structure function
+    Dxx_errs_s: numpy array
+        Scaled DLL error
     """
     Dxxs_s = Dxxs / (epsilon * rrs) ** (p / 3.)
     Dxx_errs_s = Dxx_errs / (epsilon * rrs) ** (p / 3.)
@@ -2204,16 +2678,21 @@ def scale_raw_structure_funciton_long(rrs, Dxxs, Dxx_errs, epsilon, nu=1.004, p=
 ### DEFAULT ###
 def remove_nans_for_array_pair(arr1, arr2):
     """
-    remove nans or infs in arr1 and arrs, and returns the compressed arrays with the same length
+    remove nans or infs for a pair of 1D arrays, and returns the compressed arrays with the same length
+    e.g.: arr1 = [0, 0.1, 0.2, np.nan, 0.4, 0.5], arr2 = [-1.2, 19.2. 155., np.inf, 0.1]
+        -> compressed_arr1 = [0, 0.1, 0.2, 0.5], compressed_arr2 = [-1.2, 19.2., 0.1]
 
     Parameters
     ----------
-    arr1
-    arr2
-
+    arr1: numpy array
+        ... may include np.nan and np.inf
+    arr2: numpy array
+        ... may include np.nan and np.inf
     Returns
     -------
-    compressed_arr1, compressed_arr2
+    compressed_arr1: numpy array
+        ... without any np
+    compressed_arr2: numpy array
     """
 
     def get_mask_for_nan_and_inf(U):
@@ -2269,12 +2748,10 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.015, d
         Longitudinal Taylor microscale
     lambda_g: numpy 2d array with shape (duration, )
         Transverse Taylor microscale
-
     """
 
     def compute_lambda_from_autocorr_func(r, g, deg=2):
         """
-
         Parameters
         ----------
         r: numpy 1d array
@@ -2366,15 +2843,20 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.015, d
 def get_taylor_microscales_iso(udata, epsilon, nu=1.004):
     """
     Return Taylor microscales computed by isotropic formulae: lambda_g_iso = (15 nu * u_irms^2 / epsilon) ^ 0.5
+
     Parameters
     ----------
     udata: nd array
     epsilon: float or array with the same length as udata
-    nu: float, viscoty
+    nu: float
+        viscoty
 
     Returns
     -------
-    lambda_f_iso, lambda_g_iso
+    lambda_f_iso: numpy array
+        longitudinal Taylor microscale
+    lambda_g_iso: numpy array
+        transverse Taylor microscale
     """
     u_irms = get_characteristic_velocity(udata)
     lambda_g_iso = np.sqrt(15. * nu * u_irms ** 2 / epsilon)
@@ -2402,6 +2884,29 @@ def get_taylor_microscales_iso(udata, epsilon, nu=1.004):
 # Integral scales 1: using autocorrelation functions
 ### DEFAULT ###
 def get_integral_scales(r_long, f_long, r_tran, g_tran, method='trapz'):
+    """
+    Returns integral scales computed by using autocorrelation functions
+
+    Parameters
+    ----------
+    r_long: numpy array
+        ... output of get_two_point_vel_corr_iso(...)
+    f_long numpy array
+        ... output of get_two_point_vel_corr_iso(...)
+    r_tran numpy array
+        ... output of get_two_point_vel_corr_iso(...)
+    g_tran numpy array
+        ... output of get_two_point_vel_corr_iso(...)
+    method: string, default: 'trapz'
+        ... integration method, choose from quadrature or trapezoidal
+
+    Returns
+    -------
+    L11: numpy array
+        longitudinal integral length scale
+    L22: numpy array
+        transverse integral length scale
+    """
     n, duration = r_long.shape
     data = [r_long, f_long, r_tran, g_tran]
     # Remove nans if necessary
@@ -2431,9 +2936,12 @@ def get_integral_scales_using_rij(udata, Rij, rmax, n=100):
     Parameters
     ----------
     udata
-    Rij
-    rmax
-    n
+    Rij: numpy array
+        two-point velocity autocorrelation tensor
+        ... can be obtained by get_two_point_vel_corr_iso(...) but may take a long time
+    rmax: float
+    n: int
+        The higher n is, the integrand function becomes more smooth
 
     Returns
     -------
@@ -2460,12 +2968,16 @@ def get_integral_scales_using_rij(udata, Rij, rmax, n=100):
 # Integral scales 3: isotropic, using E(k). Must know a full 1d spectrum
 def get_integral_scales_iso_spec(udata, e_k, k):
     """
-    Integral scale. Assumes isotropy and a full 1D energy spectrum. Pope 6.260.
+    Integral scale defined through energy spectrum.
+    Assumes isotropy and a full 1D energy spectrum. Pope 6.260.
+
     Parameters
     ----------
     udata
-    e_k: an output of get_energy_spectrum()
-    k: an output of get_energy_spectrum()
+    e_k: numpy array
+        output of get_energy_spectrum()
+    k: numpy array
+        output of get_energy_spectrum()
 
     Returns
     -------
@@ -2483,19 +2995,21 @@ def get_integral_scales_iso_spec(udata, e_k, k):
 # Integral scales 4: characteristic size of Large-eddies
 def get_integral_scale_large_eddy(udata, epsilon):
     """
-    dissipation rate, epsilon is proportional to u'^3 / L.
+    dissipation rate (epsilon) is known to be proportional to u'^3 / L.
 
     Some just define an integral scale L as u'^3 / epsilon.
-    This method just returns this integral scale. It is often interpreted as the characteristic scale of large eddies.
+    This method just returns this ratio. It is often interpreted as the characteristic scale of large eddies.
 
     Parameters
     ----------
-    udata
-    epsilon
+    udata: numpy array
+    epsilon: numpy array / float
+        dissipation rate
 
     Returns
     -------
-
+    L: numpy array
+        integral length scale (characterisic size of large eddies)
     """
     u_irms = get_characteristic_velocity(udata)
     L = u_irms ** 3 / epsilon
@@ -2505,9 +3019,11 @@ def get_integral_scale_large_eddy(udata, epsilon):
 def get_integral_velocity_scale(udata):
     """
     Return integral velocity scale which is identical to u' (characteristic velocity)
+    See get_characteristic_velocity()
+
     Parameters
     ----------
-    udata
+    udata: numpy array
 
     Returns
     -------
@@ -2520,18 +3036,25 @@ def get_integral_velocity_scale(udata):
 ### DEFAULT ###
 def get_kolmogorov_scale(udata, dx, dy, dz=None, nu=1.004):
     """
-    Returns kolmogorov LENGTh scale
+    Returns kolmogorov LENGTH scale
+    ... estimates dissipation rate from the rate-of-strain tensor
+
     Parameters
     ----------
-    udata
-    dx
-    dy
-    dz
-    nu
+    udata: numpy array
+    dx: float
+        data spacing in x
+    dy: float
+        data spacing in y
+    dz: float
+        data spacing in z
+    nu: float
+        viscosity
 
     Returns
     -------
-    eta
+    eta: numpy array
+        kolmogorov length scale
     """
     epsilon = get_epsilon_using_sij(udata, dx=dx, dy=dy, dz=dz, nu=nu)
     eta = (nu ** 3 / epsilon) ** 0.25
@@ -2542,13 +3065,18 @@ def get_kolmogorov_scale(udata, dx, dy, dz=None, nu=1.004):
 def get_integral_scales_all(udata, dx, dy, dz=None, nu=1.004):
     """
     Returns integral scales (related to LARGE EDDIES)
+
     Parameters
     ----------
-    udata
-    dx
-    dy
-    dz
-    nu
+    udata: numpy array
+    dx: float
+        data spacing in x
+    dy: float
+        data spacing in y
+    dz: float
+        data spacing in z
+    nu: float
+        viscosity
 
     Returns
     -------
@@ -2569,17 +3097,25 @@ def get_taylor_microscales_all(udata, r_long, f_long, r_tran, g_tran):
     Returns Taylor microscales
     Parameters
     ----------
-    udata
-    r_long
-    f_long
-    r_tran
-    g_tran
+    udata: numpy array
+        velocity field array
+    r_long: numpy array
+        ... output of get_two_point_vel_corr_iso(...)
+    f_long: numpy array
+        ... output of get_two_point_vel_corr_iso(...)
+    r_tran: numpy array
+        ... output of get_two_point_vel_corr_iso(...)
+    g_tran: numpy array
+        ... output of get_two_point_vel_corr_iso(...)
 
     Returns
     -------
     lambda_f: 1d array
+        Taylor microscale (length)
     u_lambda: 1d array
+        Taylor microscale (velocity)
     tau_lambda: 1d array
+        Taylor microscale (time)
     """
     lambda_f, lambda_g = get_taylor_microscales(r_long, f_long, r_tran, g_tran)
     u_lambda = get_characteristic_velocity(udata) # u_irms = u_lambda
@@ -2590,13 +3126,18 @@ def get_taylor_microscales_all(udata, r_long, f_long, r_tran, g_tran):
 def get_kolmogorov_scales_all(udata, dx, dy, dz, nu=1.004):
     """
     Returns Kolmogorov scales
+
     Parameters
     ----------
-    udata
-    dx
-    dy
-    dz
-    nu
+    udata: numpy array
+    dx: float
+        data spacing in x
+    dy: float
+        data spacing in y
+    dz: float
+        data spacing in z
+    nu: float
+        viscosity
 
     Returns
     -------
@@ -2615,17 +3156,24 @@ def get_kolmogorov_scales_all(udata, dx, dy, dz, nu=1.004):
 def get_turbulence_re(udata, dx, dy, dz=None,  nu=1.004):
     """
     Returns turbulence reynolds number (Pope 6.59)
+    ... Integral Reynolds number
+
     Parameters
     ----------
-    udata
-    dx
-    dy
-    dz
-    nu
+    udata: numpy array
+    dx: float
+        data spacing in x
+    dy: float
+        data spacing in y
+    dz: float
+        data spacing in z
+    nu: float
+        viscosity
 
     Returns
     -------
-    Re_L
+    Re_L: numpy array
+        Turbulence Reynolds number
     """
     L, u_L, tau_L = get_integral_scales_all(udata, dx, dy, dz,  nu=nu)
     Re_L = u_L * L / nu
@@ -2634,18 +3182,27 @@ def get_turbulence_re(udata, dx, dy, dz=None,  nu=1.004):
 
 def get_taylor_re(udata, r_long, f_long, r_tran, g_tran, nu=1.004):
     """
-    Returns Taylor reynolds number (Pope 6.63)
+    Returns Taylor reynolds number (Pope 6.63) from autocorrelation functions
+
     Parameters
     ----------
-    udata
-    dx
-    dy
-    dz
-    nu
+    udata: numpy array
+        velocity field array
+    r_long: numpy array
+        ... output of get_two_point_vel_corr_iso(...)
+    f_long: numpy array
+        ... output of get_two_point_vel_corr_iso(...)
+    r_tran: numpy array
+        ... output of get_two_point_vel_corr_iso(...)
+    g_tran: numpy array
+        ... output of get_two_point_vel_corr_iso(...)
+    nu: float, default: 1.004 (water, in mm^2/s)
+        viscosity
 
     Returns
     -------
-    Re_L
+    Re_lambda: array
+        Taylor Reynolds number
     """
     lambda_g, u_irms, tau_lambda = get_taylor_microscales_all(udata, r_long, f_long, r_tran, g_tran)
     Re_lambda = u_irms * lambda_g / nu
@@ -2659,12 +3216,18 @@ def rankine_vortex_2d(xx, yy, x0=0, y0=0, gamma=1., a=1.):
 
     Parameters
     ----------
-    xx
-    yy
-    x0
-    y0
-    gamma
-    a
+    xx: numpy array
+        x-coordinate, 2d grid
+    yy: numpy array
+        y-coordinate, 2d grid
+    x0: float
+        x-coordinate of the position of the rankine vortex
+    y0: float
+        y-coordinate of the position of the rankine vortex
+    gamma: float
+        circulation of the rankine vortex
+    a: float
+        core diameter of the rankine vortex
 
     Returns
     -------
@@ -2724,6 +3287,24 @@ def rankine_vortex_line_3d(xx, yy, zz, x0=0, y0=0, gamma=1., a=1., uz0=0):
 
 
 def get_sample_turb_field_3d(return_coord=True):
+    """
+    Returns udata=(ux, uy, uz) of a slice of isotropic, homogeneous turbulence data (DNS, JHTD)
+
+    Parameters
+    ----------
+    return_coord
+
+    Returns
+    -------
+    udata: numpy array
+        velocity field
+    xx: numpy array
+        x-coordinate of 3D grid
+    yy: numpy array
+        y-coordinate of 3D grid
+    zz: numpy array
+        z-coordinate of 3D grid
+    """
     # get module location
     mod_loc = os.path.abspath(__file__)
     pdir, filename = os.path.split(mod_loc)
@@ -2740,7 +3321,6 @@ def get_sample_turb_field_3d(return_coord=True):
     Lx, Ly, Lz = 2 * np.pi, 2 * np.pi, 2 * np.pi
     dx = dy = dz = Lx / 1023
 
-
     for t in range(duration):
         udata_tmp = data[keys_u[t]]
         udata_tmp = np.swapaxes(udata_tmp, 0, 3)
@@ -2749,8 +3329,8 @@ def get_sample_turb_field_3d(return_coord=True):
 
     if return_coord:
         x, y, z = range(width), range(height), range(depth)
-        xx, yy, zz = np.meshgrid(y, x, z)
-        return udata, xx * dx, yy * dy, zz  * dz
+        xx, yy, zz = np.meshgrid(y, x, z) * dx
+        return udata, xx, yy, zz
     else:
         return udata
 
@@ -2759,8 +3339,13 @@ def get_sample_turb_field_3d(return_coord=True):
 def get_rescaled_energy_spectrum_saddoughi():
     """
     Returns values to plot rescaled energy spectrum from Saddoughi (1992)
+
     Returns
     -------
+    e: numpy array
+        spectral energy density: energy stored between [k, k+dk)
+    k: numpy array
+        wavenumber
 
     """
     k = np.asarray([1.27151, 0.554731, 0.21884, 0.139643, 0.0648844, 0.0198547, 0.00558913, 0.00128828, 0.000676395, 0.000254346])
@@ -2769,6 +3354,15 @@ def get_rescaled_energy_spectrum_saddoughi():
 
 
 def get_energy_spectra_jhtd():
+    """
+    Returns values to plot energy spectrum from JHTD, computed by Takumi in 2019
+    Call get_rescaled_energy_spectra_jhtd for scaled energy spectrum.
+
+    Returns
+    -------
+    datadict: dict
+        data stored in jhtd_e_specs.h5 is stored: k, ek
+    """
     faqm_dir = os.path.split(os.path.realpath(__file__))[0]
     datapath = faqm_dir + '/reference_data/jhtd_e_specs.h5'
 
@@ -2784,10 +3378,13 @@ def get_energy_spectra_jhtd():
 
 def get_rescaled_energy_spectra_jhtd():
     """
-    Returns values to plot rescaled energy spectrum from Saddoughi (1992)
+    Returns values to plot rescaled energy spectrum from JHTD, computed by Takumi in 2019
+    Call get_energy_spectra_jhtd for raw energy spectrum.
+
     Returns
     -------
-
+    datadict: dict
+        data stored in jhtd_e_specs.h5 is stored: Scaled k, Scaled ek
     """
     faqm_dir = os.path.split(os.path.realpath(__file__))[0]
     datapath = faqm_dir + '/reference_data/jhtd_e_specs.h5'
@@ -2805,6 +3402,7 @@ def get_rescaled_structure_function_saddoughi(p=2):
     """
     Returns the values of rescaled structure function reported in Saddoughi and Veeravalli 1994 paper: r_scaled, dll
     ... this is a curve about a specific Reynolds number! i.e. there is no universal structure function
+
     ----------
     p: int
     ... order of the structure function
@@ -2813,6 +3411,7 @@ def get_rescaled_structure_function_saddoughi(p=2):
     -------
     r_scaled: nd array
     dll: nd array
+
     """
     tflow_dir = os.path.split(os.path.realpath(__file__))[0]
     if p==2:
@@ -2834,8 +3433,7 @@ def get_window_radial(xx, yy, zz=None, wtype='hamming', rmax=None, duration=None
                     x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                       n=500):
     """
-    General function to get a window
-    ...
+    General method to get a window with shape (xx.shape[:], duration) or (xx.shape[:]) if duration is None
     ... Window types:
         boxcar, triang, blackman, hamming, hann, bartlett, flattop, parzen, bohman, blackmanharris, nuttall, barthann,
         kaiser (needs beta), gaussian (needs standard deviation), general_gaussian (needs power, width),
@@ -2844,23 +3442,41 @@ def get_window_radial(xx, yy, zz=None, wtype='hamming', rmax=None, duration=None
 
     Parameters
     ----------
-    xx
-    yy
-    zz
-    wtype
-    rmax
-    duration
-    x0
-    x1
-    y0
-    y1
-    z0
-    z1
-    n
+    xx: nd array
+        x-coordinate of the spatial grid of udata
+    yy: nd array
+        y-coordinate of the spatial grid of udata
+    zz: nd array
+        y-coordinate of the spatial grid of udata
+    wtype: str
+        name of window function such as 'hamming', 'flattop'
+    rmax: float
+        window function returns zero for r > rmax
+    duration: int, default: None
+        specifies the temporal dimension of the returning window function.
+    x0: int, default: 0
+        used to specify the region of the returning window function.
+        When coordinates outside the specified region is given to the window function, it returns 0.
+    x1: int, default: None
+        used to specify the region of the returning window function.
+        When coordinates outside the specified region is given to the window function, it returns 0.
+    y0: int, default: 0
+    y1: int, default: None
+        used to specify the region of the returning window function.
+        When coordinates outside the specified region is given to the window function, it returns 0.
+    z0: int, default: 0
+    z1: int, default: None
+        used to specify the region of the returning window function.
+        When coordinates outside the specified region is given to the window function, it returns 0.
+    n: int, default: 500
+        number of data points when 1D window function is called for the first time.
+        The higher n is, the returning windowing function is more accurate.
 
     Returns
     -------
-
+    window/windows: nd array
+    ... window: hamming window with the shape as xx
+    ... window: hamming window with the shape (xx.shape[:], duration)
     """
     # Let the center of the grid be the origin
     if zz is None:
@@ -2888,10 +3504,6 @@ def get_window_radial(xx, yy, zz=None, wtype='hamming', rmax=None, duration=None
     if rmax is None:
         xmax, ymax = np.nanmax(xx[0, :]), np.nanmax(yy[:, 0])
         rmax = min(xmax, ymax)
-
-    # x = rr + rmax
-    # window = 0.54 - 0.46 * np.cos(2 * np.pi * (2 * rmax - x) / rmax / 2.)
-
 
     r = np.linspace(-rmax, rmax, n)
     window_1d = signal.get_window(wtype, n)
@@ -2937,7 +3549,7 @@ def compute_signal_loss_due_to_windowing(xx, yy, window, x0=0, x1=None, y0=0, y1
         signal_intensity_loss = 1.
     else:
         window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
-        signal_intensity_loss =  np.nanmean(window_arr)
+        signal_intensity_loss = np.nanmean(window_arr)
     gamma = 1. / signal_intensity_loss
     return gamma
 
@@ -2961,8 +3573,9 @@ def get_hamming_window_radial(xx, yy, zz=None, rmax=None, duration=None,
 
     Returns
     -------
-    window/windows: nd array,
-    ... hamming window with shape
+    window/windows: nd array
+    ... window: hamming window with the shape as xx
+    ... window: hamming window with the shape (xx.shape[:], duration)
 
     """
     # Let the center of the grid be the origin
@@ -3008,7 +3621,7 @@ def clean_udata_cheap(udata, cutoffU=2000, fill_value=np.nan, verbose=True):
     Conducts a cheap bilinear interpolation for missing data.
     ... literally, computes the average of the values interpolated in the x- and y-directions
     ... griddata performs a better interpolation but this method is much faster.
-    ... values near the edges should not be trusted.
+    ... values near the edges must not be trusted.
     Parameters
     ----------
     udata
@@ -3075,6 +3688,7 @@ def clean_udata_cheap(udata, cutoffU=2000, fill_value=np.nan, verbose=True):
 def get_mask_for_unphysical(U, cutoffU=2000., fill_value=99999., verbose=True):
     """
     Returns a mask (N-dim boolean array). If elements were below/above a cutoff, np.nan, or np.inf, then they get masked.
+
     Parameters
     ----------
     U: array-like
@@ -3131,15 +3745,16 @@ def get_mask_for_unphysical(U, cutoffU=2000., fill_value=99999., verbose=True):
 def fill_unphysical_with_sth(U, mask, fill_value=np.nan):
     """
     Returns an array whose elements are replaced by fill_value if its mask value is True
+
     Parameters
     ----------
-    U   array-like
-    mask   multidimensional boolean array
-    fill_value   value that replaces masked values
+    U: array-like
+    mask: multidimensional boolean array
+    fill_value: value that replaces masked values
 
     Returns
     -------
-    U_filled  numpy array
+    U_filled: numpy array
 
     """
     U_masked = ma.array(U, mask=mask)
@@ -3150,7 +3765,7 @@ def fill_unphysical_with_sth(U, mask, fill_value=np.nan):
 
 def clean_udata(udata, xx, yy, cutoffU=2000, fill_value=np.nan, verbose=True, method='linear', notebook=True):
     """
-    Conducts 2d interpolation for udata
+    Conducts 2d interpolation for udata using scipy.interpolate.griddata
     ... applies a mask to ignore the values whose magnitudes are greater than the cutoff
     ... interpolates the missing data (np.nan or np.inf)
 
@@ -3167,7 +3782,7 @@ def clean_udata(udata, xx, yy, cutoffU=2000, fill_value=np.nan, verbose=True, me
 
     Returns
     -------
-
+    udata_i: interpolated udata which includes neither np.nan nor np.iinf
     """
 
     if notebook:
@@ -3541,6 +4156,11 @@ def plot_energy_spectra_avg_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=No
 def plot_mean_flow(udata, xx, yy, f_p=5., crop_edges=4, fps=1000., data_spacing=1, umin=-200, umax=200, tau0=0, tau1=10, yoffset_box=20.):
     """
     A method to quickly plot the mean flow
+    ... dependencies: takumi.library.graph
+    ... graph is Takumi's plotting module which mainly utilizes matplotlib.
+    ... graph can be found under library/display her: https://github.com/tmatsuzawa/library
+
+
     Parameters
     ----------
     udata
@@ -3612,7 +4232,7 @@ def plot_mean_flow(udata, xx, yy, f_p=5., crop_edges=4, fps=1000., data_spacing=
 
     ## Reynolds decomposition (For a specified region)
     udata_m, udata_t = reynolds_decomposition(udata[..., mask])
-    ## energy / enstrophy 
+    ## energy / enstrophy
     time = np.arange(udata.shape[-1]) / (fps / data_spacing)
     e_t_avg, _ = get_spatial_avg_energy(udata_t, x0=n, x1=-n, y0=n, y1=-n)
 
@@ -3715,10 +4335,13 @@ def make_time_evo_movie_from_udata(qty, xx, yy, time, t=1, label='$\\frac{1}{U_i
 
 
 ########## misc ###########
+
+
 def fix_udata_shape(udata):
     """
     It is better to always have udata with shape (height, width, depth, duration) (3D) or  (height, width, duration) (2D)
-    This method fixes the shape of udata such that if the original shape is  (height, width, depth) or (height, width)
+    This method fixes the shape of udata such that its shape is (height, width, depth) or (height, width)
+
     Parameters
     ----------
     udata: nd array,
@@ -3761,7 +4384,8 @@ def fix_udata_shape(udata):
 
 def get_equally_spaced_grid(udata, spacing=1):
     """
-    Returns a grid to plot udata
+    Returns a equally spaced grid to plot udata
+
     Parameters
     ----------
     udata
@@ -3786,15 +4410,16 @@ def get_equally_spaced_grid(udata, spacing=1):
 
 def get_equally_spaced_kgrid(udata, dx=1):
     """
-    Returns a grid to plot udata
+    Returns a equally spaced grid to plot FFT of udata
+
     Parameters
     ----------
     udata
-    spacing: spacing of the grid in the real space
+    dx: spacing of the grid in the real space
 
     Returns
     -------
-    xx, yy, (zz): 2D or 3D numpy arrays
+    kxx, kyy, (kzz): 2D or 3D numpy arrays
     """
     dim = len(udata)
     if dim == 2:
@@ -3824,6 +4449,8 @@ def get_equally_spaced_kgrid(udata, dx=1):
 def kolmogorov_53(k, k0=50):
     """
     Customizable Kolmogorov Energy spectrum
+    Returns the value(s) of k0 * k^{-5/3}
+
     Parameters
     ----------
     k: array-like, wavenumber: convention is k= 1/L NOT 2pi/L
@@ -3837,25 +4464,28 @@ def kolmogorov_53(k, k0=50):
     return e_k
 
 
-def kolmogorov_53_uni(k, epsilon, c=1.5):
+def kolmogorov_53_uni(k, epsilon, c=1.6):
     """
     Universal Kolmogorov Energy spectrum
+    Returns the value(s) of C \epsilon^{2/3} k^{-5/3}
+
     Parameters
     ----------
     k: array-like, wavenumber
     epsilon: float, dissipation rate
-    c: float, Kolmogorov constant c=1.5 (default)
+    c: float, Kolmogorov constant c=1.6 (default)
     ... E(k) = c epsilon^(2/3) k^(-5/3)
     ... E11(k) = c1 epsilon^(2/3) k^(-5/3)
     ... E22(k) = c2 epsilon^(2/3) k^(-5/3)
     ... c1:c2:c = 1: 4/3: 55/18
-    ... If c = 1.5, c1 = 0.491, c2 = 1.125
-    ... Exp. values: c = 1.5, c1 = 0.5, c2 =
+    ... If c = 1.6, c1 = 0.491, c2 = 1.125
+    ... Exp. values: c = 1.5, c1 = 0.5, c2 = ?
 
     Returns
     -------
     e_k: array-like, Kolmogorov energy spectrum for a given range of k
     """
+
     e_k = c*epsilon**(2./3)*k**(-5./3)
     return e_k
 
@@ -3895,15 +4525,16 @@ def get_characteristic_velocity(udata):
 
 def klonecker_delta(i, j):
     """
-    Klonecker Delta function
+    Klonecker Delta function: \delta_{i, j}
+
     Parameters
     ----------
-    i
-    j
+    i: tensor index
+    j: tensor index
 
     Returns
     -------
-    0 or 1
+    1 if i==j, 0 otherwise
 
     """
     if i == j:
@@ -3914,34 +4545,72 @@ def klonecker_delta(i, j):
 
 def cart2pol(x, y):
     """
-    Cartesian coord to polar coord
+    Transformation: Cartesian coord to polar coord
+
     Parameters
     ----------
-    x
-    y
+    x: numpy array
+    y: numpy array
 
     Returns
     -------
-    r
-    phi
+    r: numpy array
+    phi: numpy array
     """
     r = np.sqrt(x**2 + y**2)
     phi = np.arctan2(y, x)
     return r, phi
 
+def cart2sph(x, y, z):
+    """
+    Transformation: cartesian to spherical
+
+    Parameters
+    ----------
+    x
+    y
+    z
+
+    Returns
+    -------
+    r: radius
+    theta: elevetaion angle [-pi/2, pi/2]
+    phi: azimuthal angle [-pi, pi]
+
+    """
+    r = np.sqrt(x ** 2 + y ** 2 + z ** 2)
+    theta = np.arccos(z/r)
+    phi = np.arctan2(y, x)
+    return r, theta, phi
 
 def natural_sort(arr):
+    """
+    natural-sorts elements in a given array
+    alist.sort(key=natural_keys) sorts in human order
+    http://nedbatchelder.com/blog/200712/human_sorting.html
+    (See Toothy's implementation in the comments)
+
+    e.g.-  arr = ['a28', 'a01', 'a100', 'a5']
+    ... WITHOUT natural sorting,
+     -> ['a01', 'a100', 'a28', 'a5']
+    ... WITH natural sorting,
+     -> ['a01', 'a5', 'a28', 'a100']
+
+
+    Parameters
+    ----------
+    arr: list or numpy array of strings
+
+    Returns
+    -------
+    sorted_array: natural-sorted
+
+    """
     def atoi(text):
         'natural sorting'
         return int(text) if text.isdigit() else text
 
     def natural_keys(text):
-        '''
-        natural sorting
-        alist.sort(key=natural_keys) sorts in human order
-        http://nedbatchelder.com/blog/200712/human_sorting.html
-        (See Toothy's implementation in the comments)
-        '''
         return [atoi(c) for c in re.split('(\d+)', text)]
 
     return sorted(arr, key=natural_keys)
