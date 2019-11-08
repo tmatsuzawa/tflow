@@ -7,6 +7,7 @@ import h5py
 import glob
 import numpy as np
 from tqdm import tqdm
+import velocity as vel
 import os
 import re
 
@@ -38,7 +39,7 @@ def write_hdf5_dict(filepath, data_dict, chunks=None):
             hf.create_dataset(key, data=data_dict[key], chunks=chunks)
 
     hf.close()
-    print('Data was successfully saved as ' + filename)
+    print 'Data was successfully saved as ' + filename
 
 
 def davis2hdf5_dirbase(dirbase, use_chunks, savedir=None, header='B', scale=1000., fps=1.):
@@ -63,7 +64,7 @@ def davis2hdf5_dirbase(dirbase, use_chunks, savedir=None, header='B', scale=1000
     datadirs = glob.glob(dirbase + '/*')
     for datadir in tqdm(datadirs, desc='datadir'):
         davis2hdf5(datadir, use_chunks, savedir=savedir, header=header, scale=scale, fps=fps)
-    print('... Done')
+    print '... Done'
 
 
 def davis2hdf5(datadir, use_chunks, savedir=None, savepath=None, header='B', scale=1000., chunks=None, fps=1.):
@@ -106,9 +107,9 @@ def davis2hdf5(datadir, use_chunks, savedir=None, savepath=None, header='B', sca
                         vscale = 1.
                         vel_unit = '????'
                     if t==0:
-                        print('\n Units of Position and Velocity: ' + pos_unit, vel_unit)
+                        print '\n Units of Position and Velocity: ' + pos_unit, vel_unit
                         if vel_unit == 'px/frame':
-                            print('scale (mm/px), frame rate(fps): %.5f, %.1f' % (scale, fps))
+                            print 'scale (mm/px), frame rate(fps): %.5f, %.1f' % (scale, fps)
                 if i > 0:
                     line = line.replace(',', '.').split()
                     x, y, u, v = [float(i) for i in line]
@@ -157,7 +158,7 @@ def davis2hdf5(datadir, use_chunks, savedir=None, savepath=None, header='B', sca
         chunks = None
 
     write_hdf5_dict(savepath, data2write, chunks=chunks)
-    print('... Done')
+    print '... Done'
 
 
 ##### misc. ####
@@ -182,10 +183,10 @@ def natural_sort(arr):
 ##### main method ####
 def main(args):
     if args.dir is None:
-        print('... Making hdf5 files for directories under ' + args.dirbase)
+        print '... Making hdf5 files for directories under ' + args.dirbase
         davis2hdf5_dirbase(args.dirbase, args.chunks, scale=args.scale, fps=args.fps)
     else:
-        print('... Making a hdf5 file for the following directory: ' + args.dir)
+        print '... Making a hdf5 file for the following directory: ' + args.dir
         davis2hdf5(args.dir, args.chunks, scale=args.scale, fps=args.fps)
 
 

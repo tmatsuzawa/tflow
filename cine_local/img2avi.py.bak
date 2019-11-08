@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from . import cine
+import cine
 from numpy import *
 import os, sys
 import argparse
@@ -33,15 +33,15 @@ def noneint(s):
     return None if not s.strip() else int(s)
 
 try:
-    clip_x = list(map(noneint, args.clip_x.split(':')))
+    clip_x = map(noneint, args.clip_x.split(':'))
 except:
-    print("Clip X should be in format start:end, with negative values permisible for end referenced clips")
+    print "Clip X should be in format start:end, with negative values permisible for end referenced clips"
     sys.exit()
 
 try:
-    clip_y = list(map(noneint, args.clip_y.split(':')))
+    clip_y = map(noneint, args.clip_y.split(':'))
 except:
-    print("Clip Y should be in format start:end, with negative values permisible for end referenced clips")
+    print "Clip Y should be in format start:end, with negative values permisible for end referenced clips"
     sys.exit()
 
 images = list(args.images)
@@ -83,15 +83,15 @@ if args.smart:
     # this chunk creates the list of files to be put into movie - currently drops all frames that are missing
     # put this whole thing into an if statement in case slice is used to specify stuff
     temp = re.findall(r'\d+', os.path.basename(os.path.split(images[0])[1]))
-    if len(temp)>1: print('what have you done??? \n the filename contains more than two numbers that characterize it \n taking last one....')
+    if len(temp)>1: print 'what have you done??? \n the filename contains more than two numbers that characterize it \n taking last one....'
     # in case you want to add a query use temp = raw_input('hello') and then swap temp -1 for f
     # create dictionary to obtain file names from kk integers    
     kklist = dict([int(re.findall(r'\d+', os.path.basename(fn))[-1]),images[i]] for i, fn in enumerate(images))
     #slice(args.framelist)
-    frame_slice = slice(*list(map(noneint, args.framelist.split(':'))))
-    frames = list(range(*frame_slice.indices(max(kklist.keys()))))
+    frame_slice = slice(*map(noneint, args.framelist.split(':')))
+    frames = range(*frame_slice.indices(max(kklist.keys())))
     if not args.framelist==':':
-        print('note there are missing frames' + str(list(set(frames) - set(kklist.keys()))))
+        print 'note there are missing frames' + str(list(set(frames) - set(kklist.keys())))
     #ignore missing frames
     kklistf = [kklist[f] for f in frames if f in kklist]
     #kklistf = [kklist.get(f,False) for f in frames if f in kklist]
@@ -104,7 +104,7 @@ for i, fn in enumerate(kklistf):
     try:
         img = Image.open(fn)
     except:
-        print("!! SKIPPED: %s (python imaging library couldn't open) !!" % fn)
+        print "!! SKIPPED: %s (python imaging library couldn't open) !!" % fn
         continue
 
     img = img.crop(clip)

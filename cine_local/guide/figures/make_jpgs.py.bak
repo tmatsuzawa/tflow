@@ -9,7 +9,7 @@ QUALITY = 90
 for fn in glob.glob('*dpi.png'):
     ofn = os.path.splitext(fn)[0] + '.jpg'
 
-    print(fn, '->', ofn)
+    print fn, '->', ofn
     
     Image.open(fn).save(ofn, quality=QUALITY)
     

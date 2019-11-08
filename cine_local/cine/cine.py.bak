@@ -12,13 +12,13 @@ import sys
 import os
 import time
 import struct
-from . import sparse
+import sparse
 # import numpy as N
 from numpy import array, frombuffer
 # import Image
 from threading import Lock
 # import multiprocessing as M
-from . import packed
+import packed
 
 import datetime
 import hashlib
@@ -377,7 +377,7 @@ class Cine(object):
 
     def __getitem__(self, key):
         if type(key) == slice:
-            return list(map(self.get_frame, list(range(self.image_count))[key]))
+            return map(self.get_frame, range(self.image_count)[key])
 
         return self.get_frame(key)
 
@@ -393,9 +393,6 @@ class Cine(object):
         return (dt1 - dt0).seconds + f1 - f0
 
     def get_time_list(self):
-        """
-        Returns a list of time when images were captured. (t=0 for the first image)
-        """
         nframes = self.__len__()
         time = []
         for i in range(nframes):
@@ -412,7 +409,7 @@ class Cine(object):
         self._iter_current_frame = -1
         return self
 
-    def __next__(self):
+    def next(self):
         self._iter_current_frame += 1
         if self._iter_current_frame >= self.image_count:
             raise StopIteration
@@ -426,7 +423,7 @@ class Cine(object):
         return self.fn
 
     def __str__(self):
-        return str(self).encode('utf-8')
+        return unicode(self).encode('utf-8')
 
     __repr__ = __unicode__
 

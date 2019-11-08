@@ -51,7 +51,7 @@ def read_exp_settings(cinedir):
             value = value_tmp
             pass
         values.append(value)
-    piv_settings = dict(list(zip(params, values)))
+    piv_settings = dict(zip(params, values))
     return piv_settings
 
 def read_piv_settings(datadir):
@@ -88,7 +88,7 @@ def read_piv_settings(datadir):
             value = value_tmp
             pass
         values.append(value)
-    piv_settings = dict(list(zip(params, values)))
+    piv_settings = dict(zip(params, values))
     return piv_settings
 
 def compute_form_no(stroke_length, orifice_d=25.6, piston_d=160., num_orifices=1):
@@ -114,18 +114,18 @@ def compute_form_no(stroke_length, orifice_d=25.6, piston_d=160., num_orifices=1
     return ld
 
 def return_piston_tracking_data(cinedir, cinename):
-    print('Looking for piston measurements')
+    print 'Looking for piston measurements'
     pistontrack_dir = cinedir + '/pistontracking'
     pistontrack_data_path = os.path.join(pistontrack_dir, cinename + '_position_data.txt')
     pistontrack_data_path2 = os.path.join(pistontrack_dir, cinename[:-5] + '_position_data.txt')
     if os.path.exists(pistontrack_data_path):
-        print('... Found!')
+        print '... Found!'
     elif os.path.exists(pistontrack_data_path2):
-        print('... Found!')
+        print '... Found!'
         pistontrack_data_path = pistontrack_data_path2
     else:
-        print('... NOT found... Expected file path is:')
-        print(pistontrack_data_path)
+        print '... NOT found... Expected file path is:'
+        print pistontrack_data_path
         return [np.nan], [np.nan]
 
     piston_data = np.loadtxt(pistontrack_data_path)
@@ -341,7 +341,7 @@ def compute_eff_velocity(vel, time, ind1, ind2):
 
     """
     if not len(vel) == len(time):
-        print('velocity array and time array have different sizes!... Continue computing effective velocity.')
+        print 'velocity array and time array have different sizes!... Continue computing effective velocity.'
 
     # Clip an array for computation
     vel = vel[ind1-1:ind2]
@@ -369,7 +369,7 @@ def compute_mean_velocity(vel, time, ind1, ind2):
 
     """
     if not len(vel) == len(time):
-        print('velocity array and time array have different sizes!... Continue computing mean velocity.')
+        print 'velocity array and time array have different sizes!... Continue computing mean velocity.'
 
     # Clip an array for computation
     vel = vel[ind1-1:ind2]
@@ -438,7 +438,7 @@ def interpolate_1Darrays(x, data, xint=None, xnum=None, xmax=None, xmin=None, mo
     elif xint is None and xnum is not None:
         xint = np.abs(xmax - xmin) / float(xnum)
     elif xint is not None and xnum is not None:
-        print('WARNING: Both x interval and xnum were provided! Ignoring provided x interval...')
+        print 'WARNING: Both x interval and xnum were provided! Ignoring provided x interval...'
         xint = np.abs(xmax - xmin) / float(xnum)
 
     xnew = np.arange(xmin, xmax, xint)
@@ -466,7 +466,7 @@ def pivlab2hdf5_cine(cinepath, header='PIVlab', overwrite=False):
             if cinename_no_ext in datadir:
                 pivlab2hdf5(datadir, savedir=savedir, overwrite=overwrite)
 
-    print('...... Done')
+    print '...... Done'
     return savedir
 
 def pivlab2hdf5_basedir(basedir, header='PIV', overwrite=False):
@@ -475,7 +475,7 @@ def pivlab2hdf5_basedir(basedir, header='PIV', overwrite=False):
     parentdirs = glob.glob(basedir + '/' + header + '*')
     for parentdir in parentdirs:
         pivlab2hdf5_parentdir(parentdir, overwrite=overwrite)
-    print('......... Done')
+    print '......... Done'
     return savedir
 
 def pivlab2hdf5_parentdir(parentdir, header='PIVlab', overwrite=False):
@@ -486,7 +486,7 @@ def pivlab2hdf5_parentdir(parentdir, header='PIVlab', overwrite=False):
     for datadir in datadirs:
         # print '... processing ' + os.path.split(datadir)[1]
         pivlab2hdf5(datadir, savedir=savedir, overwrite=overwrite)
-    print('...... Done')
+    print '...... Done'
     return savedir
 
 def pivlab2hdf5(dir, savedir=None, header='PIV_', overwrite=False):
@@ -518,12 +518,12 @@ def pivlab2hdf5(dir, savedir=None, header='PIV_', overwrite=False):
         savedir = parentdir + '/hdf5data'
 
 
-    print('Processing: %s' % os.path.split(dir)[1])
+    print 'Processing: %s' % os.path.split(dir)[1]
 
     # MAKE HDF5
     hdf5path = savedir + '/' + cinename_no_ext + '.h5'
     if not os.path.exists(savedir):
-        print('... mkdir ', savedir)
+        print '... mkdir ', savedir
         os.makedirs(savedir)
     hdf5path_perhaps = savedir + '/' + cinename_no_ext[:-3] + '.h5'
     if os.path.exists(hdf5path_perhaps):
@@ -570,10 +570,10 @@ def pivlab2hdf5(dir, savedir=None, header='PIV_', overwrite=False):
         exp_attrs = ['veff', 'vavg', 'stroke_length_measured', 'ld_measured']
         exp_attrvalues = [veff, vavg, sl, ld]
         for i, exp_datasetname in enumerate(exp_datasetnames):
-            if not exp_datasetname in list(exp.keys()):
+            if not exp_datasetname in exp.keys():
                 exp.create_dataset(exp_datasetname, data=exp_dataset[i])
         for i, exp_attr in enumerate(exp_attrs):
-            if not exp_attr in list(exp.attrs.keys()):
+            if not exp_attr in exp.attrs.keys():
                 exp.attrs[exp_attr] = exp_attrvalues[i]
 
 
@@ -598,21 +598,21 @@ def pivlab2hdf5(dir, savedir=None, header='PIV_', overwrite=False):
 
         # Check if the hdf5 file already stores this PIVLab output
         redundant_pivlab_outputs = False
-        for subgroup_name in list(piv.keys()):
-            piv_paramnames_0 = list(piv[subgroup_name].attrs.keys())
-            piv_paramvalues_0 = list(piv[subgroup_name].attrs.values())
-            piv_params_0 = dict(list(zip(piv_paramnames_0, piv_paramvalues_0)))
+        for subgroup_name in piv.keys():
+            piv_paramnames_0 = piv[subgroup_name].attrs.keys()
+            piv_paramvalues_0 = piv[subgroup_name].attrs.values()
+            piv_params_0 = dict(zip(piv_paramnames_0, piv_paramvalues_0))
             # if piv_params_0 == piv_params:
             #     print '... this piv outputs already exist in the hdf5'
             #     redundant_pivlab_outputs = True
             #     break
-            if piv_params.items() <= piv_params_0.items():
-                print('... this piv outputs already exist in the hdf5')
+            if piv_params.viewitems() <= piv_params_0.viewitems():
+                print '... this piv outputs already exist in the hdf5'
                 redundant_pivlab_outputs = True
                 break
 
         if redundant_pivlab_outputs and not overwrite:
-            print('... skipping')
+            print '... skipping'
             fyle.close()
         else:
             if not overwrite:
@@ -620,7 +620,7 @@ def pivlab2hdf5(dir, savedir=None, header='PIV_', overwrite=False):
                 # Naming convention: /piv/piv000, /piv/piv0001
                 piv_working = piv.create_group('piv%03d' % piv.attrs['no_piv_data'])
             else:
-                print('... Probably, datasets such as u and v exist under %s but overwrite data anyway' % piv[subgroup_name].name)
+                print '... Probably, datasets such as u and v exist under %s but overwrite data anyway' % piv[subgroup_name].name
                 piv_working = piv[subgroup_name]
 
             # Attribute piv-related parameters to piv_working (group)
@@ -684,7 +684,7 @@ def pivlab2hdf5(dir, savedir=None, header='PIV_', overwrite=False):
             # Insert data into hdf5
             if not overwrite:
                 for i, piv_working_datasetname in enumerate(piv_working_datasetnames):
-                    if not piv_working_datasetname in list(piv_working.keys()):
+                    if not piv_working_datasetname in piv_working.keys():
                         piv_working.create_dataset(piv_working_datasetname, data=piv_working_datasets[i])
                 # Keep track how many piv data exists for a giveb cine
                 piv.attrs['no_piv_data'] += 1
@@ -696,25 +696,25 @@ def pivlab2hdf5(dir, savedir=None, header='PIV_', overwrite=False):
                         piv_working.create_dataset(piv_working_datasetname, data=piv_working_datasets[i])
             fyle.close()
 
-    print('... Done')
+    print '... Done'
     return savedir
 
 
 def main(args):
     if args.basedir is not None:
-        print('Use all available PIVLab outputs to create master hdf5 files')
+        print 'Use all available PIVLab outputs to create master hdf5 files'
         savedir = pivlab2hdf5_basedir(args.basedir, overwrite=args.overwrite)
         hdf5datapaths = glob.glob(savedir + '/*.h5')
     if args.parentdir is not None:
-        print('Make hdf5 files for directories under ' + args.parentdir)
+        print 'Make hdf5 files for directories under ' + args.parentdir
         savedir = pivlab2hdf5_parentdir(args.parentdir, overwrite=args.overwrite)
         hdf5datapaths = glob.glob(savedir + '/*.h5')
     elif args.dir is not None:
-        print('Make a hdf5 file for the following directory: ' + args.dir)
+        print 'Make a hdf5 file for the following directory: ' + args.dir
         savedir = pivlab2hdf5(args.dir, overwrite=args.overwrite)
         hdf5datapaths = glob.glob(savedir + '/*.h5')
     elif args.cine is not None:
-        print('Make a hdf5 file for the following cine. Process all existing PIVLab outputs: ' + args.cine)
+        print 'Make a hdf5 file for the following cine. Process all existing PIVLab outputs: ' + args.cine
         savedir = pivlab2hdf5_cine(args.cine, overwrite=args.overwrite)
         cinedir, cinename = os.path.split(args.cine)
         cinename_no_ext = cinename[:-5]

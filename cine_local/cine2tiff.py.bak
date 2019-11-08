@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from . import cine
+import cine
 import os, sys, time
 from math import ceil
 import numpy as N
@@ -28,13 +28,13 @@ MiB = 2**20
 MAX_SIZE = 4 * GiB - 100 * MiB
 #MAX_SIZE = 100 * MiB #For testing
 
-print("Using cine tools revision %s (%s)." % (cine.svn_info.revision, cine.svn_info.date))
+print "Using cine tools revision %s (%s)." % (cine.svn_info.revision, cine.svn_info.date)
 files = sys.argv[1:]
 
 try: files.remove('-i')
 except: DATA_ONLY = False
 else:
-    print("Just saving CINE info...")
+    print "Just saving CINE info..."
     DATA_ONLY = True
 
 files_globbed = []
@@ -42,7 +42,7 @@ for fn in files: files_globbed += glob.glob(fn)
 
 for fn in files_globbed:
 
-    if DATA_ONLY: print('-- %s --' % fn)
+    if DATA_ONLY: print '-- %s --' % fn
 
     c = cine.Cine(fn)
     f0 = c[0]
@@ -61,21 +61,21 @@ for fn in files_globbed:
 
         dat = '%20s: %s %s' % (fn_, ff(repr(getattr(c, f))), fu)
         otf.write(dat + '\n')
-        if DATA_ONLY: print('    ' + dat)
+        if DATA_ONLY: print '    ' + dat
 
     otf.close()
 
     #sys.exit()
 
     if c.serial == 6048:
-        print("Serial #6048 detected -- this is the broken camera!\nAutofix enabled.\nIf the image is rotated, this won't work!")
+        print "Serial #6048 detected -- this is the broken camera!\nAutofix enabled.\nIf the image is rotated, this won't work!"
         c.enable_auto_fix()
 
     if not DATA_ONLY:
         start = 0
 
         if num_files > 1:
-            print("!! File %s over sized (%.2f GB), splitting into multiple output tiffs. !!" % (fn, MAX_SIZE / 1E9))
+            print "!! File %s over sized (%.2f GB), splitting into multiple output tiffs. !!" % (fn, MAX_SIZE / 1E9)
 
         for file_num in range(num_files):
             file_ext = ('_%d' % file_num) if (num_files > 1) else ''
@@ -86,17 +86,17 @@ for fn in files_globbed:
 
             end = min(start+frames_per_file, len(c))
             n = end - start
-            print("Writing %d frames to %s..." % (n, ofn))
+            print "Writing %d frames to %s..." % (n, ofn)
 
             start_time = time.time()
             marked = list(N.arange(0.1, 1, 0.1) * n + start)
             for i in range(start, end, FRAME_CACHE):
                 frames = c[i:i+FRAME_CACHE]
-                list(map(output.write_page, frames))
+                map(output.write_page, frames)
                 if marked and i >= marked[0]:
-                    marked = [x for x in marked if x > i]
-                    print('    %4d/%4d...' % (i-start, n))
+                    marked = filter(lambda x: x > i, marked)
+                    print '    %4d/%4d...' % (i-start, n)
 
-            print('    done is %.1f s.' % (time.time() - start_time))
+            print '    done is %.1f s.' % (time.time() - start_time)
             start = end
 

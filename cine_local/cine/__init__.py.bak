@@ -9,11 +9,11 @@
 
 ################################################################################
 
-from .cine import *
-from .tiff import *
-from .mjpeg import *
-from .sparse import *
-from .plot_to_image import *
+from cine import *
+from tiff import *
+from mjpeg import *
+from sparse import *
+from plot_to_image import *
 import os.path
 
 def open(fn):
@@ -30,4 +30,4 @@ def open(fn):
     else:
         raise ValueError('can only open .tif(f), .sparse, .s4d or .cine files')
 
-from . import svn_info
+import svn_info

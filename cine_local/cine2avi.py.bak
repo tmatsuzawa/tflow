@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from . import cine
+import cine
 from numpy import *
 import os, sys
 import argparse
@@ -62,8 +62,8 @@ class StatusPrinter(object):
         
         msg = ('%%-%ds' % self.max_len) % msg
         
-        if final: print('\r' + msg)
-        else: print('\r' + msg, end=' ')
+        if final: print '\r' + msg
+        else: print '\r' + msg,
             
         sys.stdout.flush()        
 
@@ -96,7 +96,7 @@ class StatusPrinter(object):
     def __iter__(self):
         return self
     
-    def __next__(self):
+    def next(self):
         self.update()
         
         if self.current < self.count:
@@ -120,18 +120,18 @@ for i, fn in enumerate(args.cines):
         if fn[-1] == ']':
             fn, s = fn.split('[')
             try:
-                frame_slice = slice(*list(map(noneint, s[:-1].split(':'))))
+                frame_slice = slice(*map(noneint, s[:-1].split(':')))
             except:
                 raise ValueError("Couldn't convert '[%s' to slice notation" % s)
 
         else:
-            print("Warning, found '[' in input, but it didn't end with ']', so I'll assume you didn't mean to give a frame range.")
+            print "Warning, found '[' in input, but it didn't end with ']', so I'll assume you didn't mean to give a frame range."
     
     base, ext = os.path.splitext(fn)
     ext = ext.lower()
     
     if not os.path.exists(fn):
-        print("File %s not found, ignoring." % fn)
+        print "File %s not found, ignoring." % fn
         continue
     
     output = args.output
@@ -156,7 +156,7 @@ for i, fn in enumerate(args.cines):
     bpps = input[0].dtype.itemsize * 8
     if bpp is None: bpp = bpps
     
-    frames = list(range(*frame_slice.indices(len(input))))
+    frames = range(*frame_slice.indices(len(input)))
     
     if args.clip == 0:
         map = linspace(0., 2.**(bpps - bpp), 2**bpps)

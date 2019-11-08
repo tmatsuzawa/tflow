@@ -8,8 +8,8 @@ import os
 from decimal import Decimal
 import sys
 from tqdm import tqdm
-from . import velocity as vel
-from . import movie
+import velocity as vel
+import movie
 
 import fapm.graph as graph
 import fapm.box_param as box_param
@@ -23,7 +23,7 @@ box_params = box_param.get_box_params()
 
 def compute_basics(hdf5datapath, overwrite=False, verbose=False, nu=1.004, use_fluc_vel=True):
 
-    print('-------------BASIC QUANTITIES (E, Omega, etc.)------------------')
+    print '-------------BASIC QUANTITIES (E, Omega, etc.)------------------'
     def get_basics(udata, dx=None, dy=None):
         # REYNOLDS DECOMPOSITION
         udata_mean, udata_turb = vel.reynolds_decomposition(udata)
@@ -48,9 +48,9 @@ def compute_basics(hdf5datapath, overwrite=False, verbose=False, nu=1.004, use_f
         ## energy_spectra
         # dx = dy = fyle['exp'].attrs['scale'] * fyle['exp'].attrs['W'] * 0.5 # 0.5 is overwrapping fraction of interrogation area in piv algorithm
         #
-        print('----------------')
-        print(dx, dy)
-        print('----------------')
+        print '----------------'
+        print dx, dy
+        print '----------------'
         e_k2d, (kx, ky) = vel.get_energy_spectrum_nd(udata_turb, dx=dx, dy=dy)
         e_k1d, e_k1d_err, k = vel.get_energy_spectrum(udata_turb, dx=dx, dy=dy, notebook=False)
 
@@ -103,12 +103,12 @@ def compute_basics(hdf5datapath, overwrite=False, verbose=False, nu=1.004, use_f
         return new_datasets
 
 
-    print('Processing : ', os.path.split(hdf5datapath)[1])
+    print 'Processing : ', os.path.split(hdf5datapath)[1]
     with h5py.File(hdf5datapath, 'a') as fyle:
         n_piv = len(fyle['piv']) # number of piv data for a given cine
         for ind in range(n_piv):
             key = 'piv%03d' % ind
-            print('...', key)
+            print '...', key
             pivdata = fyle['piv'][key]
 
 
@@ -134,14 +134,14 @@ def compute_basics(hdf5datapath, overwrite=False, verbose=False, nu=1.004, use_f
                                 ]
             basics_is_computed = False
             for i, datasetname in enumerate(new_datasetnames):
-                if datasetname in list(pivdata.keys()) and not overwrite:
+                if datasetname in pivdata.keys() and not overwrite:
                     if verbose:
-                        print(datasetname, ' already exists under ', pivdata.name)
-                        print('... skipping')
+                        print datasetname, ' already exists under ', pivdata.name
+                        print '... skipping'
                 else:
                     if not basics_is_computed:
-                        print(datasetname , ' does not exist under ', pivdata.name)
-                        print('... compute basic quantities')
+                        print datasetname , ' does not exist under ', pivdata.name
+                        print '... compute basic quantities'
                         # LOAD DATA
                         deltax, deltay = pivdata['deltax'][...], pivdata['deltay'][...]
                         ux, uy = pivdata['ux'], pivdata['uy']
@@ -159,7 +159,7 @@ def compute_basics(hdf5datapath, overwrite=False, verbose=False, nu=1.004, use_f
                         else:
                             pivdata.create_dataset(datasetname, data=new_datasets[i])
 
-    print('... successfully computed basic quantities: energy, enstrophy, turb. energy spectrum etc.')
+    print '... successfully computed basic quantities: energy, enstrophy, turb. energy spectrum etc.'
 
 
 def draw_rec(ax, rect_x, rect_y, width, height, color='r', linewidth=10, alpha=0.7):
@@ -183,40 +183,40 @@ def ask_what_to_plot(hdf5datapath):
     """
     with h5py.File(hdf5datapath, 'a') as fyle:
         n_piv = len(fyle['piv'])  # number of piv data for a given cine
-        print('There are %d piv data files for this cine' % n_piv)
+        print 'There are %d piv data files for this cine' % n_piv
         for n in range(n_piv):
             key = 'piv%03d' % n
             m = fyle['piv'][key].attrs['Nr._of_passes']
             W, Dt, step = fyle['piv'][key].attrs['Int._area_%d' % m], fyle['piv'][key].attrs['Dt'], fyle['piv'][key].attrs['step']
             umin, umax = float(fyle['piv'][key].attrs['umin']), float(fyle['piv'][key].attrs['umax'])
-            print('... piv%03d: (W, Dt, step, umin, umax) = (%d, %d, %d, %f, %f)' % (n, W, Dt, step, umin, umax))
+            print '... piv%03d: (W, Dt, step, umin, umax) = (%d, %d, %d, %f, %f)' % (n, W, Dt, step, umin, umax)
 
         while True:
             try:
-                n_piv_to_use = eval(input('Enter number of pivdata to use: '))
+                n_piv_to_use = input('Enter number of pivdata to use: ')
                 if n_piv_to_use > n_piv:
-                    print('... There are only %d piv data for this file. Try again.' % n_piv)
+                    print '... There are only %d piv data for this file. Try again.' % n_piv
                 else:
                     break
             except:
-                print('... Invalid input. Type integers.')
+                print '... Invalid input. Type integers.'
         if n_piv_to_use == n_piv:
             indices = ['piv%03d' % ind for ind in range(n_piv_to_use)]
         else:
             indices = []
             while len(indices) < n_piv_to_use:
                 try:
-                    index = eval(input('Choose which piv_data to use. Type integers. piv___ : '))
+                    index = input('Choose which piv_data to use. Type integers. piv___ : ')
                     if isinstance(index, int) and index < n_piv:
                         indices.append('piv%03d' % index)
                     elif index >= n_piv:
-                        print('... Type integers between 0 and %d' % (n_piv - 1))
+                        print '... Type integers between 0 and %d' % (n_piv - 1)
 
                     else:
-                        print('... Non-integer input was received. Type integers.')
+                        print '... Non-integer input was received. Type integers.'
 
                 except:
-                    print('... Invalid input. Type integers.')
+                    print '... Invalid input. Type integers.'
     return indices
 
 def get_energy_spectrum_1d_int(hdf5datapath, indices, t0=0, save=True, show_org_spectrum=False):
@@ -238,7 +238,7 @@ def get_energy_spectrum_1d_int(hdf5datapath, indices, t0=0, save=True, show_org_
     -------
 
     """
-    print('-------------Interactive 1D Energy Spectrum------------------')
+    print '-------------Interactive 1D Energy Spectrum------------------'
     with h5py.File(hdf5datapath, 'a') as fyle:
         n_piv = len(fyle['piv'])  # number of piv data for a given cine
         n_piv_to_use = len(indices)
@@ -365,7 +365,7 @@ def get_energy_spectrum_1d_int(hdf5datapath, indices, t0=0, save=True, show_org_
 
                     xcoords.append(event.xdata)
                     ycoords.append(event.ydata)
-                    print(list(zip(xcoords, ycoords)), button[event.button])
+                    print zip(xcoords, ycoords), button[event.button]
 
                     if len(xcoords) % 2 == 0:
                         width, height = xcoords[-1] - xcoords[-2], ycoords[-1] - ycoords[-2]
@@ -409,9 +409,9 @@ def get_energy_spectrum_1d_int(hdf5datapath, indices, t0=0, save=True, show_org_
                     x, y = event.xdata, event.ydata
                     annots[ax_ind].xy = [x, y]
                     if button[event.button] == 'left':
-                        pivparamnames = list(pivdata[indices[ax_ind]].attrs.keys())
-                        pivparamvalues = list(pivdata[indices[ax_ind]].attrs.values())
-                        text0 = str(dict(list(zip(pivparamnames, pivparamvalues))))
+                        pivparamnames = pivdata[indices[ax_ind]].attrs.keys()
+                        pivparamvalues = pivdata[indices[ax_ind]].attrs.values()
+                        text0 = str(dict(zip(pivparamnames, pivparamvalues)))
                         words = text0.split(', ')
                         text_list = []
                         for i, word in enumerate(words):
@@ -451,7 +451,7 @@ def get_time_evolution(hdf5datapath, indices, t0=0, save=True):
     -------
 
     """
-    print('-------------Time-Evolution------------------')
+    print '-------------Time-Evolution------------------'
     with h5py.File(hdf5datapath, 'a') as fyle:
         n_piv = len(fyle['piv'])  # number of piv data for a given cine
         n_piv_to_use = len(indices)
@@ -559,7 +559,7 @@ def compute_autocorrelations(hdf5datapath, coarse=1.0, coarse2=1.0, overwrite=Fa
         new_datasets = [r_long, f_long, f_err_long, r_tran, g_tran, g_err_tran]
         return new_datasets
 
-    print('-------------COMPUTE CORRELATIONS------------------')
+    print '-------------COMPUTE CORRELATIONS------------------'
     with h5py.File(hdf5datapath, 'a') as fyle:
         n_piv = len(fyle['piv']) # number of piv data for a given cine
         for ind in range(n_piv):
@@ -576,10 +576,10 @@ def compute_autocorrelations(hdf5datapath, coarse=1.0, coarse2=1.0, overwrite=Fa
             autocorr_is_computed = False
 
             for i, datasetname in enumerate(new_datasetnames):
-                if datasetname in list(pivdata.keys()):
+                if datasetname in pivdata.keys():
                     if verbose:
-                        print(datasetname , ' already exists under ', pivdata.name)
-                        print('... skipping')
+                        print datasetname , ' already exists under ', pivdata.name
+                        print '... skipping'
                     if i == len(new_datasetnames)-1:
                         r_long = np.asarray(pivdata['r_long'][:])
                         f_long = np.asarray(pivdata['f_long'][:])
@@ -646,7 +646,7 @@ def compute_lengthscales(hdf5datapath, indices, overwrite=False, verbose=False):
         return new_datasets
 
 
-    print('-------------COMPUTE Length Scales------------------')
+    print '-------------COMPUTE Length Scales------------------'
     with h5py.File(hdf5datapath, 'a') as fyle:
         n_piv = len(fyle['piv'])  # number of piv data for a given cine
         n_piv_to_use = len(indices)
@@ -689,7 +689,7 @@ def compute_lengthscales(hdf5datapath, indices, overwrite=False, verbose=False):
                                 're_l', 're_lambda']
 
             for i, datasetname in enumerate(new_datasetnames):
-                if not datasetname in list(pivdata.keys()):
+                if not datasetname in pivdata.keys():
                     new_datasets = get_lengthscales_and_Re(udata_t, r_long, f_long, r_tran, g_tran, dx, dy, dz=None, nu=nu)
                     pivdata.create_dataset(datasetname, data=new_datasets[i])
                 elif overwrite:
@@ -713,11 +713,11 @@ def compute_lengthscales(hdf5datapath, indices, overwrite=False, verbose=False):
                                     eta, u_eta, tau_eta,
                                     Re_L, Re_lambda]
                     if verbose:
-                        print(datasetname, ' already exists under ', pivdata.name)
-                        print('... skipping')
+                        print datasetname, ' already exists under ', pivdata.name
+                        print '... skipping'
 
 def get_lengthscales(hdf5datapath, indices=[], t0=0, save=True):
-    print('-------------Length Scales------------------')
+    print '-------------Length Scales------------------'
     with h5py.File(hdf5datapath, 'a') as fyle:
         n_piv = len(fyle['piv'])  # number of piv data for a given cine
         n_piv_to_use = len(indices)
@@ -791,7 +791,7 @@ def get_lengthscales(hdf5datapath, indices=[], t0=0, save=True):
             graph.save(savedir + '/lengthscales', ext='png')
 
 def inspect_piv_outputs(hdf5datapath, indices=[], t0=0, save=True):
-    print('-------------Inspect PIV outputs------------------')
+    print '-------------Inspect PIV outputs------------------'
     with h5py.File(hdf5datapath, 'a') as fyle:
         n_piv = len(fyle['piv'])  # number of piv data for a given cine
         n_piv_to_use = len(indices)
@@ -850,7 +850,7 @@ def inspect_piv_outputs(hdf5datapath, indices=[], t0=0, save=True):
 
 
 def make_movie_espec(hdf5datapath, indices=[], framerate=10):
-    print('-------------1D Energy Spectrum Movie------------------')
+    print '-------------1D Energy Spectrum Movie------------------'
     with h5py.File(hdf5datapath, 'a') as fyle:
         n_piv = len(fyle['piv'])  # number of piv data for a given cine
         n_piv_to_use = len(indices)
@@ -975,7 +975,7 @@ def make_movie_espec(hdf5datapath, indices=[], framerate=10):
 def main(hdf5datapath, t=0, overwrite=False, verbose=False, save=True):
     compute_basics(hdf5datapath, overwrite=overwrite, verbose=verbose)
 
-    print('-------------------------------------------------------------')
+    print '-------------------------------------------------------------'
     indices = ask_what_to_plot(hdf5datapath)
 
 

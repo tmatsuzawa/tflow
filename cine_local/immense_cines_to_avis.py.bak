@@ -1,9 +1,9 @@
 #!/usr/bin/env python
-import os, sys, time, subprocess
+import os, sys, time, commands
 
 log_name = os.path.splitext(sys.argv[0])[0] + time.strftime('_log_%Y_%m_%d_%a.txt')
                                                             
-print('Saving log to:', log_name)
+print 'Saving log to:', log_name
 
 #basepath = '/Volumes/labshared'
 
@@ -30,17 +30,17 @@ def crawl(path):
             
         if ext.lower() == '.cine':
             if bfn + '.avi' in fns:
-                print('--- %s -> already converted ---' % fn)
+                print '--- %s -> already converted ---' % fn
                 
             elif os.path.getsize(ffn) > size_limit:
-                print('--- %s -> too big ---' % fn)
+                print '--- %s -> too big ---' % fn
             
             else:
                 if time.time() - start > time_limit:
-                    print("Over time limit (%.1f hours)... exiting." % (time_limit / 3600.))
+                    print "Over time limit (%.1f hours)... exiting." % (time_limit / 3600.)
                     sys.exit()
                 if count >= count_limit:
-                    print("Over count limit (%d)... exiting." % count_limit)
+                    print "Over count limit (%d)... exiting." % count_limit
                     sys.exit()
                 
                 count += 1
@@ -48,14 +48,14 @@ def crawl(path):
 
                 cmd = 'cine2avi -c1E-3 "%s"' % ffn
                 logstr = '--- ' + time.strftime('%Y/%m/%d %H:%M:%S -> ') + cmd + ' ---'
-                print(logstr)
+                print logstr
                 log.write(logstr + '\n')
                 
-                status, output = subprocess.getstatusoutput(cmd)
+                status, output = commands.getstatusoutput(cmd)
                 
                 logstr = output + '\n --- status: %s ---\n' % status 
 
-                print(logstr)
+                print logstr
                 log.write(logstr + '\n')
                 
                 

@@ -1,8 +1,4 @@
 """
-Makes a series of tiff files from a cine
-Or
-Makes a series of tiff files from each cine in a directory (NOT IMPLEMENTED YET)
-
 Dependencies:
 - cine module
 
@@ -29,8 +25,8 @@ import cv2
 sys.path.append('/Users/stephane/Documents/git/takumi/fapm/cine_local')
 #----------LOCAL DEPENDENCE----------
 import library.field.velocity as vel
-import tflow.cine_local.cine.cine as cine  # use local cine package
-import tflow.cine_local.cine.tiff as tiff  # use local cine package
+import fapm.cine_local.cine.cine as cine  # use local cine package
+import fapm.cine_local.cine.tiff as tiff  # use local cine package
 # To find out where Matlab is installed, type matlabroot on Matlab.
 matlab_path = '/Applications/MATLAB_R2019a.app/bin/matlab'
 
@@ -65,7 +61,7 @@ def cine2tiff(cinepath, start=0, end=None, step=1, header='im', overwrite=False)
         Name of the root folder where the images will be saved.
     post : str. Default ''
         post string to add to the title of the tiff folder name
-
+    OUTPUT
     OUTPUT
     None
     """
@@ -81,7 +77,7 @@ def cine2tiff(cinepath, start=0, end=None, step=1, header='im', overwrite=False)
     if end is None:
         end = len(cc)
 
-    indices_to_save = list(range(start, end, step))
+    indices_to_save = range(start, end, step)
 
     for index in tqdm(indices_to_save):
         # get frames from cine file
@@ -109,8 +105,6 @@ cinepath_sample = '/Volumes/labshared4/takumi/old_data/sample_piv_cine/PIV_fv_vp
 
 parser = argparse.ArgumentParser(description='Comprehensive interactive tool to analyze PIV cine')
 parser.add_argument('-cine', '--cine', help='path to cine file', default=cinepath_sample)
-parser.add_argument('-start', '--start', help='', default=0, type=int)
-parser.add_argument('-end', '--end', help='', default=None, type=int)
 parser.add_argument('-overwrite', '--overwrite', help='overwrite images', default=False)
 args = parser.parse_args()
 
@@ -130,7 +124,7 @@ time = cc.get_time_list()
 # subprocess.call([cine2tiff_path, cinepath_sample])
 
 ## 2. Make n tiff files
-cine2tiff(cinepath, start=args.start, end=args.end, overwrite=args.overwrite)
+cine2tiff(cinepath, overwrite=args.overwrite)
 
 
 # ## Execute matlab script

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from . import cine
+import cine
 from numpy import *
 import os, sys
 import argparse
@@ -28,13 +28,13 @@ class FrameGenerator(object):
         if '[' in fn and fn[-1] == ']':
             fn, s = fn.split('[')
             try:
-                self.frame_slice = slice(*list(map(noneint, s[:-1].split(':'))))
+                self.frame_slice = slice(*map(noneint, s[:-1].split(':')))
             except:
                 raise ValueError("Couldn't convert '[%s' to slice notation for file '%s'" % (s, fn))
         
         self.fn = fn
         self.source = cine.Cine(fn)
-        self.frames = list(range(*self.frame_slice.indices(len(self.source))))
+        self.frames = range(*self.frame_slice.indices(len(self.source)))
         
         self.gamma = getattr(input_args, 'gamma', 1)
         self.rotate = getattr(input_args, 'rotate', 0)
@@ -83,7 +83,7 @@ class FrameGenerator(object):
 
     def __getitem__(self, key):
         if type(key) == slice:
-            return list(map(self.__getitem__, list(range(self.image_count))[key]))
+            return map(self.__getitem__, range(self.image_count)[key])
 
         else:
             frame = self.map[self.source[self.frames[key]]]
@@ -93,20 +93,20 @@ class FrameGenerator(object):
 
 start = time.time()
 
-fns = [os.path.splitext(x)[0] for x in args.cines]
-for i in range(min(list(map(len, fns)))):
+fns = map(lambda x: os.path.splitext(x)[0], args.cines)
+for i in range(min(map(len, fns))):
     broken = False
     for j in range(len(fns) - 1):
         if fns[j][i] != fns[j+1][i]:
             broken = True
             break
     if broken: break
-basename = fns[0][:i] + '_AND_'.join([x[i:] for x in fns])
+basename = fns[0][:i] + '_AND_'.join(map(lambda x: x[i:], fns))
 
         
 frame_slice = slice(None)
 try:
-    frame_slice = slice(*list(map(noneint, args.frames.split(':'))))
+    frame_slice = slice(*map(noneint, args.frames.split(':')))
 except:
     raise ValueError("Couldn't convert '%s' to slice notation" % s)
 
@@ -121,8 +121,8 @@ max_frames = min([len(input) for input in inputs])
 
 ofn = args.output.replace('%s', basename)
 for input in inputs:
-    print(input.fn)
-print('  --> %s' % ofn)
+    print input.fn
+print '  --> %s' % ofn
 
 #print shapes
 #print h, w
@@ -135,11 +135,11 @@ print('  --> %s' % ofn)
 
 
 output = cine.Avi(ofn, framerate=args.framerate, quality=args.quality)
-frames = list(range(*frame_slice.indices(max_frames)))
+frames = range(*frame_slice.indices(max_frames))
 N = len(frames)
 
 fmt = '\r  %%%dd/%%%dd' % (len(str(N)), len(str(N)))
-print(fmt % (0, N), end=' ')
+print fmt % (0, N),
 
 for j, i in enumerate(frames):
     frame = zeros((h, w), 'u1')
@@ -150,13 +150,13 @@ for j, i in enumerate(frames):
         sh, sw = subframe.shape
         frame[:sh, x0:x0+sw] = subframe
         x0 += sw
-        print(fmt % (j+1, N), end=' ')
+        print fmt % (j+1, N),
         sys.stdout.flush()
         
     
     output.add_frame(frame)
         
-print('\r  done in %.1fs' % (time.time() - start))
+print '\r  done in %.1fs' % (time.time() - start)
 
 output.close()
         

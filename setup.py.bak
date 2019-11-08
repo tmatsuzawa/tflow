@@ -28,8 +28,8 @@ mlab = Matlab(executable=matlab_path)
 mlabstart = mlab.start()
 mlab.run_code('addpath %s; savepath;' % matlabdir)
 
-print('DONE')
-print('... MATLAB may crash by this process, but the setup was successful.')
+print 'DONE'
+print '... MATLAB may crash by this process, but the setup was successful.'
 mlab.quit()
 
 

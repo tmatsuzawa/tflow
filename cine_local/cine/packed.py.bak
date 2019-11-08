@@ -76,15 +76,15 @@ if __name__ == '__main__':
     start = time.time()
     tb = sixteen2ten(test)
     t = time.time() - start
-    print('10 bit Encode: %.1f MP/s' % (len(test) / t / 1E6))
+    print '10 bit Encode: %.1f MP/s' % (len(test) / t / 1E6)
     
     start = time.time()
     test2 = ten2sixteen(tb)
     t = time.time() - start
-    print('10 bit Decode: %.1f MP/s' % (len(test) / t / 1E6))
+    print '10 bit Decode: %.1f MP/s' % (len(test) / t / 1E6)
     
     
-    print('10 bit Match: %s' % (test == test2).all())
+    print '10 bit Match: %s' % (test == test2).all()
 
 
     test = random.randint(0, 2**12, N)
@@ -92,13 +92,13 @@ if __name__ == '__main__':
     start = time.time()
     tb = sixteen2twelve(test)
     t = time.time() - start
-    print('12 bit Encode: %.1f MP/s' % (len(test) / t / 1E6))
+    print '12 bit Encode: %.1f MP/s' % (len(test) / t / 1E6)
     
     start = time.time()
     test2 = twelve2sixteen(tb)
     t = time.time() - start
-    print('12 bit Decode: %.1f MP/s' % (len(test) / t / 1E6))
+    print '12 bit Decode: %.1f MP/s' % (len(test) / t / 1E6)
     
     
-    print('12 bit Match: %s' % (test == test2).all())
+    print '12 bit Match: %s' % (test == test2).all()
 

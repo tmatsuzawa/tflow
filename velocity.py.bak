@@ -11,14 +11,13 @@ from scipy.interpolate import UnivariateSpline
 from scipy import interpolate
 import scipy.integrate as integrate
 from scipy.optimize import minimize
+import matplotlib.pyplot as plt
 import numpy.ma as ma
 from scipy import signal
 from scipy import interpolate
 from scipy.interpolate import griddata
 import os
 import copy
-# For plotting
-import matplotlib.pyplot as plt
 import tflow.graph as graph
 
 
@@ -111,7 +110,7 @@ def get_duidxj_tensor(udata, dx=1., dy=1., dz=1.):
         sij[..., 2, 1] = duzdy
         sij[..., 2, 2] = duzdz
     elif shape[0] > 3:
-        print('...Not implemented yet.')
+        print '...Not implemented yet.'
         return None
     return sij
 
@@ -238,7 +237,7 @@ def curl(udata, dx=1., dy=1., dz=1.):
         omega1, omega2, omega3 = 2.* gij[..., 2, 1], 2.* gij[..., 0, 2], 2.* gij[..., 1, 0]
         omega = np.stack((omega1, omega2, omega3))
     else:
-        print('Not implemented yet!')
+        print 'Not implemented yet!'
         return None
     return omega
 
@@ -505,8 +504,8 @@ def fft_nd(field, dx=1, dy=1, dz=1):
     for d in range(dim):
         n_samples *= field.shape[d]
 
-    field_fft = np.fft.fftn(field, axes=list(range(dim)))
-    field_fft = np.fft.fftshift(field_fft, axes=list(range(dim)))
+    field_fft = np.fft.fftn(field, axes=range(dim))
+    field_fft = np.fft.fftshift(field_fft, axes=range(dim))
     field_fft /= n_samples# Divide the result by the number of samples (this is because of discreteness of FFT)
 
     if dim == 2:
@@ -592,8 +591,8 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
 
     """
     if dx is None or dy is None:
-        print('ERROR: dx or dy is not provided! dx is grid spacing in real space.')
-        print('... k grid will be computed based on this spacing! Please provide.')
+        print 'ERROR: dx or dy is not provided! dx is grid spacing in real space.'
+        print '... k grid will be computed based on this spacing! Please provide.'
         raise ValueError
     if x0 is None:
         x0 = 0
@@ -612,8 +611,8 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
         if z1 is None:
             z1 = udata[0].shape[2]
         if dz is None:
-            print('ERROR: dz is not provided! dx is grid spacing in real space.')
-            print('... k grid will be computed based on this spacing! Please provide.')
+            print 'ERROR: dz is not provided! dx is grid spacing in real space.'
+            print '... k grid will be computed based on this spacing! Please provide.'
             raise ValueError
         udata = udata[:, y0:y1, x0:x1, z0:z1, :]
 
@@ -640,15 +639,15 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
             for i in range(dim):
                 udata_tapered[i, ...] = udata[i, ...] * windows
             # udata_tapered = udata * windows
-        ukdata = np.fft.fftn(udata_tapered, axes=list(range(1, dim + 1)))
-        ukdata = np.fft.fftshift(ukdata, axes=list(range(1, dim + 1)))
+        ukdata = np.fft.fftn(udata_tapered, axes=range(1, dim + 1))
+        ukdata = np.fft.fftshift(ukdata, axes=range(1, dim + 1))
 
         energy, energy_tapered = get_energy(udata), get_energy(udata_tapered)
         signal_intensity_losses = np.nanmean(energy_tapered, axis=tuple(range(dim))) / np.nanmean(energy, axis=tuple(range(dim)))
 
     else:
-        ukdata = np.fft.fftn(udata, axes=list(range(1, dim+1)))
-        ukdata = np.fft.fftshift(ukdata, axes=list(range(1, dim+1)))
+        ukdata = np.fft.fftn(udata, axes=range(1, dim+1))
+        ukdata = np.fft.fftshift(ukdata, axes=range(1, dim+1))
         signal_intensity_losses = np.ones(duration)
 
     # compute E(k)
@@ -777,7 +776,7 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
     """
     if notebook:
         from tqdm import tqdm_notebook as tqdm
-        print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+        print 'Using tqdm_notebook. If this is a mistake, set notebook=False'
     else:
         from tqdm import tqdm
 
@@ -1421,7 +1420,7 @@ def get_rescaled_dissipation_spectrum(udata, epsilon=10**5, nu=1.0034,x0=0, x1=N
     # Kolmogorov length scale
     eta = (nu ** 3 / epsilon) ** 0.25  # mm
     u_eta = (nu * epsilon) ** 0.25
-    print('dissipation rate, Kolmogorov scale: ', epsilon, eta)
+    print 'dissipation rate, Kolmogorov scale: ', epsilon, eta
 
     k_norm = k1d * eta
     D_k_norm = D_k[...] / (u_eta ** 3)
@@ -1502,8 +1501,8 @@ def get_large_scale_vel_field(udata, kmax, x0=0, x1=None, y0=0, y1=None, z0=0, z
     ... if dim == 3, returns np.asarray([xgrid, ygrid, zgrid])
     """
     if dx is None or dy is None:
-        print('ERROR: dx or dy is not provided! dx is grid spacing in real space.')
-        print('... k grid will be computed based on this spacing! Please provide.')
+        print 'ERROR: dx or dy is not provided! dx is grid spacing in real space.'
+        print '... k grid will be computed based on this spacing! Please provide.'
         raise ValueError
     if x1 is None:
         x1 = udata[0].shape[1]
@@ -1520,8 +1519,8 @@ def get_large_scale_vel_field(udata, kmax, x0=0, x1=None, y0=0, y1=None, z0=0, z
         if z1 is None:
             z1 = udata[0].shape[2]
         if dz is None:
-            print('ERROR: dz is not provided! dx is grid spacing in real space.')
-            print('... k grid will be computed based on this spacing! Please provide.')
+            print 'ERROR: dz is not provided! dx is grid spacing in real space.'
+            print '... k grid will be computed based on this spacing! Please provide.'
             raise ValueError
         xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
         coords = np.asarray([xx[y0:y1, x0:x1, z0:z1], yy[y0:y1, x0:x1, z0:z1], zz[y0:y1, x0:x1, z0:z1]])
@@ -1542,11 +1541,11 @@ def get_large_scale_vel_field(udata, kmax, x0=0, x1=None, y0=0, y1=None, z0=0, z
             udata_tapered = udata * windows
         else:
             raise ValueError('... dimension of udata must be 2 or 3!')
-        ukdata = np.fft.fftn(udata_tapered, axes=list(range(1, dim + 1)))
-        ukdata = np.fft.fftshift(ukdata, axes=list(range(1, dim + 1)))
+        ukdata = np.fft.fftn(udata_tapered, axes=range(1, dim + 1))
+        ukdata = np.fft.fftshift(ukdata, axes=range(1, dim + 1))
     else:
-        ukdata = np.fft.fftn(udata, axes=list(range(1, dim + 1)))
-        ukdata = np.fft.fftshift(ukdata, axes=list(range(1, dim + 1)))
+        ukdata = np.fft.fftn(udata, axes=range(1, dim + 1))
+        ukdata = np.fft.fftshift(ukdata, axes=range(1, dim + 1))
 
     if dim == 2:
         ncomp, height, width, duration = udata.shape
@@ -1578,7 +1577,7 @@ def get_large_scale_vel_field(udata, kmax, x0=0, x1=None, y0=0, y1=None, z0=0, z
     kr = np.sqrt(kr)
     # Make a mask such that kr > kmax
     mask = kr > kmax
-    print('# of Masked Elements / total: %d / %d = %.4f' % (np.sum(mask), n_samples, np.sum(mask) / float(n_samples)))
+    print '# of Masked Elements / total: %d / %d = %.4f' % (np.sum(mask), n_samples, np.sum(mask) / float(n_samples))
     # Let uk array into a masked array
     ukdata = ma.asarray(ukdata)
 
@@ -1589,8 +1588,8 @@ def get_large_scale_vel_field(udata, kmax, x0=0, x1=None, y0=0, y1=None, z0=0, z
     ukdata = ukdata.filled(fill_value=0)
 
     # Inverse FT
-    ukdata = np.fft.ifftshift(ukdata, axes=list(range(1, dim + 1)))
-    udata_ifft = np.fft.ifftn(ukdata, axes=list(range(1, dim + 1))).real# Use only a real part
+    ukdata = np.fft.ifftshift(ukdata, axes=range(1, dim + 1))
+    udata_ifft = np.fft.ifftn(ukdata, axes=range(1, dim + 1)).real# Use only a real part
 
     return udata_ifft, coords
 
@@ -1692,8 +1691,8 @@ def get_epsilon_iso(udata, lambda_f=None, lambda_g=None, nu=1.004, x=None, y=Non
 
     # if both of lambda_g and lambda_f are provided, use lambdaf over lambdag
     if lambda_f is None and lambda_g is None:
-        print('... Both of Taylor microscales, lambda_f, lambda_g, were not provided!')
-        print('... Compute lambdas from scratch. One must provide x and y.')
+        print '... Both of Taylor microscales, lambda_f, lambda_g, were not provided!'
+        print '... Compute lambdas from scratch. One must provide x and y.'
         if x is None or y is None:
             raise ValueError('... x and y were not provided! Exitting...')
         else:
@@ -1901,7 +1900,7 @@ def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=0, x1=None, 
     """
     if notebook:
         from tqdm import tqdm_notebook as tqdm
-        print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+        print 'Using tqdm_notebook. If this is a mistake, set notebook=False'
     else:
         from tqdm import tqdm
     # Array sorting
@@ -1919,7 +1918,7 @@ def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=0, x1=None, 
         Sorted arr1, and arr2
 
         """
-        arr1, arr2 = list(zip(*sorted(zip(arr1, arr2))))
+        arr1, arr2 = zip(*sorted(zip(arr1, arr2)))
         return arr1, arr2
 
 
@@ -1955,11 +1954,11 @@ def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=0, x1=None, 
     # Initialization
     rrs, corrs, corr_errs = np.empty((n_bins, t1 - t0)), np.empty((n_bins, t1 - t0)), np.empty((n_bins, t1 - t0))
 
-    for t in tqdm(list(range(t0, t1)), desc='autocorr. time'):
+    for t in tqdm(range(t0, t1), desc='autocorr. time'):
         # Call velocity field at time t as uu
         uu = ui[y0:y1, x0:x1, t]
 
-        roll_indices = list(range(0, limits[roll_axis], int(1. / coarse)))
+        roll_indices = range(0, limits[roll_axis], int(1. / coarse))
         m = len(roll_indices)
         n = int(x_grid.size * coarse2)
 
@@ -2071,7 +2070,7 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None, x0=None, x
     """
     if notebook:
         from tqdm import tqdm_notebook as tqdm
-        print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+        print 'Using tqdm_notebook. If this is a mistake, set notebook=False'
     # Array sorting
     def sort2arr(arr1, arr2):
         """
@@ -2087,7 +2086,7 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None, x0=None, x
         Sorted arr1, and arr2
 
         """
-        arr1, arr2 = list(zip(*sorted(zip(arr1, arr2))))
+        arr1, arr2 = zip(*sorted(zip(arr1, arr2)))
         return arr1, arr2
 
     if x0 is None:  # if None, use the whole space
@@ -2114,7 +2113,7 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None, x0=None, x
     # Initialization
     rrs, corrs, corr_errs = np.zeros((n_bins, t1 - t0)), np.ones((n_bins, t1 - t0)), np.zeros((n_bins, t1 - t0))
 
-    for t in tqdm(list(range(t0, t1)), desc='autocorr. 3d time'):
+    for t in tqdm(range(t0, t1), desc='autocorr. 3d time'):
         # Call velocity field at time t as uu
         uu = ui[y0:y1, x0:x1, z0:z1, t]
 
@@ -2124,7 +2123,7 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None, x0=None, x
         # rr = np.empty((x_grid.size, int(coarse * limits[roll_axis]) * 2 - 1))
         # corr = np.empty((x_grid.size, int(coarse * limits[roll_axis]) * 2 - 1))
 
-        roll_indices = list(range(0, limits[roll_axis], int(1./coarse)))
+        roll_indices = range(0, limits[roll_axis], int(1./coarse))
         m = len(roll_indices)
         n = int(x_grid.size * coarse2)
 
@@ -2206,7 +2205,7 @@ def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None,
         height, width, depth, duration = udata[0].shape
         ux, uy, uz = udata[0], udata[1], udata[2]
 
-    print('Compute two-point velocity autocorrelation')
+    print 'Compute two-point velocity autocorrelation'
     if dim == 2:
         r_long, f_long, f_err_long = compute_spatial_autocorr(ux, x, y, roll_axis=1, n_bins=n_bins, x0=x0, x1=x1,
                                                               y0=y0, y1=y1, t0=t0, t1=t1,
@@ -2226,14 +2225,14 @@ def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None,
     autocorrs = (r_long, f_long, f_err_long, r_tran, g_tran, g_err_tran)
 
     if return_rij:
-        print('Compute two-point velocity autocorrelation tensor Rij.')
+        print 'Compute two-point velocity autocorrelation tensor Rij.'
         # Make long./trans. autocorrelation functions
         ## make an additional list to use 2d interpolation: i.e. supply autocorrelation values as a function of (r, t)
         time_list = []
         for t in time:
             time_list += [t] * len(r_long[:, 0])
         # 2d interpolation of long./trans. autocorrelation functions
-        print('... 2D interpolation to define long./trans. autocorrelation function (this may take a while)')
+        print '... 2D interpolation to define long./trans. autocorrelation function (this may take a while)'
         f = interp2d(r_long.flatten(), time_list, f_long.flatten())
         g = interp2d(r_tran.flatten(), time_list, g_tran.flatten())
 
@@ -2251,7 +2250,7 @@ def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None,
             r_norm = np.sqrt(r2_norm)
             Rij_value = u2_avg[t] * (g(r_norm, t) * klonecker_delta(i, j) + (f(r_norm , t)-g(r_norm , t)) * r[i] * r[j] / (r_norm ** 2))
             return Rij_value
-        print('... Returning two-point velocity autocorrelation tensor Rij(r, t). Arguments: i, j, r, t. Pope Eq. 6.44.')
+        print '... Returning two-point velocity autocorrelation tensor Rij(r, t). Arguments: i, j, r, t. Pope Eq. 6.44.'
         return two_pt_velocity_autocorrelation_tensor, autocorrs
     else:
         return autocorrs
@@ -2472,7 +2471,7 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
     """
     if notebook:
         from tqdm import tqdm_notebook as tqdm
-        print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+        print 'Using tqdm_notebook. If this is a mistake, set notebook=False'
 
     # Array sorting
     def sort2arr(arr1, arr2):
@@ -2489,7 +2488,7 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
         Sorted arr1, and Sorted arr2
 
         """
-        arr1, arr2 = list(zip(*sorted(zip(arr1, arr2))))
+        arr1, arr2 = zip(*sorted(zip(arr1, arr2)))
         return arr1, arr2
 
 
@@ -2537,7 +2536,7 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
     # Initialization
     rrs, Dxxs, Dxx_errs = np.zeros((n_bins, t1 - t0)), np.ones((n_bins, t1 - t0)), np.zeros((n_bins, t1 - t0))
 
-    for t in tqdm(list(range(t0, t1)), desc='struc. func. time'):
+    for t in tqdm(range(t0, t1), desc='struc. func. time'):
         # Call velocity field at time t as uu
         uu = ui[..., t]
 
@@ -2546,7 +2545,7 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
         #### coarse=1: Compute DLL(r,t) for all possible r. if coarse=0.5, it samples only a half of possible rs.
         ## n: number of data points from which DLL statistics is computed.
         #### coarse2=1: use all data points. (e.g. for 1024*1024 grid, use 1024*1024*coarse2 data points)
-        roll_indices = list(range(0, limits[roll_axis], int(1./coarse)))
+        roll_indices = range(0, limits[roll_axis], int(1./coarse))
         m = len(roll_indices)
         n = int(x_grid.size * coarse2)
 
@@ -3312,7 +3311,7 @@ def get_sample_turb_field_3d(return_coord=True):
     datapath = os.path.join(pdir, 'reference_data/isoturb_slice2.h5')
     data = h5py.File(datapath, 'r')
 
-    keys = list(data.keys())
+    keys = data.keys()
     keys_u = [key for key in keys if 'u' in key]
     keys_u = natural_sort(keys_u)
     duration = len(keys_u)
@@ -3329,9 +3328,8 @@ def get_sample_turb_field_3d(return_coord=True):
     data.close()
 
     if return_coord:
-        x, y, z = list(range(width)), list(range(height)), list(range(depth))
-        xx, yy, zz = np.meshgrid(y, x, z)
-        xx, yy, zz = xx * dx, yy * dy, zz * dz
+        x, y, z = range(width), range(height), range(depth)
+        xx, yy, zz = np.meshgrid(y, x, z) * dx
         return udata, xx, yy, zz
     else:
         return udata
@@ -3370,7 +3368,7 @@ def get_energy_spectra_jhtd():
 
     datadict = {}
     with h5py.File(datapath, 'r') as data:
-        keys = list(data.keys())
+        keys = data.keys()
         for key in keys:
             if not '_s' in key:
                 datadict[key] = data[key][...]
@@ -3393,7 +3391,7 @@ def get_rescaled_energy_spectra_jhtd():
 
     datadict = {}
     with h5py.File(datapath, 'r') as data:
-        keys = list(data.keys())
+        keys = data.keys()
         for key in keys:
             if '_s' in key:
                 datadict[key] = data[key][...]
@@ -3426,7 +3424,7 @@ def get_rescaled_structure_function_saddoughi(p=2):
             dll = np.asarray(ff['dll'])
         return r_scaled, dll
     else:
-        print('... Only the rescaled, second-order structure function is available at the moment!')
+        print '... Only the rescaled, second-order structure function is available at the moment!'
         return None, None
 
 
@@ -3673,17 +3671,17 @@ def clean_udata_cheap(udata, cutoffU=2000, fill_value=np.nan, verbose=True):
         return arr
 
     udata_cleaned = np.empty_like(udata)
-    print('Cleaning ux...')
+    print 'Cleaning ux...'
     mask = get_mask_for_unphysical(udata[0, ...], cutoffU=cutoffU, fill_value=fill_value, verbose=verbose)
     Ux_filled_with_nans = fill_unphysical_with_sth(udata[0, ...], mask, fill_value=fill_value)
     Ux_interpolated = interpolate_using_mask(Ux_filled_with_nans, mask)
     udata_cleaned[0, ...]= Ux_interpolated[:]
-    print('Cleaning uy...')
+    print 'Cleaning uy...'
     mask = get_mask_for_unphysical(udata[1, ...], cutoffU=cutoffU, fill_value=fill_value, verbose=verbose)
     Uy_filled_with_nans = fill_unphysical_with_sth(udata[1, ...], mask, fill_value=fill_value)
     Uy_interpolated = interpolate_using_mask(Uy_filled_with_nans, mask)
     udata_cleaned[1, ...]= Uy_interpolated[:]
-    print('...Cleaning Done.')
+    print '...Cleaning Done.'
     return udata_cleaned
 
 
@@ -3706,16 +3704,16 @@ def get_mask_for_unphysical(U, cutoffU=2000., fill_value=99999., verbose=True):
     """
     U = np.asarray(U)
     if verbose:
-        print('...Note that nan/inf values in U are replaced by ' + str(fill_value))
-        print('...number of invalid values (nan and inf) in the array: ' + str(np.isnan(U).sum() + np.isinf(U).sum()))
-        print('...number of nan values in U: ' + str(np.isnan(U).sum()))
-        print('...number of inf values in U: ' + str(np.isinf(U).sum()) + '\n')
+        print '...Note that nan/inf values in U are replaced by ' + str(fill_value)
+        print '...number of invalid values (nan and inf) in the array: ' + str(np.isnan(U).sum() + np.isinf(U).sum())
+        print '...number of nan values in U: ' + str(np.isnan(U).sum())
+        print '...number of inf values in U: ' + str(np.isinf(U).sum()) + '\n'
 
     # Replace all nan and inf values with fill_value.
     U_fixed = ma.fix_invalid(U, fill_value=fill_value)
     n_invalid = ma.count_masked(U_fixed)
     if verbose:
-        print('...number of masked elements by masked_invalid: ' + str(n_invalid))
+        print '...number of masked elements by masked_invalid: ' + str(n_invalid)
     # Update the mask to False (no masking)
     U_fixed.mask = False
 
@@ -3728,8 +3726,8 @@ def get_mask_for_unphysical(U, cutoffU=2000., fill_value=99999., verbose=True):
     n_greater = ma.count_masked(b)
     n_less = ma.count_masked(c)
     if verbose:
-        print('...number of masked elements greater than cutoff: ' + str(n_greater))
-        print('...number of masked elements less than -cutoff: ' + str(n_less))
+        print '...number of masked elements greater than cutoff: ' + str(n_greater)
+        print '...number of masked elements less than -cutoff: ' + str(n_less)
 
     # Generate a mask for all nonsense values in the array U
     mask = ~(~a.mask * ~b.mask * ~c.mask)
@@ -3740,7 +3738,7 @@ def get_mask_for_unphysical(U, cutoffU=2000., fill_value=99999., verbose=True):
 
     #Total number of elements in U
     N = U.size
-    print('...total number of unphysical values: ' + str(ma.count_masked(d)) + '  (' + str((float(n_total)/N*100)) + '%)\n')
+    print '...total number of unphysical values: ' + str(ma.count_masked(d)) + '  (' + str((float(n_total)/N*100)) + '%)\n'
     return mask
 
 
@@ -3789,7 +3787,7 @@ def clean_udata(udata, xx, yy, cutoffU=2000, fill_value=np.nan, verbose=True, me
 
     if notebook:
         from tqdm import tqdm_notebook as tqdm
-        print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+        print 'Using tqdm_notebook. If this is a mistake, set notebook=False'
     else:
         from tqdm import tqdm
 
@@ -3797,11 +3795,11 @@ def clean_udata(udata, xx, yy, cutoffU=2000, fill_value=np.nan, verbose=True, me
     mask_uy = get_mask_for_unphysical(udata[1, ...], cutoffU=cutoffU, fill_value=fill_value, verbose=verbose)
 
     udata_i = np.empty_like(udata)
-    for t0 in tqdm(list(range(udata.shape[-1]))):
+    for t0 in tqdm(range(udata.shape[-1])):
         x_ux, y_ux = xx[~mask_ux[..., t0]].flatten(), yy[~mask_ux[..., t0]].flatten()
         x_uy, y_uy = xx[~mask_uy[..., t0]].flatten(), yy[~mask_uy[..., t0]].flatten()
-        pts_ux = list(zip(x_ux, y_ux))
-        pts_uy = list(zip(x_uy, y_uy))
+        pts_ux = zip(x_ux, y_ux)
+        pts_uy = zip(x_uy, y_uy)
         ux_values = udata[0, ..., t0][~mask_ux[..., t0]].flatten()
         uy_values = udata[1, ..., t0][~mask_uy[..., t0]].flatten()
 
@@ -3815,7 +3813,6 @@ def clean_udata(udata, xx, yy, cutoffU=2000, fill_value=np.nan, verbose=True, me
         from tqdm import tqdm as tqdm
 
     return udata_i
-
 
 # plotting usual stuff
 def plot_energy_spectra(udata, dx, dy, dz=None, x0=0, x1=None, y0=0, y1=None, window='flattop', epsilon_guess=10**5, nu=1.004, label='',
@@ -3974,8 +3971,8 @@ def plot_energy_spectra_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=None, 
                                          label='$\\frac{1}{2} \langle U_i   U_i \\rangle$ ($mm^2/s^2$)',
                                          vmin=0, vmax=10 ** 4.8, fignum=1, subplot=131)
     graph.draw_box(ax1, xx, yy, yoffset=yoffset_box, sb_txtloc=sb_txtloc)
-    print(xx[y0, x1])
-    print(np.abs(xx[y0, x1]-xx[y0, x0]), np.abs(yy[y1, x0]-yy[y0, x0]))
+    print xx[y0, x1]
+    print np.abs(xx[y0, x1]-xx[y0, x0]), np.abs(yy[y1, x0]-yy[y0, x0])
     graph.draw_rectangle(ax1, xx[y0, x0], yy[y0, x0], np.abs(xx[y0, x1]-xx[y0, x0]), np.abs(yy[y1, x0]-yy[y0, x0]), edgecolor='C0', linewidth=5)
 
     # Coompute energy spectra
@@ -4337,7 +4334,7 @@ def make_time_evo_movie_from_udata(qty, xx, yy, time, t=1, label='$\\frac{1}{U_i
     graph.title(ax1, '$t=%02.3f$')
 
 
-######### misc ###########
+########## misc ###########
 
 
 def fix_udata_shape(udata):
@@ -4401,12 +4398,12 @@ def get_equally_spaced_grid(udata, spacing=1):
     dim = len(udata)
     if dim == 2:
         height, width, duration = udata[0].shape
-        x, y = list(range(width)), list(range(height))
+        x, y = range(width), range(height)
         xx, yy = np.meshgrid(x, y)
         return xx * spacing, yy * spacing
     elif dim == 3:
         height, width, depth, duration = udata[0].shape
-        x, y, z = list(range(width)), list(range(height)), list(range(depth))
+        x, y, z = range(width), range(height), range(depth)
         xx, yy, zz = np.meshgrid(y, x, z)
         return xx * spacing, yy * spacing, zz * spacing
 

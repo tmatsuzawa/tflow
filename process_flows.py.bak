@@ -17,8 +17,8 @@ import subprocess
 import argparse
 import os
 from tqdm import tqdm
-from . import pivlab2hdf5
-from . import analyze_flows
+import pivlab2hdf5
+import analyze_flows
 from PIL import Image
 import cv2
 
@@ -53,7 +53,7 @@ piv_settings and piv_settings_2: directories where piv-related parameters are st
              '---------------------------------------------------------------------\n' \
              '\n\n'
 
-print(description)
+print description
 
 parser = argparse.ArgumentParser(description='Make a hdf5 file out of PIVLab txt outputs')
 parser.add_argument('-basedir', '--basedir', help='Use all available data to make a master hdf5. i.e. PROCESS ALL', type=str,
@@ -80,10 +80,10 @@ args = parser.parse_args()
 # make pivlab outputs into hdf5
 hdf5datapaths = pivlab2hdf5.main(args)
 
-print('-------------------------------------------------------------------------------------------------')
-print('master hdf5 files are successfully generated.')
-print('Running basic analysis...')
-print('-------------------------------------------------------------------------------------------------')
+print '-------------------------------------------------------------------------------------------------'
+print 'master hdf5 files are successfully generated.'
+print 'Running basic analysis...'
+print '-------------------------------------------------------------------------------------------------'
 
 for hdf5datapath in hdf5datapaths:
     hdf5dataname = os.path.split(hdf5datapath)[1][:-3]

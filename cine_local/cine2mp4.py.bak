@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from . import cine
+import cine
 from numpy import *
 import os, sys
 import argparse
@@ -38,18 +38,18 @@ for i, fn in enumerate(args.cines):
         if fn[-1] == ']':
             fn, s = fn.split('[')
             try:
-                frame_slice = slice(*list(map(noneint, s[:-1].split(':'))))
+                frame_slice = slice(*map(noneint, s[:-1].split(':')))
             except:
                 raise ValueError("Couldn't convert '[%s' to slice notation" % s)
 
         else:
-            print("Warning, found '[' in input, but it didn't end with ']', so I'll assume you didn't mean to give a frame range.")
+            print "Warning, found '[' in input, but it didn't end with ']', so I'll assume you didn't mean to give a frame range."
     
     base, ext = os.path.splitext(fn)
     ext = ext.lower()
     
     if not os.path.exists(fn):
-        print("File %s not found, ignoring." % fn)
+        print "File %s not found, ignoring." % fn
         continue
     
     output = args.output
@@ -73,7 +73,7 @@ for i, fn in enumerate(args.cines):
     
     oh, ow = test_frame.shape
     
-    frames = list(range(*frame_slice.indices(len(input))))
+    frames = range(*frame_slice.indices(len(input)))
     
     if args.clip == 0:
         map = linspace(0., 2.**(bpps - bpp), 2**bpps)
@@ -109,7 +109,7 @@ for i, fn in enumerate(args.cines):
     
     map = clip(map * 255, 0, 255).astype('u1')
 
-    print('%s -> %s' % (fn, output))
+    print '%s -> %s' % (fn, output)
     
     #output = cine.Avi(output, framerate=args.framerate, quality=args.quality)
     
@@ -135,7 +135,7 @@ for i, fn in enumerate(args.cines):
     if resize is not None:
         if (nw + nh) > (ow + oh): resize = Image.BILINEAR
         else: resize = Image.ANTIALIAS
-        print("  Resizing frames: (%d, %d) -> (%d, %d)" % (ow, oh, nw, nh))
+        print "  Resizing frames: (%d, %d) -> (%d, %d)" % (ow, oh, nw, nh)
     
     for j, i in enumerate(frames):
         frame = input[i]
@@ -150,10 +150,10 @@ for i, fn in enumerate(args.cines):
         ofn = os.path.join(output_dir, '%08d.tga' % j)
         frame.save(ofn)
        
-        print('\r%6d/%d' % ((j+1), len(frames)), end=' ')
+        print '\r%6d/%d' % ((j+1), len(frames)),
         sys.stdout.flush()
         
-    print()
+    print
         
     cmd = ['ffmpeg',
                '-i', os.path.join(output_dir, '%08d.tga'),
@@ -167,11 +167,11 @@ for i, fn in enumerate(args.cines):
     cmd .append(output)
         
         
-    print('----- Running: %s -----' % (' '.join(cmd)))
+    print '----- Running: %s -----' % (' '.join(cmd))
         
     subprocess.Popen(cmd).wait()
         
-    print('-'*40)
+    print '-'*40
     
     if not args.keep_images:
         for fn in os.listdir(output_dir):

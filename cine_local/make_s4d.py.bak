@@ -30,11 +30,11 @@ for ii in args.input:
     else: files.append(ii)
 
 def crawl(l, ext=None):
-    ext = list(map(str.lower, ext))
+    ext = map(str.lower, ext)
     files = []
     for fn in l:
         if os.path.isdir(fn):
-            files += [os.path.join(fn, x) for x in crawl(os.listdir(fn), ext)]
+            files += map(lambda x: os.path.join(fn, x), crawl(os.listdir(fn), ext))
         else:
             if ext and os.path.splitext(fn)[1].lower() not in ext:
                 continue
@@ -47,11 +47,11 @@ ext = ['.sparse', '.cine']
 if args.crawl: files = crawl(files, ext)
 
 if args.type not in ('u1', 'u2', 'f', 'd'):
-    print("ERROR: data type must be 'u1', 'u2', 'f' or 'd'")
+    print "ERROR: data type must be 'u1', 'u2', 'f' or 'd'"
     sys.exit()
 
 removed = []
-files_lower = [os.path.splitext(x)[0] +  os.path.splitext(x)[1].lower() for x in files]
+files_lower = map(lambda x: os.path.splitext(x)[0] +  os.path.splitext(x)[1].lower(), files)
 
 for fn in files[:]: #Make a copy
     base, ee = os.path.splitext(fn)
@@ -63,10 +63,10 @@ for fn in files[:]: #Make a copy
         files.remove(fn)
         
 if removed:
-    print('The following files will be ignored:')
-    print('-'*40)
-    for fn in removed: print('  ' + fn)
-    print('-'*40)
+    print 'The following files will be ignored:'
+    print '-'*40
+    for fn in removed: print '  ' + fn
+    print '-'*40
     
 
 __FMT_TIME = [(60, '%06.3f"'), (60, "%02d'"), (24, "%02d hr"), (365, "%3d days"), (None, '%d years')]
@@ -133,15 +133,15 @@ __REQUIRED_FIELDS = ['cine_depth', 'display_frames', 'bottom_clip', 'u1_top', 'u
 for fn in files:
     start = time.time()
     
-    print(fn)
+    print fn
     
     base, ee = os.path.splitext(fn)
     ofn = args.output.replace('%s', base)
 
     if os.path.exists(ofn) and not args.overwrite:
-        print(' !! %s exists, skipping' % ofn)
+        print ' !! %s exists, skipping' % ofn
         continue
-    else: print('  -> %s' % ofn)    
+    else: print '  -> %s' % ofn    
     
     if not args.setup:
         try:
@@ -149,7 +149,7 @@ for fn in files:
             setups = glob.glob(os.path.join(path, '*.3dsetup'))
             setupfile = sorted(setups)[0]
         except:
-            print(' !! no .3dsetup file, either specify with -s or place in source directory')
+            print ' !! no .3dsetup file, either specify with -s or place in source directory'
             continue
     else:
         setupfile = args.setup    
@@ -159,7 +159,7 @@ for fn in files:
     
     for rf in __REQUIRED_FIELDS:
         if rf not in setup:
-            print("ERROR: field '%s' missing from setup file! (%s)" % (rf, setupfile))
+            print "ERROR: field '%s' missing from setup file! (%s)" % (rf, setupfile)
             sys.exit()
     
     if ee == '.cine':
@@ -180,7 +180,7 @@ for fn in files:
     
     #print header
     
-    frames = eval('x[%s]' % args.range, {'x':list(range(num_frames))})
+    frames = eval('x[%s]' % args.range, {'x':range(num_frames)})
     
     fmt = '%d' % len(frames)
     fmt = '\r    %%%dd/%s' % (len(fmt), fmt)
@@ -207,9 +207,9 @@ for fn in files:
     volume_shape = (len(setup['display_frames']), ) + test_frame.shape
 
     output = cine.Sparse4D(ofn, 'w', header)
-    print('', end=' ')
+    print '',
     for i, j in enumerate(frames):
-        print(fmt % (i+1), end=' ')
+        print fmt % (i+1),
         sys.stdout.flush()
 
         frame = zeros(volume_shape, dtype=args.type)
@@ -224,5 +224,5 @@ for fn in files:
 
     output.close()
 
-    print('\r    done in %s' % fmt_time(time.time() - start))
+    print '\r    done in %s' % fmt_time(time.time() - start)
         

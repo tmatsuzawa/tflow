@@ -81,7 +81,7 @@ def cine2tiff(cinepath, start=0, end=None, step=1, header='im', overwrite=False)
     if end is None:
         end = len(cc)
 
-    indices_to_save = list(range(start, end, step))
+    indices_to_save = range(start, end, step)
 
     for index in tqdm(indices_to_save):
         # get frames from cine file

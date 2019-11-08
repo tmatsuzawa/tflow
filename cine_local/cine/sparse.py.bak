@@ -111,7 +111,7 @@ class TextHeaderedBinary(object):
             
             self.header = {"creation time (unix)":repr(time.time()), "creation time":time.strftime("%Y %b %d %a %H:%M:%S %Z")}
             if header_dict is not None: self.header.update(header_dict) #Allow override of creation time
-            for k in list(self.header.keys()):
+            for k in self.header.keys():
             #    self.header[k] = str(self.header[k]).strip().replace('\n', '\\n')
                 self.header[k] = repr(self.header[k])
         
@@ -143,7 +143,7 @@ class TextHeaderedBinary(object):
                 if ':' not in line:
                     raise ValueError("Non key:value line in header of '%s' -> file is invalid!" % fn)
                     
-                key, value = list(map(str.strip, line.split(':', 1)))
+                key, value = map(str.strip, line.split(':', 1))
                 #print value
                 try:
                     value = ast.literal_eval(value)     
@@ -231,7 +231,7 @@ class TextHeaderedBinary(object):
 
     def __getitem__(self, key):
         if type(key) == slice:
-            return list(map(self.read_block, list(range(len(self)))[key]))
+            return map(self.read_block, range(len(self))[key])
         else:
             return self.read_block(key)
 
@@ -348,7 +348,7 @@ def c_unpack(s, array_size, dt):
     c_vars = ['input_buffer', 'input_buffer_len', 'x', 'output_buffer_size']
 
     return_val = weave.inline(code, c_vars)
-    if return_val: print("WARNING: C unpack returned %d, data may be corrupted!" % return_val)
+    if return_val: print "WARNING: C unpack returned %d, data may be corrupted!" % return_val
 
 
     return x
@@ -363,7 +363,7 @@ def sparse_decode(s, shape, dtype):
         try:
             a = c_unpack(s, shape, dtype)
         except:
-            print("WARNING: WEAVE INSTALLED, BUT CAN'T COMPILE CODE!")
+            print "WARNING: WEAVE INSTALLED, BUT CAN'T COMPILE CODE!"
             USE_C_UNPACK = False
             a = fromstring(unpack_re.sub(unpack_func, s), dtype=dtype)
 
@@ -378,7 +378,7 @@ def if_int(str):
     else: return int(str)
 
 def eval_slice(s, N): 
-    return list(range(*slice(*[if_int(x) for x in s.split(':')]).indices(N)))
+    return range(*slice(*[if_int(x) for x in s.split(':')]).indices(N))
         
 
 if __name__ == '__main__':
@@ -421,7 +421,7 @@ if __name__ == '__main__':
 
         
         if args.depth == -1:
-            fpv_part = [x for x in input_parts if x.lower().endswith('fpv')]
+            fpv_part = filter(lambda x: x.lower().endswith('fpv'), input_parts)
             if fpv_part:
                 frames_per_volume = int(fpv_part[0][:-3])
             else:
@@ -443,7 +443,7 @@ if __name__ == '__main__':
         max_frame = (len(source) - args.skip) // frames_per_volume
         saved_frames = eval_slice(args.range, max_frame)
     
-        print('%30s -> %-30s (%d frames)...' % (input, output, len(saved_frames)))
+        print '%30s -> %-30s (%d frames)...' % (input, output, len(saved_frames))
         sys.stdout.flush()
     
         #continue
@@ -469,7 +469,7 @@ if __name__ == '__main__':
         valmap = clip(valmap * 255, 0, 255).astype('u1')
     
         for frame_num in saved_frames:
-            print(frame_num, end=' ')
+            print frame_num,
             sys.stdout.flush()
             #frame = array([source[i] for i in (frame_offsets + frame_num * frames_per_volume + args.skip)], dtype='u4')
             #frame = ((clip(frame, args.min_val, args.max_val) - args.min_val)) * 255 // (args.max_val - args.min_val)            
@@ -481,7 +481,7 @@ if __name__ == '__main__':
             output.append_array(valmap[frame])
             
     
-        print('-> done in %.1fs' % (time.time() - start))
+        print '-> done in %.1fs' % (time.time() - start)
     
 #    print frame.shape
     
@@ -495,7 +495,7 @@ if __name__ == '__main__':
         test.close()
         
         test = TextHeaderedBinary('test.thb', 'r')
-        print(test.header)
-        print(test.read_block(0))
-        print(test.read_block(1))
-        print(test.read_block(2))
+        print test.header
+        print test.read_block(0)
+        print test.read_block(1)
+        print test.read_block(2)

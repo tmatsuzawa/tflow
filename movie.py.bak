@@ -13,7 +13,7 @@ import matplotlib.image as mpimg
 '''Module with functions for making movies
 '''
 # Abs path to ffmpeg
-ffmpeg_path = '/Users/takumi/Documents/git/takumi/tflow/tflow/ffmpeg'
+ffmpeg_path = '/Users/stephane/Documents/git/takumi/fapm/ffmpeg'
 
 
 def make_movie_noah(imgname, movname, indexsz='05', framerate=10, imgdir=None, rm_images=False,
@@ -51,12 +51,12 @@ def make_movie_noah(imgname, movname, indexsz='05', framerate=10, imgdir=None, r
 
     # Delete the original images
     if rm_images:
-        print('Deleting the original images...')
+        print 'Deleting the original images...'
         if save_into_subdir and imgdir is not None:
-            print('Deleting folder ' + imgdir)
+            print 'Deleting folder ' + imgdir
             subprocess.call(['rm', '-r', imgdir])
         else:
-            print('Deleting folder contents ' + imgdir + imgname + '*.png')
+            print 'Deleting folder contents ' + imgdir + imgname + '*.png'
             subprocess.call(['rm', '-r', imgdir + imgname + '*.png'])
 
 
@@ -143,7 +143,7 @@ def make_movie(imgname=None, imgdir=None, movname=None, indexsz='05', framerate=
     command += ['-vf', ' pad=ceil(iw/2)*2:ceil(ih/2)*2']
 
 
-    print(command)
+    print command
     command += add_commands
 
     command.append(movname + '.mp4')
@@ -151,10 +151,10 @@ def make_movie(imgname=None, imgdir=None, movname=None, indexsz='05', framerate=
 
     # Delete the original images
     if rm_images:
-        print('Deleting the original images...')
+        print 'Deleting the original images...'
         if not save_into_subdir and imgdir is None:
             imdir = os.path.split(imgname)
-        print('Deleting folder ' + imgdir)
+        print 'Deleting folder ' + imgdir
         subprocess.call(['rm', '-r', imgdir])
 
 
@@ -202,7 +202,7 @@ def make_movie_with_time_stamp(imgname, movname, indexsz='05', framerate=10, img
         elif loc == 'tr':
             pos = (right, top)
         else:
-            print('Location of timestamp was not understood! Choose from (bl, bc, br, cl, cc, cr, tl, tc, tr)')
+            print 'Location of timestamp was not understood! Choose from (bl, bc, br, cl, cc, cr, tl, tc, tr)'
             raise RuntimeError
         return pos
 
@@ -225,7 +225,7 @@ def make_movie_with_time_stamp(imgname, movname, indexsz='05', framerate=10, img
     imgs = sorted(imgs, key=natural_keys)
     # print [img[-7:] for img in imgs]
     if len(imgs)==0:
-        print('No images found! Exiting...')
+        print 'No images found! Exiting...'
         raise RuntimeError
 
     # File architecture
@@ -246,8 +246,8 @@ def make_movie_with_time_stamp(imgname, movname, indexsz='05', framerate=10, img
     elif os.path.exists('/Library/Fonts/' + font +'.ttc'):
         fnt = ImageFont.truetype('/Library/Fonts/' + font +'.ttc', fontsize)
     else:
-        print('... Specified was not found under /Library/Fonts/')
-        print('... Proceed with /Library/Fonts/Arial.ttf')
+        print '... Specified was not found under /Library/Fonts/'
+        print '... Proceed with /Library/Fonts/Arial.ttf'
         fnt = ImageFont.truetype('/Library/Fonts/' + font + '.ttf')
 
     for i in range(len(imgs)):
@@ -263,8 +263,8 @@ def make_movie_with_time_stamp(imgname, movname, indexsz='05', framerate=10, img
         try:
             red, blue, green = ImageColor.getrgb(color)
         except ValueError:
-            print('... Color string was not understood.')
-            print('... Use white as a default')
+            print '... Color string was not understood.'
+            print '... Use white as a default'
             red, blue, green = ImageColor.getrgb('w')
         draw.text(txt_pos, timestamp, font=fnt, fill=(red, blue, green, int(255*alpha)))
         outputfile = os.path.join(tmpdir, 'tmp' + '_{0:05d}.'.format(i) + ext)
@@ -287,7 +287,7 @@ def command_ffmpeg(command):
     command0 = [ffmpeg_path]
     command = command0 + command
     subprocess.call(command)
-    print(command)
+    print command
 
 
 if __name__ == "__main__":
@@ -298,8 +298,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.imgdir is None:
-        print('SPECIFY a directory where images are stored! Exiting...')
+        print 'SPECIFY a directory where images are stored! Exiting...'
         sys.exit(1)
     else:
-        print('make a movie with glob option using a natural sorting...')
+        print 'make a movie with glob option using a natural sorting...'
         make_movie(args.imgdir + '/', args.imgdir, framerate=args.framerate, rm_images=False, ext=args.imgtype, option='glob')
