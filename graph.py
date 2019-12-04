@@ -47,7 +47,7 @@ params = {'figure.figsize': __figsize__,
 
 ## Save a figure
 def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, overwrite=True, tight_layout=False,
-         savedata=True, transparent=True, **kwargs):
+         savedata=True, transparent=True, bkgcolor='w', **kwargs):
     """Save a figure from pyplot
     Parameters
     ----------
@@ -231,7 +231,7 @@ def plot(x, y, fignum=1, figsize=None, label='', color=None, subplot=None, legen
     return fig, ax
 
 
-def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None, label='', color=None, subplot=None, legend=False, **kwargs):
+def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None, label='', color='k', alpha=0.6, subplot=None, legend=False, **kwargs):
     """
     plot universal 1d energy spectrum (Saddoughi, 1992)
     """
@@ -245,12 +245,11 @@ def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None, label='', color=No
     x = np.asarray([1.27151, 0.554731, 0.21884, 0.139643, 0.0648844, 0.0198547, 0.00558913, 0.00128828, 0.000676395, 0.000254346])
     y = np.asarray([0.00095661, 0.0581971, 2.84666, 11.283, 59.4552, 381.78, 2695.48, 30341.9, 122983, 728530])
 
-    if color is None:
-        ax.plot(x, y, label=label, **kwargs)
-    else:
-        ax.plot(x, y, color=color, label=label, **kwargs)
+    ax.plot(x, y, color=color, label=label, alpha=alpha,**kwargs)
     if legend:
         ax.legend()
+    tologlog(ax)
+    labelaxes(ax, '$\kappa \eta$', '$E_{11} / (\epsilon\\nu^5)^{1/4}$')
     return fig, ax
 
 
@@ -523,8 +522,8 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, figsize=None,
 
 ## 2D plotsFor the plot you showed at group meeting of lambda converging with resolution, can you please make a version with two x axes (one at the top, one below) one pixel spacing, other PIV pixel spacing, and add a special tick on each for the highest resolution point.
 # (pcolormesh)
-def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None, vmax=None, log10=False, label=None, show=False,
-               cbar=True, cmap='magma', aspect='equal', linewidth=0,  option='scientific', **kwargs):
+def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None, vmax=None, log10=False, label=None,
+               cbar=True, cmap='magma', aspect='equal', option='scientific', ntick=5, tickinc=None, **kwargs):
     """  Color plot of 2D array
     Parameters
     ----------
@@ -566,13 +565,13 @@ def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None
 
     if cbar:
         if vmin is None and vmax is None:
-            add_colorbar(cc, ax=ax, label=label, option=option)
+            add_colorbar(cc, ax=ax, label=label, option=option, ntick=ntick, tickinc=tickinc)
         elif vmin is not None and vmax is None:
-            add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin)
+            add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, ntick=ntick, tickinc=tickinc)
         elif vmin is None and vmax is not None:
-            add_colorbar(cc, ax=ax, label=label, option=option, vmax=vmax)
+            add_colorbar(cc, ax=ax, label=label, option=option, vmax=vmax, ntick=ntick, tickinc=tickinc)
         else:
-            add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, vmax=vmax)
+            add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, vmax=vmax, ntick=ntick, tickinc=tickinc)
     if aspect == 'equal':
         ax.set_aspect('equal')
     # set edge color to face color
@@ -736,11 +735,20 @@ def legend(ax, remove=False, **kwargs):
 
 
 # Colorbar
-# Scientific format for Color bar- set format=sfmt to activate it
-sfmt=mpl.ticker.ScalarFormatter(useMathText=True)
-# Scientific notation is used for data < 10^-n or data >= 10^m, where n and m are the power limits set using set_powerlimits((n,m))
-sfmt.set_scientific(True)
-sfmt.set_powerlimits((0, 0)) # (n,m): 10^m <= data < 10 ^ -n
+def reset_sfmt():
+    global sfmt
+    # Scientific format for Color bar- set format=sfmt to activate it
+    sfmt = mpl.ticker.ScalarFormatter(useMathText=True)
+    # Scientific notation is used for data < 10^-n or data >= 10^m, where n and m are the power limits set using set_powerlimits((n,m))
+    sfmt.set_scientific(True)
+    sfmt.set_powerlimits((0, 0))  # (n,m): 10^m <= data < 10 ^ -n]
+    # sfmt.format = '$\mathdefault{%1.1f}$'
+reset_sfmt()
+
+def get_sfmt():
+    global sfmt
+    reset_sfmt()
+    return sfmt
 
 def add_colorbar_old(mappable, fig=None, ax=None, fignum=None, label=None, fontsize=__fontsize__,
                  vmin=None, vmax=None, cmap='jet', option='normal', **kwargs):
@@ -785,7 +793,7 @@ def add_colorbar_old(mappable, fig=None, ax=None, fignum=None, label=None, fonts
 
 
 def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', label=None, fontsize=None, option='normal',
-                 tight_layout=True, ticklabelsize=None, aspect='equal', ntick=10, tickinc=None, **kwargs):
+                 tight_layout=True, ticklabelsize=None, aspect='equal', ntick=5, tickinc=None, **kwargs):
     """
     Adds a color bar
 
@@ -803,6 +811,7 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
     -------
 
     """
+    global sfmt
     def get_ticks_for_sfmt(mappable, n=10, inc=0.5, **kwargs):
         """
         Returns ticks for scientific notation
@@ -829,7 +838,6 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
         # ticks = np.linspace(zmin, zmax, 2*n)
         exponent = int(np.floor(np.log10(np.abs(zmax))))
         # ticks = np.around(ticks[1::2], decimals=-exponent + 1)
-
         if tickinc is not None:
             # Specify the increment of ticks!
             dz = inc * 10 ** exponent
@@ -837,8 +845,13 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
         else:
             # Specify the number of ticks!
             exp = int(np.floor(np.log10((zmax - zmin) / n)))
-            dz =  np.round((zmax - zmin) / n, -exp)
+            dz = np.round((zmax - zmin) / n, -exp)
+            # exp = int(np.ceil(np.log10((zmax - zmin) / n)))
+            # dz = (zmax - zmin) / n
             ticks = [i * dz for i in range(int(zmin / dz), int(zmax / dz) + 1)]
+            print(np.log10((zmax - zmin) / n), exp)
+            print((zmax - zmin) / n, dz)
+            print(ticks)
 
         return ticks
 
@@ -861,13 +874,16 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
     if fig is None:
         fig = plt.gcf()
 
+    reset_sfmt()
 
     divider = axes_grid.make_axes_locatable(ax)
     cax = divider.append_axes(location, size='5%', pad=0.15)
     if option == 'scientific_custom':
         ticks = get_ticks_for_sfmt(mappable, n=ntick, inc=tickinc, **kwargs)
         kwargs = remove_vmin_vmax_from_kwargs(**kwargs)
+        # sfmt.format = '$\mathdefault{%1.1f}$'
         cb = fig.colorbar(mappable, cax=cax, format=sfmt, ticks=ticks, **kwargs)
+        # cb = fig.colorbar(mappable, cax=cax, format=sfmt, **kwargs)
     elif option == 'scientific':
         # old but more robust
         kwargs = remove_vmin_vmax_from_kwargs(**kwargs)
@@ -948,7 +964,7 @@ def add_discrete_colorbar(ax, colors, vmin=0, vmax=None, label=None, fontsize=No
 
 def add_colorbar_alone(ax, values, cmap=cmap, label=None, fontsize=None, option='normal',
                  tight_layout=True, ticklabelsize=None, ticklabel=None,
-                 aspect = None, location='right', **kwargs):
+                 aspect = None, location='right', color='k', **kwargs):
     fig = ax.get_figure()
 
     # number of values
@@ -976,9 +992,9 @@ def add_colorbar_alone(ax, values, cmap=cmap, label=None, fontsize=None, option=
 
     if not label is None:
         if fontsize is None:
-            cb.set_label(label)
+            cb.set_label(label, color=color)
         else:
-            cb.set_label(label, fontsize=fontsize)
+            cb.set_label(label, fontsize=fontsize, color=color)
     if ticklabelsize is not None:
         cb.ax.tick_params(labelsize=ticklabelsize)
 
@@ -1771,7 +1787,7 @@ def approximate_fraction(x, e):
     from x by no more than e."""
     return simplest_fraction_in_interval(x - e, x + e)
 
-def get_mask4erroneous_pts(x, y, thd=10):
+def get_mask4erroneous_pts(x, y, thd=1):
     """
     Retruns a mask that can be sued to hide erroneous data points for 1D plots
     ... e.g. x[mask], y[mask] hide the jumps which appear to be false to human eyes
