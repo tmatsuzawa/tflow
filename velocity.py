@@ -1,10 +1,8 @@
 from scipy.stats import binned_statistic
 from tqdm import tqdm
 import numpy as np
-import sys
 import re
 import h5py
-import os
 import numpy.ma as ma
 from scipy.interpolate import interp2d
 from scipy.interpolate import UnivariateSpline
@@ -15,27 +13,42 @@ import numpy.ma as ma
 from scipy import signal
 from scipy import interpolate
 from scipy.interpolate import griddata
-import os
-import copy
-# For plotting
-import matplotlib.pyplot as plt
+from scipy import ndimage
+import os, copy
+import time as time_mod
 import tflow.graph as graph
 
+import warnings
+warnings.simplefilter('ignore', RuntimeWarning)
+# For plotting
+import matplotlib.pyplot as plt
+# import tflow.graph as graph
+import subprocess
 
 """
 Module designed to process a planar/volumetric velocity field
 - energy, enstrophy, vorticity fields
 - energy spectra
 - n-th order structure functions
-
+- dissipation rate
+- turbulent length scales
 
 
 Philosophy: 
+Prepare a velocity field array "udata". 
+Then, pass it to a method in this module to obtain any quantities related to turbulence.
+It should require a single line to obtain the desired quantity from a velocity field
+unless an intermediate step to obtain the quantity is computationally expensive. 
+The primary example for this is an autocorrelation function which is used for various quantities like Taylor microscale.
+
+
 udata = (ux, uy, uz) or (ux, uy)
 each ui has a shape (height, width, (depth), duration)
 
 If ui-s are individually given, make udata like 
 udata = np.stack((ux, uy))
+
+author: takumi matsuzawa
 """
 
 
@@ -245,7 +258,6 @@ def curl(udata, dx=1., dy=1., dz=1.):
 def curl_2d(ux, uy, dx=1., dy=1.):
     """
     Calculate curl of 2D (or 2D+1) field
-    ... A simple method but
 
     Parameters
     ----------
@@ -485,52 +497,137 @@ def get_turbulence_intensity_local(udata):
 
 ########## Energy spectrum, Dissipation spectrum ##########
 
-def fft_nd(field, dx=1, dy=1, dz=1):
-    """
-    Parameters
-    ----------
-    field: np array, (height, width, depth, duration) or (height, width, duration)
-    dx: spacing along x-axis
-    dy: spacing along x-axis
-    dz: spacing along x-axis
+# def fft_nd(field, dx=1, dy=1, dz=1):
+#     """
+#     Parameters
+#     ----------
+#     field: np array, (height, width, depth, duration) or (height, width, duration)
+#     dx: spacing along x-axis
+#     dy: spacing along x-axis
+#     dz: spacing along x-axis
+#
+#     Returns
+#     -------
+#     field_fft
+#     np.asarray([kx, ky, kz])
+#
+#     """
+#     dim = len(field.shape) - 1
+#     n_samples = 1
+#     for d in range(dim):
+#         n_samples *= field.shape[d]
+#
+#     field_fft = np.fft.fftn(field, axes=list(range(dim)))
+#     field_fft = np.fft.fftshift(field_fft, axes=list(range(dim)))
+#     field_fft /= n_samples# Divide the result by the number of samples (this is because of discreteness of FFT)
+#
+#     if dim == 2:
+#         height, width, duration = field.shape
+#         kx = np.fft.fftfreq(width, d=dx)  # this returns FREQUENCY (JUST INVERSE LENGTH) not ANGULAR FREQUENCY
+#         ky = np.fft.fftfreq(height, d=dy)
+#         kx = np.fft.fftshift(kx)
+#         ky = np.fft.fftshift(ky)
+#         kxx, kyy = np.meshgrid(kx, ky)
+#         kxx, kyy = kxx * 2 * np.pi, kyy * 2 * np.pi # Convert inverse length into wavenumber
+#
+#         return field_fft, np.asarray([kxx, kyy])
+#
+#     elif dim == 3:
+#         height, width, depth, duration = field.shape
+#         kx = np.fft.fftfreq(width, d=dx)
+#         ky = np.fft.fftfreq(height, d=dy)
+#         kz = np.fft.fftfreq(depth, d=dz)
+#         kx = np.fft.fftshift(kx)
+#         ky = np.fft.fftshift(ky)
+#         kz = np.fft.fftshift(kz)
+#         kxx, kyy, kzz = np.meshgrid(ky, kx, kz)
+#         kxx, kyy, kzz = kxx * 2 * np.pi, kyy * 2 * np.pi, kzz * 2 * np.pi
+#         return field_fft, np.asarray([kxx, kyy, kzz])
+#
+def fft_nd(udata, dx=1, dy=1, dz=1,
+           x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
+            window=None, return_kgrid=True):
 
-    Returns
-    -------
-    field_fft
-    np.asarray([kx, ky, kz])
+    if dx is None or dy is None:
+        print('ERROR: dx or dy is not provided! dx is grid spacing in real space.')
+        print('... k grid will be computed based on this spacing! Please provide.')
+        raise ValueError
+    if x0 is None:
+        x0 = 0
+    if y0 is None:
+        y0 = 0
+    if x1 is None:
+        x1 = udata[0].shape[1]
+    if y1 is None:
+        y1 = udata[0].shape[0]
 
-    """
-    dim = len(field.shape) - 1
+    dim = len(udata)
+    udata = fix_udata_shape(udata)
+    if dim == 2:
+        udata = udata[:, y0:y1, x0:x1, :]
+    elif dim == 3:
+        if z1 is None:
+            z1 = udata[0].shape[2]
+        if dz is None:
+            print('ERROR: dz is not provided! dx is grid spacing in real space.')
+            print('... k grid will be computed based on this spacing! Please provide.')
+            raise ValueError
+        udata = udata[:, y0:y1, x0:x1, z0:z1, :]
+
     n_samples = 1
     for d in range(dim):
-        n_samples *= field.shape[d]
+        n_samples *= udata.shape[d+1]
 
-    field_fft = np.fft.fftn(field, axes=list(range(dim)))
-    field_fft = np.fft.fftshift(field_fft, axes=list(range(dim)))
-    field_fft /= n_samples# Divide the result by the number of samples (this is because of discreteness of FFT)
+    # Apply a window to get lean FFT spectrum for aperiodic signals
+    duration = udata.shape[-1]
+    if window is not None:
+        if dim == 2:
+            xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+            windows = get_window_radial(xx, yy, wtype=window, duration=duration)
+            # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
+            udata_tapered = np.empty_like(udata)
+            for i in range(dim):
+                udata_tapered[i, ...] = udata[i, ...] * windows
+            # udata_tapered = udata * windows
+        elif dim == 3:
+            xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+            windows = get_window_radial(xx, yy, zz, wtype=window, duration=duration)
+            # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
+            udata_tapered = np.empty_like(udata)
+            for i in range(dim):
+                udata_tapered[i, ...] = udata[i, ...] * windows
+            # udata_tapered = udata * windows
+        ukdata = np.fft.fftn(udata_tapered, axes=list(range(1, dim + 1)))
+        ukdata = np.fft.fftshift(ukdata, axes=list(range(1, dim + 1)))
+    else:
+        ukdata = np.fft.fftn(udata, axes=list(range(1, dim + 1)))
+        ukdata = np.fft.fftshift(ukdata, axes=list(range(1, dim + 1)))
 
-    if dim == 2:
-        height, width, duration = field.shape
-        kx = np.fft.fftfreq(width, d=dx)  # this returns FREQUENCY (JUST INVERSE LENGTH) not ANGULAR FREQUENCY
-        ky = np.fft.fftfreq(height, d=dy)
-        kx = np.fft.fftshift(kx)
-        ky = np.fft.fftshift(ky)
-        kxx, kyy = np.meshgrid(kx, ky)
-        kxx, kyy = kxx * 2 * np.pi, kyy * 2 * np.pi # Convert inverse length into wavenumber
+    if return_kgrid:
+        if dim == 2:
+            height, width, duration = udata[0, ...].shape
+            kx = np.fft.fftfreq(width, d=dx)  # this returns FREQUENCY (JUST INVERSE LENGTH) not ANGULAR FREQUENCY
+            ky = np.fft.fftfreq(height, d=dy)
+            kx = np.fft.fftshift(kx)
+            ky = np.fft.fftshift(ky)
+            kxx, kyy = np.meshgrid(kx, ky)
+            kxx, kyy = kxx * 2 * np.pi, kyy * 2 * np.pi # Convert inverse length into wavenumber
+            return ukdata, np.asarray([kxx, kyy])
 
-        return field_fft, np.asarray([kxx, kyy])
+        elif dim == 3:
+            height, width, depth, duration = udata[0, ...].shape
+            kx = np.fft.fftfreq(width, d=dx)
+            ky = np.fft.fftfreq(height, d=dy)
+            kz = np.fft.fftfreq(depth, d=dz)
+            kx = np.fft.fftshift(kx)
+            ky = np.fft.fftshift(ky)
+            kz = np.fft.fftshift(kz)
+            kxx, kyy, kzz = np.meshgrid(ky, kx, kz)
+            kxx, kyy, kzz = kxx * 2 * np.pi, kyy * 2 * np.pi, kzz * 2 * np.pi
+            return ukdata, np.asarray([kxx, kyy, kzz])
+    else:
+        return ukdata
 
-    elif dim == 3:
-        height, width, depth, duration = field.shape
-        kx = np.fft.fftfreq(width, d=dx)
-        ky = np.fft.fftfreq(height, d=dy)
-        kz = np.fft.fftfreq(depth, d=dz)
-        kx = np.fft.fftshift(kx)
-        ky = np.fft.fftshift(ky)
-        kz = np.fft.fftshift(kz)
-        kxx, kyy, kzz = np.meshgrid(ky, kx, kz)
-        kxx, kyy, kzz = kxx * 2 * np.pi, kyy * 2 * np.pi, kzz * 2 * np.pi
-        return field_fft, np.asarray([kxx, kyy, kzz])
 
 def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
                            z0=0, z1=None, dx=None, dy=None, dz=None,
@@ -718,6 +815,14 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
                         cc=1.75, notebook=True):
     """
     Returns 1D energy spectrum from velocity field data
+    ... The algorithm implemented in this function is VERY QUICK because it does not use the two-point vel. autorcorrelation tensor.
+    ... Instead, it converts u(kx, ky, kz)u*(kx, ky, kz) into u(kr)u*(kr). (here * dentoes the complex conjugate)
+    ... CAUTION: Must provide udata with aspect ratio ~ 1
+    ...... The conversion process induces unnecessary error IF the dimension of u(kx, ky, kz) is skewed.
+    ...... i.e. Make udata.shape like (800, 800), (1024, 1024), (512, 512) for accurate results.
+    ... KNOWN ISSUES:
+    ...... This function returns a bad result for udata with shape like (800, 800, 2)
+
 
     Parameters
     ----------
@@ -1082,24 +1187,24 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
     # E11
     ux_k = np.fft.fft(ux, axis=ax_ind) / np.sqrt(n_samples)
     e11_nd = np.abs(ux_k * np.conj(ux_k))
-    e11 = np.nanmean(e11_nd, axis=ax_ind_for_avg)[:n/2, :]
-    e11_err = np.nanstd(e11_nd, axis=ax_ind_for_avg)[:n/2, :]
+    e11 = np.nanmean(e11_nd, axis=ax_ind_for_avg)[:n//2, :]
+    e11_err = np.nanstd(e11_nd, axis=ax_ind_for_avg)[:n//2, :]
 
     # E22
     uy_k = np.fft.fft(uy, axis=ax_ind) / np.sqrt(n_samples)
     e22_nd = np.abs(uy_k * np.conj(uy_k))
-    e22 = np.nanmean(e22_nd, axis=ax_ind_for_avg)[:n/2, :]
-    e22_err = np.nanstd(e22_nd, axis=ax_ind_for_avg)[:n/2, :]
+    e22 = np.nanmean(e22_nd, axis=ax_ind_for_avg)[:n//2, :]
+    e22_err = np.nanstd(e22_nd, axis=ax_ind_for_avg)[:n//2, :]
 
     # Get an array for wavenumber
-    k = np.fft.fftfreq(n, d=d)[:n/2] * 2 * np.pi # shape=(n, duration)
+    k = np.fft.fftfreq(n, d=d)[:n//2] * 2 * np.pi # shape=(n, duration)
     deltak = k[1] - k[0]
     if dim == 3:
         # E33
         uz_k = np.fft.fft(uz, axis=ax_ind) / np.sqrt(n_samples)
         e33_nd = np.abs(uz_k * np.conj(uz_k))
-        e33 = np.nanmean(e33_nd, axis=ax_ind_for_avg)[:n/2, :]
-        e33_err = np.nanstd(e33_nd, axis=ax_ind_for_avg)[:n/2, :]
+        e33 = np.nanmean(e33_nd, axis=ax_ind_for_avg)[:n//2, :]
+        e33_err = np.nanstd(e33_nd, axis=ax_ind_for_avg)[:n//2, :]
 
         eiis, eii_errs = np.array([e11, e22, e33]), np.array([e11_err, e22_err, e33_err])
     elif dim == 2:
@@ -1339,7 +1444,7 @@ def get_1d_rescaled_energy_spectrum(udata, epsilon=None, nu=1.0034, x0=0, x1=Non
     eii_arr, eii_err_arr, k1d = get_1d_energy_spectrum(udata, x0=x0, x1=x1,
                                  y0=y0, y1=y1, z0=z0, z1=z1,
                                  dx=dx, dy=dy, dz=dz,
-                                 window=window, correct_signal_loss=correct_signal_loss, notebook=notebook)
+                                 window=window, correct_signal_loss=correct_signal_loss)
     if epsilon is None:
         epsilon = get_epsilon_using_sij(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz)
 
@@ -1453,7 +1558,11 @@ def scale_energy_spectrum(e_k, kk, epsilon=10**5, nu=1.0034, e_k_err=None):
     eta = (nu ** 3 / epsilon) ** (0.25)  # mm
     # print 'dissipation rate, Kolmogorov scale: ', epsilon, eta
 
-    k_norm = kk * eta
+    try:
+        k_norm = kk * eta
+    except:
+        kk_ = np.repeat(kk[..., np.newaxis], eta.shape[-1], axis=1)
+        k_norm = (kk_ * eta)
     e_k_norm = e_k[...] / ((epsilon * nu ** 5.) ** (0.25))
     if e_k_err is not None:
         e_k_err_norm = e_k_err[...] / ((epsilon * nu ** 5.) ** (0.25))
@@ -1661,11 +1770,11 @@ def get_epsilon_using_sij(udata, dx=None, dy=None, dz=None, nu=1.004,
         epsilon_spatial = 2. * nu * np.nansum(sij ** 2, axis=(4, 5))
         epsilon = np.nanmean(epsilon_spatial, axis=tuple(range(dim)))
     elif dim == 2:
-        # Estimate epsilon from 2D data
+        # Estimate epsilon from 2D data (assuming isotropy)
         epsilon_0 = np.nanmean(duidxj[..., 0, 0] ** 2, axis=tuple(range(dim)))
-        epsilon_1 = np.nanmean(duidxj[..., 1, 1] ** 2, axis=tuple(range(dim)))
+        epsilon_1 = np.nanmean(duidxj[..., 0, 1] ** 2, axis=tuple(range(dim))) # Fixed from duidxj[..., 0, 0] ** 2 12/10/19 Takumi
         epsilon_2 = np.nanmean(duidxj[..., 0, 1] * duidxj[..., 0, 1], axis=tuple(range(dim)))
-        epsilon = 6. * nu * (epsilon_0 + epsilon_1 + epsilon_2)
+        epsilon = 6. * nu * (epsilon_0 + epsilon_1 + epsilon_2) # Hinze, 1975, eq. 3-98
     return epsilon
 
 def get_epsilon_iso(udata, lambda_f=None, lambda_g=None, nu=1.004, x=None, y=None, **kwargs):
@@ -1922,6 +2031,20 @@ def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=0, x1=None, 
         arr1, arr2 = list(zip(*sorted(zip(arr1, arr2))))
         return arr1, arr2
 
+    def get_mask_for_nan_and_inf(U):
+        """
+        Returns a mask for nan and inf values in a multidimensional array U
+        Parameters
+        ----------
+        U: N-d array
+
+        Returns
+        -------
+
+        """
+        U = np.array(U)
+        U_masked_invalid = ma.masked_invalid(U)
+        return U_masked_invalid.mask
 
     if x0 is None:  # if None, use the whole space
         x0 = 0
@@ -1958,64 +2081,88 @@ def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=0, x1=None, 
     for t in tqdm(list(range(t0, t1)), desc='autocorr. time'):
         # Call velocity field at time t as uu
         uu = ui[y0:y1, x0:x1, t]
-
         roll_indices = list(range(0, limits[roll_axis], int(1. / coarse)))
         m = len(roll_indices)
         n = int(x_grid.size * coarse2)
 
-        uu2_norm = np.nanmean(ui[y0:y1, x0:x1, ...] ** 2, axis=(0, 1))  # mean square velocity (avg over space)
-        # uu2_norm = np.nanmean(ui[y0:y1, x0:x1, 0] ** 2)  # mean square velocity (avg over space)
+        # uu2_norm = np.nanmean(ui[y0:y1, x0:x1, ...] ** 2, axis=(0, 1))  # mean square velocity (avg over space)
+        uu2_norm = np.nanmean(uu ** 2)  # mean square velocity (avg over space)
 
         rr = np.empty((n, m))
         corr = np.empty((n, m))
 
-        # for i in tqdm(range(int(coarse * limits[roll_axis])), desc='computing correlation'):
-        for i in range(int(coarse * limits[roll_axis])):
-            uu_rolled = np.roll(uu, i, axis=roll_axis)
-            x_grid_rolled, y_grid_rolled = np.roll(x_grid, i, axis=roll_axis), np.roll(y_grid, i, axis=roll_axis)
-            r_grid = np.sqrt((x_grid_rolled - x_grid) ** 2 + (y_grid_rolled - y_grid) ** 2)
-            corr_uu = uu * uu_rolled / uu2_norm[t]  # correlation values
-            rr[:, i] = r_grid.flatten()[:n]
-            corr[:, i] = corr_uu.flatten()[:n]
+        if np.isnan(uu2_norm) or np.isinf(uu2_norm) or uu2_norm == 0:
+            print('compute_spatial_autocorr: uu2_norm is invalid, %d / %d' % (t, t1-t0))
+            for i in range(int(coarse * limits[roll_axis])):
+                x_grid_rolled, y_grid_rolled = np.roll(x_grid, i, axis=roll_axis), np.roll(y_grid, i, axis=roll_axis)
+                r_grid = np.sqrt((x_grid_rolled - x_grid) ** 2 + (y_grid_rolled - y_grid) ** 2)
+                rr[:, i] = r_grid.flatten()[:n]
+            # flatten arrays to feed to binned_statistic
+            rr = rr.flatten()
+            rr_means, rr_edges, binnumber = binned_statistic(rr, rr, statistic='mean', bins=n_bins)
+            rr_binwidth = (rr_edges[1] - rr_edges[0])
+            rr_ = rr_edges[1:] - rr_binwidth / 2
+            rr = sorted(rr_)
 
-        # flatten arrays to feed to binned_statistic
-        rr, corr = rr.flatten(), corr.flatten()
+            rrs[:, t - t0] = rr
+            corrs[:, t - t0] = np.asarray([np.nan for i in range(n_bins)])
+            corr_errs[:, t - t0] = np.asarray([np.nan for i in range(n_bins)])
+        else:
+            # for i in tqdm(range(int(coarse * limits[roll_axis])), desc='computing correlation'):
+            for i in range(int(coarse * limits[roll_axis])):
+                uu_rolled = np.roll(uu, i, axis=roll_axis)
+                x_grid_rolled, y_grid_rolled = np.roll(x_grid, i, axis=roll_axis), np.roll(y_grid, i, axis=roll_axis)
+                r_grid = np.sqrt((x_grid_rolled - x_grid) ** 2 + (y_grid_rolled - y_grid) ** 2)
+                corr_uu = uu * uu_rolled / uu2_norm  # correlation values
+                # try:
+                #     corr_uu = uu * uu_rolled / uu2_norm[t]  # correlation values
+                #     rr[:, i] = r_grid.flatten()[:n]
+                #     corr[:, i] = corr_uu.flatten()[:n]
+                # except:
+                #     rr[:, i] = r_grid.flatten()[:n]
+                #     corr[:, i] = corr_uu.flatten()[:n]
+                rr[:, i] = r_grid.flatten()[:n]
+                corr[:, i] = corr_uu.flatten()[:n]
+            # flatten arrays to feed to binned_statistic
+            rr, corr = rr.flatten(), corr.flatten()
 
-        # make sure rr and corr do not contain nans
-        mask = ~np.isnan(corr)
-        rr, corr = rr[mask], corr[mask]
+            # make sure rr and corr do not contain nans
+            mask = get_mask_for_nan_and_inf(corr)
+            mask = ~mask
 
-        # get a histogram
-        rr_means, rr_edges, binnumber = binned_statistic(rr, rr, statistic='mean', bins=n_bins)
-        corr_, _, _ = binned_statistic(rr, corr, statistic='mean', bins=n_bins)
-        corr_err, _, _ = binned_statistic(rr, corr, statistic='std', bins=n_bins)
+            rr, corr = rr[mask], corr[mask]
+            # return rr, corr
+            # get a histogram
+            rr_means, rr_edges, binnumber = binned_statistic(rr, rr, statistic='mean', bins=n_bins)
+            corr_, _, _ = binned_statistic(rr, corr, statistic='mean', bins=n_bins)
+            corr_err, _, _ = binned_statistic(rr, corr, statistic='std', bins=n_bins)
 
-        # One may use rr_means or the middle point of each bin for plotting
-        # Default is to use the middle point
-        rr_binwidth = (rr_edges[1] - rr_edges[0])
-        rr_ = rr_edges[1:] - rr_binwidth / 2
+            # One may use rr_means or the middle point of each bin for plotting
+            # Default is to use the middle point
+            rr_binwidth = (rr_edges[1] - rr_edges[0])
+            rr_ = rr_edges[1:] - rr_binwidth / 2
 
 
-        # Sort arrays
-        rr, corr = sort2arr(rr_, corr_)
-        rr, corr_err = sort2arr(rr_, corr_err)
+            # Sort arrays
+            rr, corr = sort2arr(rr_, corr_)
+            rr, corr_err = sort2arr(rr_, corr_err)
 
-        # MAKE SURE f(r=0)=g(r=0)=1
-        # IF coarse2 is not 1.0, the autocorrelation functions at r=0 may take values other than 1.
-        # This is due to using an inadequate normalization factor.
-        # As a consequence, this messes up determining Taylor microscale etc.
-        # One can fix this properly by computing the normalizing factor using the same undersampled ensemble.
-        # BUT it is not worth the effort because one just needs to scale the correlation values here.
-        corr /= corr[0]
-        corr_err /= corr[0]
+            # MAKE SURE f(r=0)=g(r=0)=1
+            # IF coarse2 is not 1.0, the autocorrelation functions at r=0 may take values other than 1.
+            # This is due to using an inadequate normalization factor.
+            # As a consequence, this messes up determining Taylor microscale etc.
+            # One can fix this properly by computing the normalizing factor using the same undersampled ensemble.
+            # BUT it is not worth the effort because one just needs to scale the correlation values here.
+            corr /= corr[0]
+            corr_err /= corr[0]
 
-        # Insert to a big array
-        # rrs[0, t] = 0
-        # corrs[0, t] = 1.0
-        # corr_errs[0, t] = 0
-        rrs[:, t-t0] = rr
-        corrs[:, t-t0] = corr
-        corr_errs[:, t-t0] = corr_err
+            # Insert to a big array
+            # rrs[0, t] = 0
+            # corrs[0, t] = 1.0
+            # corr_errs[0, t] = 0
+            rrs[:, t-t0] = rr
+            corrs[:, t-t0] = corr
+            corr_errs[:, t-t0] = corr_err
 
     if notebook:
         from tqdm import tqdm as tqdm
@@ -2219,9 +2366,8 @@ def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None,
                                                                 y0=y0, y1=y1, z0=z0, z1=z1,
                                                                 coarse=coarse, coarse2=coarse2, notebook=notebook)
         r_tran, g_tran, g_err_tran = compute_spatial_autocorr3d(ux, x, y, z, roll_axis=0, n_bins=n_bins, x0=x0, x1=x1,
-                                                                  y0=y0, y1=y1, z0=z0, z1=z1,
-
-                                                                  coarse=coarse, coarse2=coarse2, notebook=notebook)
+                                                                y0=y0, y1=y1, z0=z0, z1=z1,
+                                                                coarse=coarse, coarse2=coarse2, notebook=notebook)
     # Return autocorrelation values and rs
     autocorrs = (r_long, f_long, f_err_long, r_tran, g_tran, g_err_tran)
 
@@ -2561,12 +2707,12 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
                                                           np.roll(z_grid, i, axis=roll_axis)
                 r_grid = np.sqrt( (x_grid_rolled - x_grid) ** 2 + (y_grid_rolled - y_grid) ** 2 + (z_grid_rolled - z_grid) ** 2)
             elif dim == 2:
-                x_grid_rolled, y_grid_rolled = np.roll(x_grid, i, axis=roll_axis), np.roll(y_grid, i, axis=roll_axis)
+                x_grid_rolled, y_grid_rolled = np.roll(x_grid, -i, axis=roll_axis), np.roll(y_grid, -i, axis=roll_axis)
                 r_grid = np.sqrt( (x_grid_rolled - x_grid) ** 2 + (y_grid_rolled - y_grid) ** 2)
 
 
-            uu_rolled = np.roll(uu, i, axis=roll_axis)
-            Dxx_raw = (uu - uu_rolled) ** p
+            uu_rolled = np.roll(uu, -i, axis=roll_axis)
+            Dxx_raw = (uu_rolled - uu) ** p
             rr[:, j] = r_grid.flatten()[:n]
             Dxx[:, j] = Dxx_raw.flatten()[:n]
 
@@ -2606,37 +2752,284 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
     return rrs, Dxxs, Dxx_errs, rrs_scaled, Dxxs_scaled, Dxx_errs_scaled
 
 
-    # udata = fix_udata_shape(udata)
-    #
-    # if nn is None:
-    #     n_bins = xx.shape[1]
-    # else:
-    #     n_bins = nn
-    # rr, DLL = np.empty((xx.shape[0], xx.shape[1], n_bins)), np.empty((xx.shape[0], xx.shape[1], n_bins))
-    # for i in range(n_bins):  # in x direction
-    #     if i % 100 == 0:
-    #         print '%d / %d' % (i, n_bins)
-    #     ux_rolled = np.roll(ux0, i, axis=0)
-    #     xx_rolled = np.roll(xx, i, axis=0)
-    #     yy_rolled = np.roll(yy, i, axis=0)
-    #
-    #     DLL_raw = (ux0 - ux_rolled) ** p
-    #     rr_raw = np.sqrt((xx - xx_rolled) ** 2 + (yy - yy_rolled) ** 2)
-    #     rr[..., i], DLL[..., i] = rr_raw, DLL_raw
-    # # rr, DLL = np.concatenate((rr, rr_raw.flatten())), np.concatenate((DLL, DLL_raw.flatten()))
-    # rr, DLL = np.ravel(rr), np.ravel(DLL)
-    # #     return rr, DLL
-    #
-    # # Binning
-    # bin_centers, _, _ = binned_statistic(rr, rr, statistic='mean', bins=n_bins)
-    # bin_averages, _, _ = binned_statistic(rr, DLL, statistic='mean', bins=n_bins)
-    # bin_stdevs, _, _ = binned_statistic(rr, DLL, statistic='std', bins=n_bins)
-    #
-    # # Scale
-    # rr = bin_centers
-    # Dx_p = bin_averages
-    # rr_scaled = bin_centers / eta
-    # Dx_p_scaled = Dx_p / ((epsilon * rr) ** (float(p) / 3.))
+def get_structure_function(udata, x, y, z=None, indices=('x', 'x'), roll_axis=1, n_bins=None, nu=1.004,
+                                x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None,
+                                coarse=1.0, coarse2=0.2, notebook=True):
+    """
+    A method to compute a generalized structure function
+
+    Structure tensor Dij...k is essentially the generalized variance of the two-point velocity difference
+    This method returns the STRUCTURE FUNCTION D_{ij...k}(r x_m) where the tensor indices are "indices"
+    and the subscript of x_m, m, is expressed as roll_axis.
+
+    If indices=(0, 0) & roll_axis=1, this returns D_{xx}(r \hat{x}).  # longitudinal, 2nd order
+    If indices=(1, 1) & roll_axis=0, this returns D_{yy}(r \hat{y}).  # longitudinal, 2nd order
+    If indices=(1, 1) & roll_axis=0, this returns D_{yy}(r \hat{x}).  # transverse, 2nd order
+    If indices=(0, 0, 0) & roll_axis=1, this returns D_{xxx}(r \hat{x}).  # longitudinal, 3nd order
+    If indices=(0, 1, 0) & roll_axis=1, this returns D_{xyx}(r \hat{x}).  # (1, 2, 1)-component of the 3rd order structure function tensor
+
+    ... Returns rrs, Dijks, Dijk_errs, rrs_scaled, Dijks_scaled, Dijk_errs_scaled
+
+    Parameters
+    ----------
+    udata
+    x: numpy array
+        x-coordinate of the spatial grid corresponding to the given udata
+        ... it does not have to ve equally spaced
+    y: numpy array
+        y-coordinate of the spatial grid corresponding to the given udata
+        ... it does not have to ve equally spaced
+    z: numpy array
+        z-coordinate of the spatial grid corresponding to the given udata
+        ... it does not have to ve equally spaced
+    indices: array-like, default: (1, 1)
+        ... tensor indices of the structure function tensor: D_{i,j,..., k}
+        ... indices=(1,1) corresponds to D_{xx}.
+        ... For a 3D spatial field, x, y, z corresponds to 1, 0, 2 respectively. Recall udata.shape = (height, width, depth, duration)
+        ... For a 2D spatial field, x, y corresponds to 1, 0 respectively. Recall udata.shape = (height, width, duration)
+    roll_axis: int
+        "u" and "roll_axis" determines whether this method returns the longitudinal or transverse structure function
+        If you want longitudinal, match "u" and "roll_axis". e.g.- u='ux' and roll_axis=1, u='uy' and roll_axis=0
+        If you want transverse, do not match "u" and "roll_axis". e.g.- u='ux' and roll_axis=0, u='uy' and roll_axis=1
+    n_bins: int, default=None
+        number of bins used to take a histogram of velocity difference
+    nu: float
+        viscosity
+    u: str, default='ux'
+        velocity component used to compute the structure functions. Choices are 'ux', 'uy', 'uz'
+    x0: int, default: 0
+        Specified the region of udata to compute the structure function.
+        This method uses only udata[y0:y1, x0:x1, z0:z1, t0:t1].
+    x1: int, default: None
+        This method uses only udata[y0:y1, x0:x1, z0:z1, t0:t1].
+    y0: int, default: 0
+        This method uses only udata[y0:y1, x0:x1, z0:z1, t0:t1].
+    y1 int, default: None
+        This method uses only udata[y0:y1, x0:x1, z0:z1, t0:t1].
+    z0: int, default: 0
+        This method uses only udata[y0:y1, x0:x1, z0:z1, t0:t1].
+    z1 int, default: None
+        This method uses only udata[y0:y1, x0:x1, z0:z1, t0:t1].
+    t0: int, default: 0
+        This method uses only udata[y0:y1, x0:x1, z0:z1, t0:t1].
+    t1 int, default: None
+        This method uses only udata[y0:y1, x0:x1, z0:z1, t0:t1].
+    coarse: float, (0, 1], default: 1
+        the first parameter to save computation time related to sampling frequency
+        ... The higher "coarse" is, it samples more possible data points.
+        ... If "coarse" == 1, it samples all possible data points.
+        ... If "coarse" == 0.5, it samples only a half of possible data points.
+    coarse2: float, (0, 1], default: 0.2
+        the second parameter to save computation time related to making a histogram
+        ... Determines how many sampled data points to be used to make a histogram
+        ... If "coarse" == 1, it uses all data points to make a histogram.
+        ... If "coarse" == 0.5, it uses only a half of data points to make a histogram
+    notebook: bool
+        ... if True, it uses tqdm.tqdm_notebook instead of tqdm.tqdm
+
+    Returns
+    -------
+    rrs: numpy array
+        two-point separation distance for the structure function
+    Dxxs: numpy array
+        values of the structure function
+    Dxx_errs: numpy array
+        error of the structure function
+    rrs_scaled: numpy array
+        two-point separation distance for the SCALED structure function
+    Dxxs_scaled: numpy array
+        values of the SCALED structure function
+    Dxx_errs_scaled: numpy array
+        error of the SCALED structure function
+    """
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+        print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+    else:
+        from tqdm import tqdm
+
+    # Array sorting
+    def sort2arr(arr1, arr2):
+        """
+        Sort arr1 and arr2 using the order of arr1
+        e.g. a=[2,1,3], b=[9,1,4] -> a[1,2,3], b=[1,9,4]
+        Parameters
+        ----------
+        arr1
+        arr2
+
+        Returns
+        -------
+        Sorted arr1, and Sorted arr2
+
+        """
+        arr1, arr2 = list(zip(*sorted(zip(arr1, arr2))))
+        return arr1, arr2
+
+
+    # tensor indices
+    def fix_tensor_indices(tensor_indices):
+        """
+        Ensures that the given "tensor_indices" is a tuple of integers which correspond to the right directions
+
+        Parameters
+        ----------
+        tensor_indices: tuple of integers or strings
+
+        Returns
+        -------
+        tensor_indices_int: tuple of integers
+        """
+        fixer = {'x': 0, 'y': 1, 'z': 2, 0: 0, 1: 1, 2: 2}
+        tensor_indices_int = list(fixer[index] for index in tensor_indices)
+        return tensor_indices_int
+
+    def translate_tensor_indices(tensor_indices):
+        """
+        Returns the name of the axis that tensor indices refer to
+
+        Parameters
+        ----------
+        tensor_indices: tuple of integers or strings
+
+        Returns
+        -------
+        tensor_indices_str: str
+        """
+        translator = {'x': 'x', 'y': 'y', 'z': 'z', 0: 'x', 1: 'y', 2: 'z'}
+        tensor_indices_str = ''
+        tensor_indices_str = tensor_indices_str.join([translator[index] for index in tensor_indices])
+        return tensor_indices_str
+
+    def translate_roll_axis(roll_axis):
+        """
+        Returns the name of axis corresponding to "roll_axis"
+        Parameters
+        ----------
+        roll_axis: int
+
+        Returns
+        -------
+        str, name of the axis corresponding to "roll_axis"
+
+        """
+        translator = {1: 'x', 0: 'y', 2: 'z'}
+        return translator[roll_axis]
+
+
+    dim = len(udata)
+
+
+    if x1 is None:
+        x1 = udata[0, ...].shape[1]
+    if y1 is None:
+        y1 = udata[0, ...].shape[0]
+    if x1 < 0:
+        x1 = udata[0, ...].shape[1] - x1
+    if y1 < 0:
+        y1 = udata[0, ...].shape[0] - y1
+
+    tensor_indices = fix_tensor_indices(indices)
+    tensor_indices_str = translate_tensor_indices(indices)
+    roll_axis_str = translate_roll_axis(roll_axis)
+    print('... Computing D_{%s}(r \hat{%s})' % (tensor_indices_str, roll_axis_str))
+
+    # order of structure function tensor: p
+    p = float(len(indices))
+
+    # Some useful numbers for processing
+    nrows, ncolumns = y1 - y0, x1 - x0
+    limits = [ncolumns, nrows]
+    if dim == 3:
+        if z1 is None:
+            z1 = udata[0, ...].shape[2]
+        nsteps =  z1 - z0
+        limits = [ncolumns, nrows, nsteps]
+    if t1 is None:
+        t1 = udata[0, ...].shape[-1]
+
+    # Number of bins- if this is too small, correlation length would be overestimated. Keep it around ncolumns
+    if n_bins is None:
+        n_bins = int(max(limits) * coarse)
+
+    # Use a portion of data
+    if dim == 3:
+        z_grid, y_grid, x_grid = z[y0:y1, x0:x1, z0:z1], y[y0:y1, x0:x1, z0:z1], x[y0:y1, x0:x1, z0:z1]
+        udatai = udata[:, y0:y1, x0:x1, z0:z1, :]
+    elif dim == 2:
+        y_grid, x_grid = y[y0:y1, x0:x1], x[y0:y1, x0:x1]
+        udatai = udata[:, y0:y1, x0:x1, :]
+
+    # Initialization
+    rrs, Dijks, Dijk_errs = np.zeros((n_bins, t1 - t0)), np.ones((n_bins, t1 - t0)), np.zeros((n_bins, t1 - t0))
+
+    for t in tqdm(list(range(t0, t1)), desc='struc. func. time'):
+        # Initialization
+        ## m: number of rolls it tries. coarse is a parameter to sample different rs evenly
+        #### coarse=1: Compute DLL(r,t) for all possible r. if coarse=0.5, it samples only a half of possible rs.
+        ## n: number of data points from which DLL statistics is computed.
+        #### coarse2=1: use all data points. (e.g. for 1024*1024 grid, use 1024*1024*coarse2 data points)
+        roll_indices = list(range(0, limits[roll_axis], int(1./coarse)))
+        m = len(roll_indices)
+        n = int(x_grid.size * coarse2)
+
+        rr = np.empty((n, m))
+        Dijk = np.empty((n, m))
+
+        for j, i in enumerate(roll_indices):
+            # for i in range(int(coarse * limits[roll_axis])):
+            if dim == 3:
+                x_grid_rolled, y_grid_rolled, z_grid_rolled = np.roll(x_grid, i, axis=roll_axis), \
+                                                          np.roll(y_grid, i, axis=roll_axis), \
+                                                          np.roll(z_grid, i, axis=roll_axis)
+                r_grid = np.sqrt( (x_grid_rolled - x_grid) ** 2 + (y_grid_rolled - y_grid) ** 2 + (z_grid_rolled - z_grid) ** 2)
+            elif dim == 2:
+                x_grid_rolled, y_grid_rolled = np.roll(x_grid, i, axis=roll_axis), np.roll(y_grid, i, axis=roll_axis)
+                r_grid = np.sqrt( (x_grid_rolled - x_grid) ** 2 + (y_grid_rolled - y_grid) ** 2)
+
+            Dijk_raw = np.ones_like(udata[0, ..., t])
+            for tensor_index in tensor_indices:
+                uu = udatai[tensor_index, ..., t]
+                uu_rolled = np.roll(uu, i, axis=roll_axis)
+                Dijk_raw *= (uu_rolled - uu)
+            rr[:, j] = r_grid.flatten()[:n]
+            Dijk[:, j] = Dijk_raw.flatten()[:n]
+
+        # flatten arrays to feed to binned_statistic
+        rr_flatten, Dijk_flatten = rr.flatten(), Dijk.flatten()
+        # Nans are not handled very well in binned_statistic
+        # Get rid of nans from rr_flatten and Dxx_flatten
+        mask = ~np.isnan(Dijk_flatten)
+        rr_flatten, Dijk_flatten = rr_flatten[mask], Dijk_flatten[mask]
+
+        # get a histogram
+        # rr_, _, _ = binned_statistic(rr_raw, rr_raw, statistic='mean', bins=n_bins)
+        rr_means, rr_edges, binnumber = binned_statistic(rr_flatten, rr_flatten, statistic='mean', bins=n_bins)
+        Dijk_, _, _ = binned_statistic(rr_flatten, Dijk_flatten, statistic='mean', bins=n_bins)
+        Dijk_err_, _, _ = binned_statistic(rr_flatten, Dijk_flatten, statistic='std', bins=n_bins)
+        rr_binwidth = (rr_edges[1] - rr_edges[0])
+        rr_ = rr_edges[1:] - rr_binwidth / 2.
+
+        # This is faster?
+        _, Dijks[:, t] = sort2arr(rr_, Dijk_)
+        rrs[:, t], Dijk_errs[:, t] = sort2arr(rr_, Dijk_err_)
+
+    # Also return scaled results
+    if dim == 3:
+        dx, dy, dz = x[0, 1, 0] - x[0, 0, 0], y[1, 0, 0] - y[0, 0, 0], z[0, 0, 1] - z[0, 0, 0]
+    elif dim == 2:
+        dx, dy = x[0, 1] - x[0, 0], y[1, 0] - y[0, 0]
+        dz = None
+    epsilon = get_epsilon_using_sij(udata, dx=dx, dy=dy, dz=dz, nu=nu, t0=t0, t1=t1)
+    eta = (nu ** 3 / epsilon) ** 0.25
+    rrs_scaled = rrs / eta
+    Dijks_scaled = Dijks / ((epsilon * rrs) ** (float(p) / 3.))
+    Dijk_errs_scaled = Dijk_errs / ((epsilon * rrs) ** (float(p) / 3.))
+
+    if notebook:
+        from tqdm import tqdm as tqdm
+    return rrs, Dijks, Dijk_errs, rrs_scaled, Dijks_scaled, Dijk_errs_scaled
+
 
 def scale_raw_structure_funciton_long(rrs, Dxxs, Dxx_errs, epsilon, nu=1.004, p=2):
     """
@@ -2667,10 +3060,20 @@ def scale_raw_structure_funciton_long(rrs, Dxxs, Dxx_errs, epsilon, nu=1.004, p=
     Dxx_errs_s: numpy array
         Scaled DLL error
     """
-    Dxxs_s = Dxxs / (epsilon * rrs) ** (p / 3.)
-    Dxx_errs_s = Dxx_errs / (epsilon * rrs) ** (p / 3.)
+    if type(epsilon) == list:
+        epsilon = np.asarray(epsilon)
+
     eta = compute_kolmogorov_lengthscale_simple(epsilon, nu)
-    rrs_s = rrs / eta
+    if type(epsilon) == np.ndarray:
+        Dxxs_s, Dxx_errs_s, rrs_s = np.empty_like(Dxxs), np.empty_like(Dxxs), np.empty_like(Dxxs)
+        for t in list(range(len(epsilon))):
+            Dxxs_s[:, t] = Dxxs[:, t]  / (epsilon[t]  * rrs[:, t] ) ** (p / 3.)
+            Dxx_errs_s[:, t]  = Dxx_errs[:, t]  / (epsilon[t]  * rrs[:, t] ) ** (p / 3.)
+            rrs_s[:, t] = rrs[:, t] / eta[t]
+    else:
+        Dxxs_s = Dxxs / (epsilon * rrs) ** (p / 3.)
+        Dxx_errs_s = Dxx_errs / (epsilon * rrs) ** (p / 3.)
+        rrs_s = rrs / eta
     return rrs_s, Dxxs_s, Dxx_errs_s
 
 ########## Length scales ##########
@@ -2750,7 +3153,6 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.015, d
     lambda_g: numpy 2d array with shape (duration, )
         Transverse Taylor microscale
     """
-
     def compute_lambda_from_autocorr_func(r, g, deg=2):
         """
         Parameters
@@ -2795,44 +3197,47 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.015, d
         r_long_tmp, f_long_tmp = remove_nans_for_array_pair(r_long[:, t], f_long[:, t])
         r_tran_tmp, g_tran_tmp = remove_nans_for_array_pair(r_tran[:, t], g_tran[:, t])
 
-        # Make sure that f(r=0, t)=g(r=0,t)=1
-        f_long_tmp /= f_long_tmp[0]
-        g_tran_tmp /= g_tran_tmp[0]
+        if len(f_long_tmp) == 0 or len(g_tran_tmp) == 0:
+            lambda_f.append(np.nan)
+            lambda_g.append(np.nan)
+            lambda_err_f.append(np.nan)
+            lambda_err_g.append(np.nan)
+        else:
+            # Make sure that f(r=0, t)=g(r=0,t)=1
+            f_long_tmp /= f_long_tmp[0]
+            g_tran_tmp /= g_tran_tmp[0]
 
-        # f_long_tmp = np.interp(r_long[:, t], r_long_tmp, f_long_tmp)
-        # g_tran_tmp = np.interp(r_tran[:, t], r_tran_tmp, g_tran_tmp)
+            lambdafs, lambdags = [], []
+            residuals_f, residuals_g = [], []
+            # Extract lambda from autocorrelation functions (long. and trans.)
+            for n in range(npt_min, len(f_long_tmp)):
+                lambda_f_tmp, residual_f = compute_lambda_from_autocorr_func(r_long_tmp[:n], f_long_tmp[:n], deg=deg)
+                if len(residual_f) == 0:
+                    residual_f = 0
+                else:
+                    residual_f = residual_f[0]
 
-        lambdafs, lambdags = [], []
-        residuals_f, residuals_g = [], []
-        for n in range(npt_min, len(f_long_tmp)):
-            lambda_f_tmp, residual_f = compute_lambda_from_autocorr_func(r_long_tmp[:n], f_long_tmp[:n], deg=deg)
-            if len(residual_f) == 0:
-                residual_f = 0
-            else:
-                residual_f = residual_f[0]
-
-            if residual_f < residual_thd:
-                lambdafs.append(lambda_f_tmp)
-                residuals_f.append(residual_f)
-            else:
-                break
-        for n in range(npt_min, len(g_tran_tmp)):
-            lambda_g_tmp, residual_g = compute_lambda_from_autocorr_func(r_tran_tmp[:n], g_tran_tmp[:n], deg=deg)
-            if len(residual_g) == 0:
-                residual_g = 0
-            else:
-                residual_g = residual_g[0]
-            if residual_g < residual_thd:
-                lambdags.append(lambda_g_tmp)
-                residuals_g.append(residual_g)
-            else:
-                break
-
-
-        lambda_f.append(np.nanmean(lambdafs))
-        lambda_g.append(np.nanmean(lambdags))
-        lambda_err_f.append(np.nanstd(lambdafs))
-        lambda_err_g.append(np.nanstd(lambdags))
+                if residual_f < residual_thd:
+                    lambdafs.append(lambda_f_tmp)
+                    residuals_f.append(residual_f)
+                else:
+                    break
+            for n in range(npt_min, len(g_tran_tmp)):
+                lambda_g_tmp, residual_g = compute_lambda_from_autocorr_func(r_tran_tmp[:n], g_tran_tmp[:n], deg=deg)
+                if len(residual_g) == 0:
+                    residual_g = 0
+                else:
+                    residual_g = residual_g[0]
+                if residual_g < residual_thd:
+                    lambdags.append(lambda_g_tmp)
+                    residuals_g.append(residual_g)
+                else:
+                    break
+            # Insert lambdas to lists
+            lambda_f.append(np.nanmean(lambdafs))
+            lambda_g.append(np.nanmean(lambdags))
+            lambda_err_f.append(np.nanstd(lambdafs))
+            lambda_err_g.append(np.nanstd(lambdags))
 
     if not return_err:
         return np.asarray(lambda_f), np.asarray(lambda_g)
@@ -2917,17 +3322,22 @@ def get_integral_scales(r_long, f_long, r_tran, g_tran, method='trapz'):
     # interpolate data (3rd order spline)
     L11, L22 = [], []
     for t in range(duration):
+        # hide np.nans from the arrays
+        cond1, cond2 = ~np.isnan(f_long[:, t]), ~np.isnan(r_long[:, t])
+        mask = cond1 * cond2
+        # quadrature
         if method=='quad':
             rmin, rmax = np.nanmin(r_long), np.nanmax(r_long)
-            f_spl = UnivariateSpline(r_long[:, t], f_long[:, t] / f_long[0, t], s=0,
+            f_spl = UnivariateSpline(r_long[mask, t], f_long[mask, t] / f_long[0, t], s=0,
                                      k=3)  # longitudinal autocorrelation func.
-            g_spl = UnivariateSpline(r_tran[:, t], g_tran[:, t] / g_tran[0, t], s=0,
+            g_spl = UnivariateSpline(r_tran[mask, t], g_tran[mask, t] / g_tran[0, t], s=0,
                                      k=3)  # transverse autocorrelation func.
             L11.append(integrate.quad(lambda r: f_spl(r), rmin, rmax)[0])
             L22.append(integrate.quad(lambda r: g_spl(r), rmin, rmax)[0])
+        # trapezoidal
         elif method=='trapz':
-            L11.append(np.trapz(f_long[:, t], r_long[:, t]))
-            L22.append(np.trapz(g_tran[:, t], r_tran[:, t]))
+            L11.append(np.trapz(f_long[mask, t], r_long[mask, t]))
+            L22.append(np.trapz(g_tran[mask, t], r_tran[mask, t]))
     return L11, L22
 
 # Integral scales 2: using autocorrelation tensor. Should be equivalent to get_integral_scales()
@@ -3124,6 +3534,33 @@ def get_taylor_microscales_all(udata, r_long, f_long, r_tran, g_tran):
     return lambda_g, u_lambda, tau_lambda
 
 
+def get_taylor_microscales_all_iso(udata, epsilon, nu=1.004):
+    """
+    Returns Taylor microscales using isotropic formulae
+    Parameters
+    ----------
+    udata: numpy array
+        velocity field array
+    epsilon: numpy array
+        disspation rate
+    nu: numpy array
+        viscosity
+
+    Returns
+    -------
+    lambda_f_iso: 1d array
+        Taylor microscale (length)
+    u_lambda_iso: 1d array
+        Taylor microscale (velocity)
+    tau_lambda_iso: 1d array
+        Taylor microscale (time)
+    """
+    lambda_f_iso, lambda_g_iso = get_taylor_microscales_iso(udata, epsilon, nu=nu)
+    u_lambda_iso = get_characteristic_velocity(udata) # u_irms = u_lambda
+    tau_lambda_iso = lambda_g_iso / u_lambda_iso # other way to define the time scale is through temporal autocorrelation
+    return lambda_g_iso, u_lambda_iso, tau_lambda_iso
+
+
 def get_kolmogorov_scales_all(udata, dx, dy, dz, nu=1.004):
     """
     Returns Kolmogorov scales
@@ -3176,7 +3613,7 @@ def get_turbulence_re(udata, dx, dy, dz=None,  nu=1.004):
     Re_L: numpy array
         Turbulence Reynolds number
     """
-    L, u_L, tau_L = get_integral_scales_all(udata, dx, dy, dz,  nu=nu)
+    L, u_L, tau_L = get_integral_scales_all(udata, dx, dy, dz, nu=nu)
     Re_L = u_L * L / nu
     return Re_L
 
@@ -3208,6 +3645,135 @@ def get_taylor_re(udata, r_long, f_long, r_tran, g_tran, nu=1.004):
     lambda_g, u_irms, tau_lambda = get_taylor_microscales_all(udata, r_long, f_long, r_tran, g_tran)
     Re_lambda = u_irms * lambda_g / nu
     return Re_lambda
+
+def get_taylor_re_iso(udata, epsilon, nu=1.004):
+    """
+    Returns Taylor reynolds number (Pope 6.63) using isotropic formulae
+
+    Parameters
+    ----------
+    udata: numpy array
+        velocity field array
+    epsilon: numpy array
+        disspation rate
+    nu: numpy array
+        viscosity
+
+    Returns
+    -------
+    Re_lambda_iso: array
+        Taylor Reynolds number
+    """
+
+    lambda_g_iso, u_irms_iso, tau_lambda_iso = get_taylor_microscales_all_iso(udata, epsilon, nu=nu)
+    Re_lambda_iso = u_irms_iso * lambda_g_iso / nu
+    return Re_lambda_iso
+
+
+
+# SKEWNESS AND KUTROSIS
+def get_skewness(udata, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None):
+    """
+    Computes skewness of a given velocity field
+    ... DO NOT USE scipy.stats.skew()- which computes skewness in the language of probability
+    ... i.e. probabilistic skewness is defined through its probabilistic moments (X-E[X])^n
+    ... In turbulence, skewnesss is defined using the DERIVATIVES of turbulent velocity
+    ... In turbulence, skewness is approximately -0.4 according to experiments
+
+    Parameters
+    ----------
+    udata
+    x0
+    x1
+    y0
+    y1
+    z0
+    z1
+    t0
+    t1
+
+    Returns
+    -------
+    skewness: 1d array
+    """
+    if x1 is None:
+        x1 = udata[0].shape[1]
+    if y1 is None:
+        y1 = udata[0].shape[0]
+
+    udata = fix_udata_shape(udata)
+    dim = len(udata)
+
+    if dim==2:
+        udata = udata[:, y0:y1, x0:x1, t0:t1]
+    elif dim == 3:
+        if z1 is None:
+            z1 = udata[0].shape[2]
+            udata = udata[:, y0:y1, x0:x1, z0:z1, t0:t1]
+    if dim==2:
+        duxdx = np.gradient(udata[0], axis=1)
+        duydy = np.gradient(udata[1], axis=0)
+        m3 = np.nanmean(duxdx ** 3 + duydy **3, axis=(0, 1))
+        m2 = np.nanmean(duxdx ** 2 + duydy **2, axis=(0, 1))
+    elif dim==3:
+        duxdx = np.gradient(udata[0], axis=1)
+        duydy = np.gradient(udata[1], axis=0)
+        duzdz = np.gradient(udata[2], axis=2)
+        m3 = np.nanmean(duxdx ** 3 + duydy **3 + duzdz **3, axis=(0, 1, 2))
+        m2 = np.nanmean(duxdx ** 2 + duydy **2 + duzdz **2, axis=(0, 1, 2))
+    skewness = m3 / m2**1.5
+    return skewness
+
+def get_kurtosis(udata, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None):
+    """
+    Computes kurtosis of a given velocity field
+    ... DO NOT USE scipy.stats.kurtosis()- which computes skewness in the language of probability
+    ... i.e. probabilistic skewness is defined through its probabilistic moments (X-E[X])^n
+    ... In turbulence, kurotsis is defined using the DERIVATIVES of turbulent velocity
+    ... In turbulence, skekurotsiswness is approximately 7.2 according to experiments
+    Parameters
+    ----------
+    udata
+    x0
+    x1
+    y0
+    y1
+    z0
+    z1
+    t0
+    t1
+
+    Returns
+    -------
+    kurtosis: 1d array
+    """
+    if x1 is None:
+        x1 = udata[0].shape[1]
+    if y1 is None:
+        y1 = udata[0].shape[0]
+
+    udata = fix_udata_shape(udata)
+    dim = len(udata)
+
+    if dim==2:
+        udata = udata[:, y0:y1, x0:x1, t0:t1]
+    elif dim == 3:
+        if z1 is None:
+            z1 = udata[0].shape[2]
+            udata = udata[:, y0:y1, x0:x1, z0:z1, t0:t1]
+    if dim==2:
+        duxdux = np.gradient(udata[0], axis=1)
+        duyduy = np.gradient(udata[1], axis=0)
+        m4 = np.nanmean(duxdux ** 4 + duyduy **4, axis=(0,1))
+        m2 = np.nanmean(duxdux ** 2 + duyduy **2, axis=(0,1))
+    elif dim==3:
+        duxdux = np.gradient(udata[0], axis=1)
+        duyduy = np.gradient(udata[1], axis=0)
+        duzduz = np.gradient(udata[2], axis=2)
+        m4 = np.nanmean(duxdux ** 4 + duyduy **4 + duzduz **4, axis=(0,1,2))
+        m2 = np.nanmean(duxdux ** 2 + duyduy **2 + duzduz **2, axis=(0,1,2))
+    kurtosis = m4 / m2**2
+    return kurtosis
 
 
 ########## Sample velocity field ##########
@@ -3309,7 +3875,7 @@ def get_sample_turb_field_3d(return_coord=True):
     # get module location
     mod_loc = os.path.abspath(__file__)
     pdir, filename = os.path.split(mod_loc)
-    datapath = os.path.join(pdir, 'reference_data/isoturb_slice2.h5')
+    datapath = os.path.join(pdir, 'velocity_ref/isoturb_slice2.h5')
     data = h5py.File(datapath, 'r')
 
     keys = list(data.keys())
@@ -3320,7 +3886,7 @@ def get_sample_turb_field_3d(return_coord=True):
     udata = np.empty((ncomp, height, width, depth, duration))
 
     Lx, Ly, Lz = 2 * np.pi, 2 * np.pi, 2 * np.pi
-    dx = dy = dz = Lx / 1023
+    dx = dy = dz = Lx / 1024
 
     for t in range(duration):
         udata_tmp = data[keys_u[t]]
@@ -3366,7 +3932,7 @@ def get_energy_spectra_jhtd():
         data stored in jhtd_e_specs.h5 is stored: k, ek
     """
     faqm_dir = os.path.split(os.path.realpath(__file__))[0]
-    datapath = faqm_dir + '/reference_data/jhtd_e_specs.h5'
+    datapath = faqm_dir + '/velocity_ref/jhtd_e_specs.h5'
 
     datadict = {}
     with h5py.File(datapath, 'r') as data:
@@ -3389,7 +3955,7 @@ def get_rescaled_energy_spectra_jhtd():
         data stored in jhtd_e_specs.h5 is stored: Scaled k, Scaled ek
     """
     faqm_dir = os.path.split(os.path.realpath(__file__))[0]
-    datapath = faqm_dir + '/reference_data/jhtd_e_specs.h5'
+    datapath = faqm_dir + '/velocity_ref/jhtd_e_specs.h5'
 
     datadict = {}
     with h5py.File(datapath, 'r') as data:
@@ -3417,8 +3983,8 @@ def get_rescaled_structure_function_saddoughi(p=2):
     """
     tflow_dir = os.path.split(os.path.realpath(__file__))[0]
     if p==2:
-        datapath = tflow_dir + '/reference_data/sv_struc_func.h5'
-        # datapath = tflow_dir + '/reference_data/sv_struc_func.txt'
+        datapath = tflow_dir + '/velocity_ref/sv_struc_func.h5'
+        # datapath = tflow_dir + '/velocity_ref/sv_struc_func.txt'
         # data = np.loadtxt(datapath, skiprows=1, delimiter=',')
         # r_scaled, dll = data[:, 0], data[:, 1]
         with h5py.File(datapath, 'r') as ff:
@@ -3682,7 +4248,7 @@ def clean_udata_cheap(udata, cutoffU=2000, fill_value=np.nan, verbose=True):
     mask = get_mask_for_unphysical(udata[1, ...], cutoffU=cutoffU, fill_value=fill_value, verbose=verbose)
     Uy_filled_with_nans = fill_unphysical_with_sth(udata[1, ...], mask, fill_value=fill_value)
     Uy_interpolated = interpolate_using_mask(Uy_filled_with_nans, mask)
-    udata_cleaned[1, ...]= Uy_interpolated[:]
+    udata_cleaned[1, ...] = Uy_interpolated[:]
     print('...Cleaning Done.')
     return udata_cleaned
 
@@ -3816,7 +4382,6 @@ def clean_udata(udata, xx, yy, cutoffU=2000, fill_value=np.nan, verbose=True, me
 
     return udata_i
 
-
 # plotting usual stuff
 def plot_energy_spectra(udata, dx, dy, dz=None, x0=0, x1=None, y0=0, y1=None, window='flattop', epsilon_guess=10**5, nu=1.004, label='',
                             plot_e22=False, plot_ek=False, fignum=1, t0=0, legend=True, loc=3):
@@ -3856,7 +4421,7 @@ def plot_energy_spectra(udata, dx, dy, dz=None, x0=0, x1=None, y0=0, y1=None, wi
               'axes.titlesize': __fontsize__,
               'xtick.labelsize': __fontsize__,  # tick
               'ytick.labelsize': __fontsize__,
-              'lines.linewidth': 5,
+              'lines.linewidth': 8,
               'axes.titlepad': 10}
     graph.update_figure_params(params)
 
@@ -3974,8 +4539,6 @@ def plot_energy_spectra_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=None, 
                                          label='$\\frac{1}{2} \langle U_i   U_i \\rangle$ ($mm^2/s^2$)',
                                          vmin=0, vmax=10 ** 4.8, fignum=1, subplot=131)
     graph.draw_box(ax1, xx, yy, yoffset=yoffset_box, sb_txtloc=sb_txtloc)
-    print(xx[y0, x1])
-    print(np.abs(xx[y0, x1]-xx[y0, x0]), np.abs(yy[y1, x0]-yy[y0, x0]))
     graph.draw_rectangle(ax1, xx[y0, x0], yy[y0, x0], np.abs(xx[y0, x1]-xx[y0, x0]), np.abs(yy[y1, x0]-yy[y0, x0]), edgecolor='C0', linewidth=5)
 
     # Coompute energy spectra
@@ -4028,8 +4591,11 @@ def plot_energy_spectra_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=None, 
 
 def plot_energy_spectra_avg_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=None, y0=0, y1=None, window='flattop',
                                          epsilon_guess=10 ** 5, nu=1.004, label='',
-                                         plot_e22=False, plot_ek=False, fignum=1, legend=True, loc=3,
-                                         crop_edges=5, yoffset_box=20, sb_txtloc=(-0.1, 0.4)):
+                                         plot_e11=False, plot_e22=False, plot_ek=False, plot_kol=False, plot_sv=True,
+                                         color_ref='k', alpha_ref=0.6,
+                                         fignum=1, legend=True, loc=3,
+                                         crop_edges=5, yoffset_box=20, sb_txtloc=(-0.1, 0.4), errorfill=True,
+                                        figparams=None):
     """
     A method to quickly plot the energy spectra (Time-averaged) and time-averaged energy
 
@@ -4061,18 +4627,22 @@ def plot_energy_spectra_avg_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=No
     -------
 
     """
-    __fontsize__ = 25
-    __figsize__ = (24, 8)
-    # See all available arguments in matplotlibrc
-    params = {'figure.figsize': __figsize__,
-              'font.size': __fontsize__,  # text
-              'legend.fontsize': 18,  # legend
-              'axes.labelsize': __fontsize__,  # axes
-              'axes.titlesize': __fontsize__,
-              'xtick.labelsize': __fontsize__,  # tick
-              'ytick.labelsize': __fontsize__,
-              'lines.linewidth': 5,
-              'axes.titlepad': 10}
+    if figparams is None:
+        __fontsize__ = 25
+        __figsize__ = (24, 8)
+        # See all available arguments in matplotlibrc
+        params = {'figure.figsize': __figsize__,
+                  'font.size': __fontsize__,  # text
+                  'legend.fontsize': 18,  # legend
+                  'axes.labelsize': __fontsize__,  # axes
+                  'axes.titlesize': __fontsize__,
+                  'xtick.labelsize': __fontsize__,  # tick
+                  'ytick.labelsize': __fontsize__,
+                  'lines.linewidth': 5,
+                  'axes.titlepad': 10
+                  }
+    else:
+        params = figparams
     graph.update_figure_params(params)
 
     dim = udata.shape[0]
@@ -4095,33 +4665,43 @@ def plot_energy_spectra_avg_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=No
     # Coompute energy spectra
     eiis_raw, err, k11 = get_1d_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
     eiis = np.nanmean(eiis_raw, axis=2)
-    eii_errs = np.nanstd(eiis_raw, axis=2)
+    eii_errs = np.nanstd(eiis_raw, axis=2)/2.
     if epsilon_guess is not None:
         e11_s, k11_s = scale_energy_spectrum(eiis_raw[0, ...], k11, epsilon=epsilon_guess, nu=nu)
         e22_s, k22_s = scale_energy_spectrum(eiis_raw[1, ...], k11, epsilon=epsilon_guess, nu=nu)
         eiis_s = np.stack((np.nanmean(e11_s, axis=1), np.nanmean(e22_s, axis=1)))
-        eii_errs_s = np.stack((np.nanstd(e11_s, axis=1), np.nanstd(e22_s, axis=1)))
+        eii_errs_s = np.stack((np.nanstd(e11_s, axis=1), np.nanstd(e22_s, axis=1)))/2.
         epsilon = epsilon_guess
     else:
         eiis_s_raw, _, k11_s = get_1d_rescaled_energy_spectrum(udata, dx=dx, dy=dy, dz=dz, nu=nu)
         eiis_s = np.nanmean(eiis_s_raw, axis=2)
         eii_errs_s = np.nanstd(eiis_s_raw, axis=2)
         epsilon = np.nanmean(get_epsilon_using_sij(udata, dx, dy, dz, nu=nu))
-    fig1, ax2 = graph.plot(k11[1:], kolmogorov_53_uni(k11[1:], epsilon, c=0.5),
-                           label='$C_1\epsilon^{2/3}\kappa^{-5/3}$', fignum=1, subplot=132, color='k')
-    fig1, ax3 = graph.plot_saddoughi(fignum=fignum, subplot=133, color='k', label='Scaled $E_{11}$ (SV 1994)')
-
-    # fig1, ax2 = graph.plot(k11[1:], eiis[0, 1:], label='$E_{11}$' + label, fignum=1, subplot=132)
-    # fig1, ax3 = graph.plot(k11_s[1:], eiis_s[0, 1:], label='Scaled $E_{11}$' + label, fignum=1, subplot=133)
-    fig1, ax2, _ = graph.errorfill(k11[1:], eiis[0, 1:], eii_errs[0, 1:], label='$E_{11}$' + label, fignum=1, subplot=132)
-    fig1, ax3, _ = graph.errorfill(k11_s[1:], eiis_s[0, 1:], eii_errs_s[0, 1:], label='Scaled $E_{11}$' + label, fignum=1, subplot=133)
+    if plot_kol:
+        fig1, ax2 = graph.plot(k11[1:], kolmogorov_53_uni(k11[1:], epsilon, c=0.5),
+                               label='$C_1\epsilon^{2/3}\kappa^{-5/3}$',
+                               fignum=1, subplot=132,
+                               color=color_ref, alpha=alpha_ref, lw=params['lines.linewidth']*0.6)
+    if plot_sv:
+        fig1, ax3 = graph.plot_saddoughi(fignum=fignum, subplot=133,
+                                         color=color_ref, alpha=alpha_ref, lw=params['lines.linewidth']*0.6,
+                                         label='Scaled $E_{11}$ (SV 1994)')
+    if plot_e11:
+        if not errorfill:
+            fig1, ax2 = graph.plot(k11[1:], eiis[0, 1:], label='$E_{11}$' + label, fignum=1, subplot=132, linewidth=10)
+            fig1, ax3 = graph.plot(k11_s[1:], eiis_s[0, 1:], label='Scaled $E_{11}$' + label, fignum=1, subplot=133, linewidth=10)
+        else:
+            fig1, ax2, _ = graph.errorfill(k11[1:], eiis[0, 1:], eii_errs[0, 1:], label='$E_{11}$' + label, fignum=1, subplot=132)
+            fig1, ax3, _ = graph.errorfill(k11_s[1:], eiis_s[0, 1:], eii_errs_s[0, 1:], label='Scaled $E_{11}$' + label, fignum=1, subplot=133)
 
 
     if plot_e22:
-        # fig1, ax2 = graph.plot(k11[1:], eiis[1, 1:], label='$E_{22}$' + label, fignum=1, subplot=132)
-        # fig1, ax3 = graph.plot(k11_s[1:], eiis_s[1, 1:], label='Scaled $E_{22}$' + label, fignum=1, subplot=133)
-        fig1, ax2, _ = graph.errorfill(k11[1:], eiis[1, 1:], eii_errs[1, 1:],label='$E_{22}$' + label, fignum=1, subplot=132)
-        fig1, ax3, _ = graph.errorfill(k11_s[1:], eiis_s[1, 1:], eii_errs_s[1, 1:],label='Scaled $E_{22}$' + label, fignum=1, subplot=133)
+        if not errorfill:
+            fig1, ax2 = graph.plot(k11[1:], eiis[1, 1:], label='$E_{22}$' + label, fignum=1, subplot=132)
+            fig1, ax3 = graph.plot(k11_s[1:], eiis_s[1, 1:], label='Scaled $E_{22}$' + label, fignum=1, subplot=133)
+        else:
+            fig1, ax2, _ = graph.errorfill(k11[1:], eiis[1, 1:], eii_errs[1, 1:],label='$E_{22}$' + label, fignum=1, subplot=132)
+            fig1, ax3, _ = graph.errorfill(k11_s[1:], eiis_s[1, 1:], eii_errs_s[1, 1:],label='Scaled $E_{22}$' + label, fignum=1, subplot=133)
         ax2_ylabel = ax2_ylabel[:-13] + ', $E_{22}$ ($mm^3/s^2$)'
         ax3_ylabel = ax3_ylabel + ', $E_{22} / (\epsilon\\nu^5)^{1/4}$'
 
@@ -4131,10 +4711,12 @@ def plot_energy_spectra_avg_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=No
 
         ek, ek_s = np.nanmean(ek_raw, axis=1), np.nanmean(ek_s_raw, axis=1)
         ek_err, ek_s_err = np.nanstd(ek_raw, axis=1), np.nanstd(ek_s_raw, axis=1)
-        # fig1, ax2 = graph.plot(kk[:, 0], ek, label='$E$' + label, fignum=1, subplot=132)
-        # fig1, ax3 = graph.plot(kk_s[:, 0], ek_s, label='Scaled $E$' + label, fignum=1, subplot=133)
-        fig1, ax2, _ = graph.errorfill(kk[:, 0], ek, ek_err, label='$E$' + label, fignum=1, subplot=132)
-        fig1, ax3, _ = graph.errorfill(kk_s[:, 0], ek_s, ek_s_err, label='Scaled $E$' + label, fignum=1, subplot=133)
+        if not errorfill:
+            fig1, ax2 = graph.plot(kk[:, 0], ek, label='$E$' + label, fignum=1, subplot=132, color='b', linestyle='--', linewidth=10)
+            fig1, ax3 = graph.plot(kk_s[:, 0], ek_s, label='Scaled $E$' + label, fignum=1, subplot=133, color='b', linestyle='--', linewidth=10)
+        else:
+            fig1, ax2, _ = graph.errorfill(kk[:, 0], ek, ek_err, label='$E$' + label, fignum=1, subplot=132)
+            fig1, ax3, _ = graph.errorfill(kk_s[:, 0], ek_s, ek_s_err, label='Scaled $E$' + label, fignum=1, subplot=133)
 
 
         ax2_ylabel = ax2_ylabel[:-13] + ', $E$ ($mm^3/s^2$)'
@@ -4153,6 +4735,7 @@ def plot_energy_spectra_avg_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=No
     graph.setaxes(ax3, 10 ** -3.8, 2, 10 ** -3.5, 10 ** 6.5)
 
     fig1.tight_layout(rect=[0, 0.03, 1, 0.95])
+
     return fig1, (ax1, ax2, ax3)
 
 
@@ -4319,31 +4902,443 @@ def plot_mean_flow(udata, xx, yy, f_p=5., crop_edges=4, fps=1000., data_spacing=
     return fig, axes
 
 
+
 # movie
-def make_time_evo_movie_from_udata(qty, xx, yy, time, t=1, label='$\\frac{1}{U_i U_i$ ($mm^2/s^2$)',
+def make_movie(imgname=None, imgdir=None, movname=None, indexsz='05', framerate=10, rm_images=False,
+               save_into_subdir=False, start_number=0, framestep=1, ext='png', option='normal', overwrite=False,
+               invert=False, add_commands=[], ffmpeg_path=None):
+    """Create a movie from a sequence of images using the ffmpeg supplied with ilpm.
+    Options allow for deleting folder automatically after making movie.
+    Will run './ffmpeg', '-framerate', str(int(framerate)), '-i', imgname + '%' + indexsz + 'd.png', movname + '.mov',
+         '-vcodec', 'libx264', '-profile:v', 'main', '-crf', '12', '-threads', '0', '-r', '100', '-pix_fmt', 'yuv420p'])
+
+    ... ffmpeg is not smart enough to recognize a pattern like 0, 50, 100, 150... etc.
+        It tries up to an interval of 4. So 0, 3, 6, 9 would work, but this hinders practicality.
+        Use the glob feature in that case. i.e. option='glob'
+
+    Parameters
+    ----------
+    imgname : str
+        ... path and filename for the images to turn into a movie
+        ... could be a name of directory where images are stored if option is 'glob'
+    movname : str
+        path and filename for output movie (movie name)
+    indexsz : str
+        string specifier for the number of indices at the end of each image (ie 'file_000.png' would merit '03')
+    framerate : int (float may be allowed)
+        The frame rate at which to write the movie
+    rm_images : bool
+        Remove the images from disk after writing to movie
+    save_into_subdir : bool
+        The images are saved into a folder which can be deleted after writing to a movie, if rm_images is True and
+        imgdir is not None
+    option: str
+        If "glob", it globs all images with the extention in the directory.
+        Therefore, the images does not have to be numbered.
+    add_commands: list
+        A list to add extra commands for ffmpeg. The list will be added before output name
+        i.e. ffmpeg -i images command add_commands movie_name
+        exmaple: add_commands=['-vf', ' pad=ceil(iw/2)*2:ceil(ih/2)*2']
+    """
+    # if movie name is not given, name it as same as the name of the img directory
+    if movname is None:
+        if os.path.isdir(imgname):
+            if imgname[-1] == '/':
+                movname = imgname[:-1]
+            else:
+                movname = imgname
+        else:
+            pdir, filename = os.path.split(imgname)
+            movname = pdir
+
+
+    if not option=='glob':
+        command = [ffmpeg_path,
+                   '-framerate', str(int(framerate)),
+                   '-start_number', str(start_number),
+                   '-i', imgname + '%' + indexsz + 'd.' + ext,
+                   '-pix_fmt', 'yuv420p',
+                   '-vcodec', 'libx264', '-profile:v', 'main', '-crf', '12', '-threads', '0', '-r', '100']
+    else:
+        # If images are not numbered or not labeled in a sequence, you can use the glob feature.
+        # On command line,
+        # ffmpeg -r 1
+        # -pattern_type glob
+        # -i '/Users/stephane/Documents/git/takumi/library/image_processing/images2/*.png'  ## It is CRITICAL to include '' on the command line!!!!!
+        # -vcodec libx264 -crf 25  -pix_fmt yuv420p /Users/stephane/Documents/git/takumi/library/image_processing/images2/sample.mp4
+        command = [ffmpeg_path,
+                 '-pattern_type', 'glob',  # Use glob feature
+                 '-framerate', str(int(framerate)),  # framerate
+                 '-i', imgname + '/*.' + ext,  # images
+                 '-vcodec', 'libx264',  # codec
+                 '-crf', '12',  # quality
+                 '-pix_fmt', 'yuv420p']
+    if overwrite:
+        command.append('-y')
+    if invert:
+        command.append('-vf')
+        command.append('negate')
+    # check if image has dimensions divisibly by 2 (if not ffmpeg raises an error... why ffmpeg...)
+    # ffmpeg raises an error if image has dimension indivisible by 2. Always make sure that this is not the case.
+    # image_paths = glob.glob(imgname + '/*.' + ext)
+    # img = mpimg.imread(image_paths[0])
+    # height, width = img.shape
+    # if not (height % 2 == 0 and width % 2 == 0):
+    command += ['-vf', ' pad=ceil(iw/2)*2:ceil(ih/2)*2']
+
+
+    print(command)
+    command += add_commands
+
+    command.append(movname + '.mp4')
+    subprocess.call(command)
+
+    # Delete the original images
+    if rm_images:
+        print('Deleting the original images...')
+        if not save_into_subdir and imgdir is None:
+            imdir = os.path.split(imgname)
+        print('Deleting folder ' + imgdir)
+        subprocess.call(['rm', '-r', imgdir])
+
+def make_time_evo_movie_from_udata(qty, xx, yy, time, t=1, inc=100, label='$\\frac{1}{2} U_i U_i$ ($mm^2/s^2$)',
                                    x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, vmin=0, vmax=None,
-                                   draw_box=True, xlabel='$x$ ($mm$)', ylabel='$y$ ($mm$)'):
-    if t != 1:
-        qty_ravg = get_running_avg_nd(qty, t)
+                                   draw_box=True, xlabel='$x$ ($mm$)', ylabel='$y$ ($mm$)',
+                                   savedir='./', qtyname='qty', framerate=10,
+                                   ffmpeg_path=None, overwrite=True, only_movie=False,
+                                   notebook=True):
+    """
+    Make a movie about the running average (number of frames to average is specified by "t"
+
+    Parameters
+    ----------
+    qty: 3D array (height, width, time)
+        ... quantity to show as a movie (energy, enstrophy, vorticity component, etc)
+    xx
+    yy
+    time
+    t
+    inc
+    label
+    x0
+    x1
+    y0
+    y1
+    z0
+    z1
+    vmin
+    vmax
+    draw_box
+    xlabel
+    ylabel
+    savedir
+    qtyname
+    framerate
+    ffmpeg_path
+    overwrite
+    only_movie
+    notebook
+
+    Returns
+    -------
+
+    """
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+        print('Using tqdm_notebook. If this is a mistake, set notebook=False')
     else:
-        qty_ravg = qty
-    for t0 in range(time[:-t]):
-        fig1, ax1, cc1 = graph.color_plot(xx[y0:y1, x0:x1], yy[y0:y1, x0:x1], qty_ravg[y0:y1, x0:x1, t0], fignum=1,
-                                      vmin=vmin, vmax=vmax, label=label)
-    if draw_box:
-        graph.draw_box(ax1, xx, yy)
+        from tqdm import tqdm
+
+    if not only_movie:
+        if t != 1:
+            qty_ravg = get_running_avg_nd(qty, t)
+        else:
+            qty_ravg = qty
+        for t_ind, t in enumerate(tqdm(time[:-t][::inc])):
+            fig1, ax1, cc1 = graph.color_plot(xx[y0:y1, x0:x1], yy[y0:y1, x0:x1], qty_ravg[y0:y1, x0:x1, t_ind], fignum=1,
+                                          vmin=vmin, vmax=vmax, label=label)
+            if draw_box:
+                graph.draw_box(ax1, xx, yy)
+            graph.labelaxes(ax1, xlabel, ylabel)
+            graph.title(ax1, '$t=%02.3f$ s' % t)
+            fig1.tight_layout()
+            graph.save(savedir + '/' +  qtyname + '/img%07d' % t_ind, ext='png', close=True, savedata=False)
+
+
+    if ffmpeg_path is None:
+        print('... a path to ffmpeg is not given! cannot make a movie')
     else:
-        graph.labelaxes(xlabel, ylabel)
-    graph.title(ax1, '$t=%02.3f$')
+        movname = savedir + '/' + qtyname
+        if not overwrite:
+            counter = 0
+            while os.path.exists(movname + '.mov'):
+                movname = movname[:-4] + '%03d' % counter
+                counter += 1
+        make_movie(imgname=savedir + '/' +  qtyname + '/img', movname=movname, indexsz='07', framerate=framerate,
+                   ffmpeg_path=ffmpeg_path)
+
+    if notebook:
+        from tqdm import tqdm as tqdm
+
+# convenient tools
+def get_binned_stats(arg, var, n_bins=100, mode='linear'):
+    """
+    Make a histogram out of a pair of 1d arrays.
+    ... Returns arg_bins, var_mean, var_err
+    ... The given arrays could contain nans and infs. They will be ignored.
+
+    Parameters
+    ----------
+    arg: 1d array, controlling variable
+    var: 1d array, data array to be binned
+    n_bins: int, default: 100
+    mode: str, deafult: 'linear'
+        If 'linear', var will be sorted to equally spaced bins. i.e. bin centers increase linearly.
+        If 'log', the bins will be not equally spaced. Instead, they will be equally spaced in log.
+        ... bin centers will be like... 10**0, 10**0.5, 10**1.0, 10**1.5, ..., 10**9
+
+    Returns
+    -------
+    arg_bins: 1d array, bin centers
+    var_mean: 1d array, mean values of data in each bin
+    var_err: 1d array, std of data in each bin
+
+    """
+    def sort2arr(arr1, arr2):
+        """
+        Sort arr1 and arr2 using the order of arr1
+        e.g. a=[2,1,3], b=[9,1,4] -> a[1,2,3], b=[1,9,4]
+        Parameters
+        ----------
+        arr1
+        arr2
+
+        Returns
+        -------
+        Sorted arr1, and arr2
+
+        """
+        arr1, arr2 = list(zip(*sorted(zip(arr1, arr2))))
+        return np.asarray(arr1), np.asarray(arr2)
+
+    def get_mask_for_nan_and_inf(U):
+        """
+        Returns a mask for nan and inf values in a multidimensional array U
+        Parameters
+        ----------
+        U: N-d array
+
+        Returns
+        -------
+
+        """
+        U = np.array(U)
+        U_masked_invalid = ma.masked_invalid(U)
+        return U_masked_invalid.mask
+    arg, var = np.asarray(arg), np.asarray(var)
+
+    # make sure rr and corr do not contain nans
+    mask1 = get_mask_for_nan_and_inf(arg)
+    mask1 = ~mask1
+    mask2 = get_mask_for_nan_and_inf(var)
+    mask2 = ~mask2
+    mask = mask1 * mask2
+
+    if mode == 'log':
+        argmin, argmax = np.nanmin(arg), np.nanmax(arg)
+        mask_for_log10arg = get_mask_for_nan_and_inf(np.log10(arg))
+        exp_min, exp_max = np.nanmin(np.log10(arg)[~mask_for_log10arg]), np.nanmax(np.log10(arg)[~mask_for_log10arg])
+        exp_interval = (exp_max - exp_min) / n_bins
+        exp_bin_centers = np.linspace(exp_min, exp_max, n_bins)
+        exp_bin_edges = np.append(exp_bin_centers, exp_max+exp_interval) - exp_interval / 2.
+        bin_edges = 10**(exp_bin_edges)
+        bins = bin_edges
+        mask_for_arg = get_mask_for_nan_and_inf(bins)
+        bins = bins[~mask_for_arg]
+    else:
+        bins = n_bins
 
 
-######### misc ###########
+    # get a histogram
+    # arg_means, arg_edges, binnumber = binned_statistic(arg[mask], arg[mask], statistic='mean', bins=bins)
+    var_mean, bin_edges, binnumber = binned_statistic(arg[mask], var[mask], statistic='mean', bins=bins)
+    var_err, _, _ = binned_statistic(arg[mask], var[mask], statistic='std', bins=bins)
 
+
+    # bin centers
+    if mode == 'log':
+        bin_centers = 10**((exp_bin_edges[:-1] + exp_bin_edges[1:]) / 2.)
+    else:
+        binwidth = (bin_edges[1] - bin_edges[0])
+        bin_centers = bin_edges[1:] - binwidth / 2
+
+    # Sort arrays
+    arg_bins, var_mean = sort2arr(bin_centers, var_mean)
+    arg_bins, var_err = sort2arr(bin_centers, var_err)
+
+    return arg_bins, var_mean, var_err
+
+def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, t0=0, t1=None, inc=1, return_xy=False, verbose=True):
+    """
+    Returns udata from a path to udata
+    If return_xy is True, it returns udata, xx(2d grid), yy(2d grid)
+    Parameters
+    ----------
+    udatapath
+    x0: int
+    x1: int
+    y0: int
+    y1: int
+    t0: int
+    t1: int
+    inc: int
+        time increment of data to load from udatapath, default: 1
+    return_xy: bool, defualt: False
+
+    Returns
+    -------
+    udata, xx, yy
+
+    """
+
+    if verbose:
+        tau0 = time_mod.time()
+        print('... reading udata from path')
+
+    with h5py.File(udatapath) as f:
+        ux = f['ux'][y0:y1, x0:x1, t0:t1:inc]
+        uy = f['uy'][y0:y1, x0:x1, t0:t1:inc]
+
+        if return_xy:
+            xx, yy = f['x'][y0:y1, x0:x1], f['y'][y0:y1, x0:x1]
+    tau1 = time_mod.time()
+
+    udata = np.stack((ux, uy))
+    if verbose:
+        print('... time took to load udata in sec: ', tau1-tau0)
+    if return_xy:
+        return udata, xx, yy
+    else:
+        return udata
+
+
+def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, t0=0, t1=None, inc=1, frame=None, return_xy=False, verbose=True):
+    """
+    Returns udata from a path to udata
+    If return_xy is True, it returns udata, xx(2d grid), yy(2d grid)
+    Parameters
+    ----------
+    udatapath
+    x0: int
+    x1: int
+    y0: int
+    y1: int
+    t0: int
+    t1: int
+    inc: int
+        time increment of data to load from udatapath, default: 1
+    frame: array-like or int, default: None
+        If an integer is given, it returns a velocity field at that instant of time
+        If an array or a list is given, it returns a velocity field at the given time specified by the array/list.
+
+        By default, it loads data by a specified increment "inc".
+        If "frame" is given, it is prioritized over the incremental loading.
+    return_xy: bool, defualt: False
+    verbose: bool
+        If True, return the time it took to load udata to memory
+
+    Returns
+    -------
+    udata, xx, yy
+
+    """
+
+    if verbose:
+        tau0 = time_mod.time()
+        print('... reading udata from path')
+
+    with h5py.File(udatapath) as f:
+        if frame is None:
+            ux = f['ux'][y0:y1, x0:x1, t0:t1:inc]
+            uy = f['uy'][y0:y1, x0:x1, t0:t1:inc]
+        else:
+            frame = np.asarray(frame)
+            ux = f['ux'][y0:y1, x0:x1, frame]
+            uy = f['uy'][y0:y1, x0:x1, frame]
+
+
+        if return_xy:
+            xx, yy = f['x'][y0:y1, x0:x1], f['y'][y0:y1, x0:x1]
+    tau1 = time_mod.time()
+
+    udata = np.stack((ux, uy))
+    if verbose:
+        print('... time took to load udata in sec: ', tau1-tau0)
+    if return_xy:
+        return udata, xx, yy
+    else:
+        return udata
+
+# Spatial Pofile
+def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=None, n=50):
+    """
+    Returns a spatial profile (radial histogram) of 3D object with shape (height, width, duration)
+    ... Computes a histogram of a given quantity as a function of distance from the center (xc, yc)
+    ... If (xc, yc) are not given, it uses the center of the mass of the quantity at the first frame.
+
+    Parameters
+    ----------
+    xx: 2d array
+    yy: 2d array
+    qty: 3D numpy array
+    ... energy, enstrophy, etc. with shape (height, width, duration)
+    xc: float
+    ... x-coordinate of the origin of the polar coordinate
+    yc: float
+    ... y-coordinate of the origin of the polar coordinate
+    x0: int, default: 0
+    ... used to specify a portion of data for computing the histograms. xx[y0:y1, x0:x1]
+    x1: int, default: None
+    y0: int, default: 0
+    y1: int, default: None
+    n: int
+    ... number of bins for the computed histograms
+
+    Returns
+    -------
+    rs: 2d numpy array
+    ... radial distance with shape (n, duration)
+    qty_ms: 2d numpy array
+    ... mean values of the quantity between r and r+dr with shape (n, duration)
+    qty_errs: 2d numpy array
+    ... std of the quantity between r and r+dr with shape (n, duration)
+    """
+    duration = qty.shape[-1]
+    x, y = xx[y0:y1, x0:x1], yy[y0:y1, x0:x1]
+    qty_local = qty[y0:y1, x0:x1, ...]
+    if xc is None or yc is None:
+        # find a center of the mass
+        xc, yc = ndimage.measurements.center_of_mass(qty_local[y0:y1, x0:x1, 0])
+    elif xc is None and yc is None:
+        xc, yc = 0, 0
+    r, theta = cart2pol(x - xc, y - yc)
+
+    shape = (n, duration)
+    rs = np.empty(shape)
+    qty_ms = np.empty(shape)
+    qty_errs = np.empty(shape)
+    for t in tqdm(list(range(duration))):
+        rs[:, t], qty_ms[:, t], qty_errs[:, t] = get_binned_stats(r.flatten(),
+                                                                      qty_local[..., t].flatten(),
+                                                                      n_bins=n)
+    return rs, qty_ms, qty_errs
+
+########## misc ###########
 
 def fix_udata_shape(udata):
     """
     It is better to always have udata with shape (height, width, depth, duration) (3D) or  (height, width, duration) (2D)
-    This method fixes the shape of udata such that its shape is (height, width, depth) or (height, width)
+    This method fixes the shape of udata whose shape is (height, width, depth) or (height, width)
 
     Parameters
     ----------
@@ -4618,25 +5613,523 @@ def natural_sort(arr):
 
     return sorted(arr, key=natural_keys)
 
+def find_nearest(array, value, option='normal'):
+    """
+    Find an element and its index closest to 'value' in 'array'
+    Parameters
+    ----------
+    array: nd array
+    value: float/int
 
-def get_running_avg_1d(x, t):
+    Returns
+    -------
+    idx: index of the array where the closest value to 'value' is stored in 'array'
+    array[idx]: value closest to 'value' in 'array'
+
+    """
+    # get the nearest value such that the element in the array is LESS than the specified 'value'
+    if option == 'less':
+        array_new = copy.copy(array)
+        array_new[array_new > value] = np.nan
+        idx = np.nanargmin(np.abs(array_new - value))
+        return idx, array_new[idx]
+    # get the nearest value such that the element in the array is GREATER than the specified 'value'
+    if option == 'greater':
+        array_new = copy.copy(array)
+        array_new[array_new < value] = np.nan
+        idx = np.nanargmin(np.abs(array_new - value))
+        return idx, array_new[idx]
+    else:
+        idx = (np.abs(array-value)).argmin()
+        return idx, array[idx]
+
+def get_running_avg_1d(x, t, notebook=True):
     """
     Returns a running average of 1D array x. The number of elements to average over is specified by t.
     """
-    y = np.zeros(len(x)-t)
-    for i in range(t):
-        y += np.roll(x, -i)[:-t]
-    y /= float(t)
-    return y
+    if t == 1:
+        return x
+    else:
+        if notebook:
+            from tqdm import tqdm_notebook as tqdm
+            print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+        else:
+            from tqdm import tqdm
 
-def get_running_avg_nd(udata, t, axis=-1):
+        y = np.zeros(len(x)-t)
+        for i in tqdm(list(range(t))):
+            y += np.roll(x, -i)[:-t]
+        y /= float(t)
+
+        if notebook:
+            from tqdm import tqdm
+        return y
+
+def get_running_avg_nd(udata, t, axis=-1, notebook=True):
     """
     Returns a running average of nD array x. The number of elements to average over is specified by t.
     """
-    shape = udata.shape
-    newshape = tuple(list(shape)[:-1] + [shape[-1]-t])
-    vdata = np.zeros(newshape)
-    for i in range(t):
-        vdata += np.roll(udata, -i, axis=axis)[..., :-t]
-    vdata /= float(t)
-    return vdata
+    if t == 1:
+        return udata
+    else:
+        if notebook:
+            from tqdm import tqdm_notebook as tqdm
+            print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+        else:
+            from tqdm import tqdm
+        shape = udata.shape
+        newshape = tuple(list(shape)[:-1] + [shape[-1]-t])
+        vdata = np.zeros(newshape)
+        for i in tqdm(list(range(t)), desc='Computing running average (nd)'):
+            # if array contains nan, nans will be replaced by 0.
+            vdata += np.nan_to_num(np.roll(udata, -i, axis=axis)[..., :-t])
+        vdata /= float(t)
+
+        if notebook:
+            from tqdm import tqdm
+        return vdata
+
+def write_hdf5_dict(filepath, data_dict, overwrite=False):
+    """
+    Stores data_dict = {'varname0': var0, 'varname1': var1, ...} in hdf5
+    - A quick function to store multiple data into a single hdf5 file
+
+    Parameters
+    ----------
+    filepath :  str
+                file path where data will be stored. (Do not include extension- .h5)
+    data_dict : dictionary
+                data should be stored as data_dict[key]= data_arrays
+
+    Returns
+    -------
+
+    """
+    filedir = os.path.split(filepath)[0]
+    if not os.path.exists(filedir):
+        os.makedirs(filedir)
+
+    ext = '.h5'
+    filename = filepath + ext
+    hf = h5py.File(filename, 'a')
+    for key in data_dict:
+        if key in hf.keys() and overwrite:
+            del hf[key]
+        try:
+            hf.create_dataset(key, data=data_dict[key])
+        except RuntimeError:
+            del hf[key]
+            hf.create_dataset(key, data=data_dict[key])
+
+    hf.close()
+    print('Data was successfully saved as ' + filename)
+
+
+
+# functions to derive major quantities of turbulence from udata and save it into a hdf5 format
+def derive_all(udata, dx, dy, savepath, udatapath='none', **kwargs):
+    """
+    A shortcut function to derive major quantities of turbulence
+
+    Parameters
+    ----------
+    udata
+    dx
+    dy
+    savepath
+    kwargs
+
+    Returns
+    -------
+
+    """
+    print('... Derive quantities which require small computational power')
+    derive_easy(udata, dx, dy, savepath, udatapath=udatapath, **kwargs)
+    print('... Derive quantities which require immense computational power')
+    derive_hard(udata, dx, dy, savepath, **kwargs)
+
+def derive_easy(udata, dx, dy, savepath, time=None, inc=1,
+               dz=None, nu=1.004,
+               x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None,
+                reynolds_decomp=False,
+                udatapath='none',
+                notebook=True, overwrite=True):
+    """
+    Function to derive quantities which are (relatively) computationally cheap
+    ... energy spectra, energy, enstrophy, skewness etc.
+    Parameters
+    ----------
+    udata
+    dx
+    dy
+    savepath
+    time
+    inc
+    dz
+    nu
+    x0
+    x1
+    y0
+    y1
+    z0
+    z1
+    t0
+    t1
+    reynolds_decomp
+    notebook
+    overwrite
+
+    Returns
+    -------
+
+    """
+    if reynolds_decomp:
+        savepath += '_rd' # mark if user decided to do reynolds decomposition before the whole analysis
+
+    keys = ['time', 'e_savg', 'e_savg_err', 'enst_savg', 'enst_savg_err', 'epsilon_sij',
+            'e11', 'e22', 'e11_err', 'e22_err', 'k11', 'ek', 'ek_err', 'kr',
+            'e11s', 'e11_errs_s', 'k11_s', 'e22s', 'e22_errs_s', 'k22_s', 'ek_s', 'ek_err_s', 'kr_s',
+            'lambda_f_iso', 'lambda_g_iso', 're_lambda_iso',
+            'L', 'u_L', 'tau_L', 'u_lambda_iso', 'tau_lambda_iso',
+            'eta', 'u_eta', 'tau_eta',
+            'skewness', 'kurtosis']
+    derive = not is_data_derived(savepath + '.h5', keys)
+
+    if derive or overwrite:
+        udata = fix_udata_shape(udata)
+        dim = len(udata)
+
+        if dim==2:
+            udata = udata[:, y0:y1, x0:x1, t0:t1]
+        elif dim == 3:
+            if z1 is None:
+                z1 = udata[0].shape[2]
+            udata = udata[:, y0:y1, x0:x1, z0:z1, t0:t1]
+        if time is None:
+            time = np.arange(udata.shape[-1])[::inc]
+
+        if reynolds_decomp:
+            udata_m, udata_t = reynolds_decomposition(udata)
+            vdata = udata_t[..., ::inc]
+        else:
+            vdata = udata[..., ::inc]
+
+        # PROCESSES WHICH REQUIRE RELATIVELY MINOR COMPUTATIONS
+
+        # <Energy>_space vs time
+        e_savg, e_savg_err = get_spatial_avg_energy(vdata, x0=x0, x1=x1, y0=y1, z0=z0, z1=z1)
+
+        # <Enstrophy>_space vs time
+        enst_savg, enst_savg_err = get_spatial_avg_enstrophy(vdata, x0=x0, x1=x1, y0=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz)
+
+        # dissipation rate vs time
+        epsilon_sij = get_epsilon_using_sij(vdata, dx=dx, dy=dy, dz=dz, nu=nu, x0=x0, x1=x1, y0=y1, z0=z0)
+
+        # energy spectra
+        (e11, e22), (e11_err, e22_err), k11 = get_1d_energy_spectrum(vdata, x0=x0, x1=x1, y0=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz)
+        ek, ek_err, kr = get_energy_spectrum(vdata, x0=x0, x1=x1, y0=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz, window='flattop', notebook=notebook)
+
+        # scaled energy spectra
+        e11s, e11_errs_s, k11_s = scale_energy_spectrum(e11, k11, epsilon=epsilon_sij, nu=nu, e_k_err=e11_err)
+        e22s, e22_errs_s, k22_s = scale_energy_spectrum(e11, k11, epsilon=epsilon_sij, nu=nu, e_k_err=e22_err)
+        ek_s, ek_err_s, kr_s = scale_energy_spectrum(ek, kr, epsilon=epsilon_sij, nu=nu, e_k_err=ek_err)
+
+        # isotropic formulae
+        lambda_f_iso, lambda_g_iso = get_taylor_microscales_iso(vdata, epsilon_sij, nu=nu)
+        re_lambda_iso = get_taylor_re_iso(vdata, epsilon_sij, nu=nu)
+
+        # lengthscales
+        L, u_L, tau_L = get_integral_scales_all(vdata, dx, dy, dz, nu=nu)
+        lambda_g_iso, u_lambda_iso, tau_lambda_iso = get_taylor_microscales_all_iso(vdata, epsilon_sij, nu=nu)
+        eta, u_eta, tau_eta = get_kolmogorov_scales_all(vdata, dx, dy, dz, nu=nu)
+
+        # skewness, kurtosis
+        skewness = get_skewness(vdata, x0=x0, x1=x1, y0=y1, z0=z0, z1=z1)
+        kurtosis = get_kurtosis(vdata, x0=x0, x1=x1, y0=y1, z0=z0, z1=z1)
+
+
+        # keys = ['time', 'e_savg', 'e_savg_err', 'enst_savg', 'enst_savg_err', 'epsilon_sij',
+        #         'e11', 'e22', 'e11_err', 'e22_err', 'k11', 'ek', 'ek_err', 'kr',
+        #         'e11s', 'e11_errs_s', 'k11_s', 'e22s', 'e22_errs_s', 'k22_s', 'ek_s', 'ek_err_s', 'kr_s',
+        #         'lambda_f_iso', 'lambda_g_iso', 're_lambda_iso',
+        #         'L', 'u_L', 'tau_L', 'u_lambda_iso', 'tau_lambda_iso',
+        #         'eta', 'u_eta', 'tau_eta',
+        #         'skewness', 'kurtosis']
+        data = [time, e_savg, e_savg_err, enst_savg, enst_savg_err, epsilon_sij,
+                e11, e22, e11_err, e22_err, k11, ek, ek_err, kr,
+                e11s, e11_errs_s, k11_s, e22s, e22_errs_s, k22_s, ek_s, ek_err_s, kr_s,
+                lambda_f_iso, lambda_g_iso, re_lambda_iso, #lambda_iso is computed by the isotropic formula using epsilon_sij
+                L, u_L, tau_L, u_lambda_iso, tau_lambda_iso,
+                eta, u_eta, tau_eta,
+                skewness, kurtosis]
+
+        datadict = {}
+        for i, key in enumerate(keys):
+            try:
+                datadict[key] = data[i]
+            except:
+                pass
+        # Write to a h5 file
+        write_hdf5_dict(savepath, datadict, overwrite=overwrite)
+        # Add udatapath as its attribtue
+        with h5py.File(savepath + '.h5', 'a') as ff:
+            ff.attrs['udatapth'] = udatapath
+
+def derive_hard(udata, dx, dy, savepath, time=None, inc=1,
+               dz=None, nu=1.004,
+               x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None,
+                reynolds_decomp=False,
+                coarse=1.0, coarse2=1.0, # structure function parameters
+                notebook=True, overwrite=True):
+    """
+    Function to derive quantities which are (relatively) computationally expensive
+    ... structure function, two_point correlation function,
+     taylor microscale as a curvature of the long. vel. autocorr. func. etc.
+
+    Parameters
+    ----------
+    udata
+    dx
+    dy
+    savepath
+    time
+    inc
+    dz
+    nu
+    x0
+    x1
+    y0
+    y1
+    z0
+    z1
+    t0
+    t1
+    reynolds_decomp
+    coarse
+    coarse2
+    notebook
+    overwrite
+
+    Returns
+    -------
+
+    """
+
+    if reynolds_decomp:
+        savepath += '_rd' # mark if user decided to do reynolds decomposition before the whole analysis
+
+    keys = ['rr', 'Dxx', 'Dxx_err', 'rr_scaled', 'Dxx_scaled', 'Dxx_err_scaled',
+            'r_long', 'f_long', 'f_err_long', 'r_tran', 'g_tran', 'g_err_tran',
+            'lambda_f', 'lambda_g',
+            'L11', 'L22',
+            're_lambda',
+            'epsilon_iso_auto']
+    derive = not is_data_derived(savepath + '.h5', keys) # returns True if data does not exist in the file at savepath
+
+    if derive or overwrite:
+        udata = fix_udata_shape(udata)
+        dim = len(udata)
+
+        if dim == 2:
+            udata = udata[:, y0:y1, x0:x1, t0:t1]
+        elif dim == 3:
+            if z1 is None:
+                z1 = udata[0].shape[2]
+            udata = udata[:, y0:y1, x0:x1, z0:z1, t0:t1]
+        if time is None:
+            time = np.arange(udata.shape[-1])[::inc]
+
+        if reynolds_decomp:
+            udata_m, udata_t = reynolds_decomposition(udata)
+            vdata = udata_t[..., ::inc]
+        else:
+            vdata = udata[..., ::inc]
+        vdata = fix_udata_shape(vdata)
+
+        xx, yy = get_equally_spaced_grid(vdata, spacing=dx)
+
+
+
+        # try:
+        # longitudinal structure function
+        sfunc_results = get_structure_function(vdata, xx, yy, indices=('x', 'x'), roll_axis=1,  nu=nu,
+                               x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, t0=t0, t1=t1,
+                               coarse=coarse, coarse2=coarse2, notebook=notebook)
+        rrs, Dijks, Dijk_errs, rrs_scaled, Dijks_scaled, Dijk_errs_scaled = sfunc_results
+
+        # two-point autocorrelation function
+        autocorrs = get_two_point_vel_corr_iso(vdata, xx, yy, return_rij=False)
+        r_long, f_long, f_err_long, r_tran, g_tran, g_err_tran = autocorrs
+
+        # lengthscales
+        lambda_f, lambda_g = get_taylor_microscales(r_long, f_long, r_tran, g_tran)
+        L11, L22 = get_integral_scales(r_long, f_long, r_tran, g_tran)
+
+        # get_taylor_re using lambda_f (derived from structure function)
+        re_lambda = get_taylor_re(vdata, r_long, f_long, r_tran, g_tran, nu=nu)
+
+        # dissipation rate using the isotropic formula and Taylor microscale from the vel. autocorrelation function
+        # This tends to be really noisy due to bad estimtion of lambda
+        epsilon_iso_auto = get_epsilon_iso(vdata, lambda_f=lambda_g, lambda_g=lambda_g)
+
+        # keys = ['rr', 'Dxx', 'Dxx_err', 'rr_scaled', 'Dxx_scaled', 'Dxx_err_scaled',
+        #         'r_long', 'f_long', 'f_err_long', 'r_tran', 'g_tran', 'g_err_tran',
+        #         'lambda_f', 'lambda_g',
+        #         'L11', 'L22',
+        #         're_lambda',
+        #         'epsilon_iso_auto']
+        data = [rrs, Dijks, Dijk_errs, rrs_scaled, Dijks_scaled, Dijk_errs_scaled,
+                r_long, f_long, f_err_long, r_tran, g_tran, g_err_tran,
+                lambda_f, lambda_g,
+                L11, L22,
+                re_lambda,
+                epsilon_iso_auto]
+
+        datadict = {}
+        for i, key in enumerate(keys):
+            datadict[key] = data[i]
+        write_hdf5_dict(savepath, datadict, overwrite=overwrite)
+        # except:
+        #     print('... Failed: ', os.path.split(savepath)[1])
+        #     pass
+
+# a function to check whether quantities of your interest is derived
+def is_data_derived(savepath, datanames, verbose=False, mode=None):
+    """
+    Check whether quantities of your interest is derived
+    Returns True if the quantities exist in the h5 file, False otherwise
+
+    Parameters
+    ----------
+    savepath
+    datanames
+    verbose
+    mode
+
+    Returns
+    -------
+
+    """
+    if not os.path.exists(savepath):
+        print('... is_data_derived: savepath does not exist! returning False')
+        return False
+    else:
+        if mode == 'hard':
+            datanames = ['rr', 'Dxx', 'Dxx_err', 'rr_scaled', 'Dxx_scaled', 'Dxx_err_scaled',
+                    'r_long', 'f_long', 'f_err_long', 'r_tran', 'g_tran', 'g_err_tran',
+                    'lambda_f', 'lambda_g',
+                    'L11', 'L22',
+                    're_lambda',
+                    'epsilon_iso_auto']
+        elif mode == 'easy':
+            datanames = ['time', 'e_savg', 'e_savg_err', 'enst_savg', 'enst_savg_err', 'epsilon_sij',
+                    'e11', 'e22', 'e11_err', 'e22_err', 'k11', 'ek', 'ek_err', 'kr',
+                    'e11s', 'e11_errs_s', 'k11_s', 'e22s', 'e22_errs_s', 'k22_s', 'ek_s', 'ek_err_s', 'kr_s',
+                    'lambda_f_iso', 'lambda_g_iso', 're_lambda_iso',
+                    'L', 'u_L', 'tau_L', 'u_lambda_iso', 'tau_lambda_iso',
+                    'eta', 'u_eta', 'tau_eta',
+                    'skewness', 'kurtosis']
+
+        fyle = h5py.File(savepath, 'r')
+        result = True
+        for dataname in datanames:
+            if not dataname in fyle.keys():
+                if verbose:
+                    print('... cannot find ' + dataname)
+                result = False
+        fyle.close()
+    return result
+
+
+
+# functions related to turbulence decay
+
+def get_time_indices_for_selfsimilar_movie(time, t0, dt, exponent=-1, nmax=None):
+    """
+    Returns indices of a time array required to make a self-similar movie
+
+    ... Let t_i be the time at frame i.
+    To preserve the displacement between two frames when energy decays in a power law (E ~ (t-t0)^n),
+    t_i must satisfy the following recurrence relation.
+
+    t_{i+2} = {2t_{i+1}^m - 2t_{i}^m }^{1/m}
+
+    where m = n/2 + 1.
+
+    ... This function returns indices for the given array "time". To do so, one needs t0, t1, and n.
+    ... t1 = t0 + dt
+    ... exponent is "n".
+
+    Parameters
+    ----------
+    time: 1d array
+        ... time. this does not have to be evenly spaced.
+        ... e.g. [0.0, 0.005, 0.010, 0.020, ...]
+    t0: float/int
+        ... the first
+    dt: float/int
+        ... t1 = t0 + dt. If not clear, read about the recurrence relation above
+    exponent: exponent of energy decay, default=-1
+        ... Some best estimate on this is around -1.2 for the initial period of decay.
+    nmax: int, default=None
+        ... number of elements of the output array
+
+    Returns
+    -------
+
+    """
+    def find_nearest(array, value, option='normal'):
+        """
+        Find an element and its index closest to 'value' in 'array'
+        Parameters
+        ----------
+        array
+        value
+
+        Returns
+        -------
+        idx: index of the array where the closest value to 'value' is stored in 'array'
+        array[idx]: value closest to 'value' in 'array'
+
+        """
+        # get the nearest value such that the element in the array is LESS than the specified 'value'
+        if option == 'less':
+            array_new = copy.copy(array)
+            array_new[array_new > value] = np.nan
+            idx = np.nanargmin(np.abs(array_new - value))
+            return idx, array_new[idx]
+        # get the nearest value such that the element in the array is GREATER than the specified 'value'
+        if option == 'greater':
+            array_new = copy.copy(array)
+            array_new[array_new < value] = np.nan
+            idx = np.nanargmin(np.abs(array_new - value))
+            return idx, array_new[idx]
+        else:
+            idx = (np.abs(array - value)).argmin()
+            return idx, array[idx]
+
+    t1 = t0 + dt
+    tau0 = t0 - t0
+    tau1 = t1 - t0
+    taus = [tau0, tau1]
+
+    n = exponent
+    m = n / 2. + 1
+
+    counter = 2
+    t_indices = []
+    if nmax is None:
+        nmax = len(time)
+    while counter < nmax:
+        tau0, tau1 = taus[-2], taus[-1]
+        tau2 = (2 * tau1 ** m - tau0 ** m) ** (1. / m)
+        if tau2 < np.nanmax(time):
+            taus.append(tau2)
+        else:
+            break
+        counter += 1
+
+    for i, tau in enumerate(taus):
+        t_ind, _ = find_nearest(time, t0 + tau)
+        t_indices.append(t_ind)
+    return np.asarray(t_indices)
