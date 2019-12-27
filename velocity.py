@@ -2395,7 +2395,7 @@ def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None,
             for k in range(dim):
                 r2_norm += r[k] ** 2
             r_norm = np.sqrt(r2_norm)
-            Rij_value = u2_avg[t] * (g(r_norm, t) * klonecker_delta(i, j) + (f(r_norm , t)-g(r_norm , t)) * r[i] * r[j] / (r_norm ** 2))
+            Rij_value = u2_avg[t] * (g(r_norm, t) * kronecker_delta_delta(i, j) + (f(r_norm , t)-g(r_norm , t)) * r[i] * r[j] / (r_norm ** 2))
             return Rij_value
         print('... Returning two-point velocity autocorrelation tensor Rij(r, t). Arguments: i, j, r, t. Pope Eq. 6.44.')
         return two_pt_velocity_autocorrelation_tensor, autocorrs
@@ -2531,7 +2531,7 @@ def get_autocorrelation_tensor_iso(r_long, f_long, r_tran, g_tran, time):
         for k in range(dim):
             r2_norm += r[k] ** 2
         r_norm = np.sqrt(r2_norm)
-        rij_value = u2_avg[t] * (g(r_norm, t) * klonecker_delta(i, j) + (f(r_norm, t)-g(r_norm , t)) * r[i] * r[j] / (r_norm ** 2))
+        rij_value = u2_avg[t] * (g(r_norm, t) * kronecker_delta_delta(i, j) + (f(r_norm, t)-g(r_norm , t)) * r[i] * r[j] / (r_norm ** 2))
         return rij_value
 
     rij = two_pt_velocity_autocorrelation_tensor
@@ -5521,9 +5521,9 @@ def get_characteristic_velocity(udata):
     return u_irms
 
 
-def klonecker_delta(i, j):
+def kronecker_delta_delta(i, j):
     """
-    Klonecker Delta function: \delta_{i, j}
+    kronecker_delta Delta function: \delta_{i, j}
 
     Parameters
     ----------
