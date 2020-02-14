@@ -16,13 +16,12 @@ from scipy.interpolate import griddata
 from scipy import ndimage
 import os, copy
 import time as time_mod
-import tflow.graph as graph
 
 import warnings
 warnings.simplefilter('ignore', RuntimeWarning)
 # For plotting
 import matplotlib.pyplot as plt
-# import tflow.graph as graph
+import tflow.graph as graph
 import subprocess
 
 """
@@ -36,9 +35,9 @@ Module designed to process a planar/volumetric velocity field
 
 Philosophy: 
 Prepare a velocity field array "udata". 
-Then, pass it to a method in this module to obtain any quantities related to turbulence.
+Pass it to functions in this module to obtain any quantities related to turbulence.
 It should require a single line to obtain the desired quantity from a velocity field
-unless an intermediate step to obtain the quantity is computationally expensive. 
+unless an intermediate step is computationally expensive. 
 The primary example for this is an autocorrelation function which is used for various quantities like Taylor microscale.
 
 
@@ -248,7 +247,8 @@ def curl(udata, dx=1., dy=1., dz=1.):
         omega = 2 * gij[..., 1, 0]
     elif dim == 3:
         # sign might be wrong
-        omega1, omega2, omega3 = 2.* gij[..., 2, 1], 2.* gij[..., 0, 2], 2.* gij[..., 1, 0]
+        # omega1, omega2, omega3 = 2. * gij[..., 2, 1], 2. * gij[..., 0, 2], 2. * gij[..., 1, 0]
+        omega1, omega2, omega3 = -2. * gij[..., 2, 1], 2. * gij[..., 0, 2], -2. * gij[..., 1, 0]
         omega = np.stack((omega1, omega2, omega3))
     else:
         print('Not implemented yet!')
@@ -4382,7 +4382,8 @@ def clean_udata(udata, xx, yy, cutoffU=2000, fill_value=np.nan, verbose=True, me
 
     return udata_i
 
-# plotting usual stuff
+
+# plotting usual stuff # REQUIRES takumi.graph. Ask Takumi for details or check out takumi's git on immense
 def plot_energy_spectra(udata, dx, dy, dz=None, x0=0, x1=None, y0=0, y1=None, window='flattop', epsilon_guess=10**5, nu=1.004, label='',
                             plot_e22=False, plot_ek=False, fignum=1, t0=0, legend=True, loc=3):
     """
@@ -5005,7 +5006,7 @@ def make_time_evo_movie_from_udata(qty, xx, yy, time, t=1, inc=100, label='$\\fr
                                    x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, vmin=0, vmax=None,
                                    draw_box=True, xlabel='$x$ ($mm$)', ylabel='$y$ ($mm$)',
                                    savedir='./', qtyname='qty', framerate=10,
-                                   ffmpeg_path=None, overwrite=True, only_movie=False,
+                                   ffmpeg_path='./ffmpeg', overwrite=True, only_movie=False,
                                    notebook=True):
     """
     Make a movie about the running average (number of frames to average is specified by "t"
@@ -5177,50 +5178,6 @@ def get_binned_stats(arg, var, n_bins=100, mode='linear'):
     arg_bins, var_err = sort2arr(bin_centers, var_err)
 
     return arg_bins, var_mean, var_err
-
-def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, t0=0, t1=None, inc=1, return_xy=False, verbose=True):
-    """
-    Returns udata from a path to udata
-    If return_xy is True, it returns udata, xx(2d grid), yy(2d grid)
-    Parameters
-    ----------
-    udatapath
-    x0: int
-    x1: int
-    y0: int
-    y1: int
-    t0: int
-    t1: int
-    inc: int
-        time increment of data to load from udatapath, default: 1
-    return_xy: bool, defualt: False
-
-    Returns
-    -------
-    udata, xx, yy
-
-    """
-
-    if verbose:
-        tau0 = time_mod.time()
-        print('... reading udata from path')
-
-    with h5py.File(udatapath) as f:
-        ux = f['ux'][y0:y1, x0:x1, t0:t1:inc]
-        uy = f['uy'][y0:y1, x0:x1, t0:t1:inc]
-
-        if return_xy:
-            xx, yy = f['x'][y0:y1, x0:x1], f['y'][y0:y1, x0:x1]
-    tau1 = time_mod.time()
-
-    udata = np.stack((ux, uy))
-    if verbose:
-        print('... time took to load udata in sec: ', tau1-tau0)
-    if return_xy:
-        return udata, xx, yy
-    else:
-        return udata
-
 
 def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, t0=0, t1=None, inc=1, frame=None, return_xy=False, verbose=True):
     """

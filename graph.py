@@ -21,6 +21,7 @@ import glob
 from fractions import Fraction
 from math import modf
 import pickle
+import ilpm.vector as vec
 # comment this and plot_fit_curve if it breaks
 import library.basics.std_func as std_func
 
@@ -197,7 +198,7 @@ def plotfunc(func, x, param, fignum=1, subplot=111, ax = None, label=None, color
         ax.legend()
     return fig, ax
 
-def plot(x, y, fignum=1, figsize=None, label='', color=None, subplot=None, legend=False, fig=None, ax=None, maskon=False, **kwargs):
+def plot(x, y, fignum=1, figsize=None, label='', color=None, subplot=None, legend=False, fig=None, ax=None, maskon=False, thd=1, **kwargs):
     """
     plot a graph using given x,y
     fignum can be specified
@@ -210,12 +211,19 @@ def plot(x, y, fignum=1, figsize=None, label='', color=None, subplot=None, legen
     elif ax is None:
         ax = plt.gca()
 
+    if x is None:
+        x = np.range(len(y))
+    # Make sure x and y are np.array
+    x, y = np.asarray(x), np.asarray(y)
+
     if len(x) > len(y):
         print("Warning : x and y data do not have the same length")
         x = x[:len(y)]
-
+    elif len(y) > len(x):
+        print("Warning : x and y data do not have the same length")
+        y = y[:len(x)]
     if maskon:
-        mask = get_mask4erroneous_pts(x, y)
+        mask = get_mask4erroneous_pts(x, y, thd=thd)
     else:
         mask = [True] * len(x)
 
@@ -253,7 +261,8 @@ def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None, label='', color='k
     return fig, ax
 
 
-def scatter(x, y, ax=None, fignum=1, figsize=None, marker='o', fillstyle='full', label=None, subplot=None, legend=False, maskon=False,
+def scatter(x, y, ax=None, fignum=1, figsize=None, marker='o', fillstyle='full', label=None, subplot=None, legend=False,
+            maskon=False, thd=1,
             **kwargs):
     """
     plot a graph using given x,y
@@ -271,7 +280,7 @@ def scatter(x, y, ax=None, fignum=1, figsize=None, marker='o', fillstyle='full',
         x = x[:len(y)]
 
     if maskon:
-        mask = get_mask4erroneous_pts(x, y)
+        mask = get_mask4erroneous_pts(x, y, thd=thd)
     else:
         mask = [True] * len(x)
 
@@ -335,7 +344,7 @@ def pdf(data, nbins=10, return_data=False, vmax=None, vmin=None, fignum=1, figsi
 
 
 def errorbar(x, y, xerr=0, yerr=0, fignum=1, marker='o', fillstyle='full', linestyle='None', label=None, mfc='white',
-             subplot=None, legend=False, figsize=None, maskon=False, **kwargs):
+             subplot=None, legend=False, figsize=None, maskon=False, thd=1, **kwargs):
     """ errorbar plot
 
     Parameters
@@ -367,7 +376,7 @@ def errorbar(x, y, xerr=0, yerr=0, fignum=1, marker='o', fillstyle='full', lines
     if not (isinstance(yerr, int) or isinstance(yerr, float)):
         yerr = np.array(yerr)
     if maskon:
-        mask = get_mask4erroneous_pts(x, y)
+        mask = get_mask4erroneous_pts(x, y, thd=thd)
     else:
         mask = [True] * len(x)
     if fillstyle == 'none':
@@ -379,7 +388,8 @@ def errorbar(x, y, xerr=0, yerr=0, fignum=1, marker='o', fillstyle='full', lines
     return fig, ax
 
 def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax=None, label=None,
-              legend=False, figsize=None, color_cycle=__color_cycle__, maskon=False, **kwargs):
+              legend=False, figsize=None, color_cycle=__color_cycle__, maskon=False, thd=1, **kwargs):
+
     if ax is None:
         fig, ax = set_fig(fignum, subplot, figsize=figsize)
     else:
@@ -403,16 +413,14 @@ def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax
         ymax = y + yerr
 
     if maskon:
-        mask = get_mask4erroneous_pts(x, y)
+        mask = get_mask4erroneous_pts(x, y, thd=thd)
     else:
         mask = [True] * len(x)
 
-    if color is not None:
-        ax.plot(x[mask], y[mask], color=color, label=label, **kwargs)
-        ax.fill_between(x[mask], ymax[mask], ymin[mask], color=color, alpha=alpha_fill)
-    else:
-        ax.plot(x[mask], y[mask],label=label, **kwargs)
-        ax.fill_between(x[mask], ymax[mask], ymin[mask], alpha=alpha_fill)
+
+    p = ax.plot(x[mask], y[mask], color=color, label=label, **kwargs)
+    color = p[0].get_color()
+    ax.fill_between(x[mask], ymax[mask], ymin[mask], color=color, alpha=alpha_fill)
 
     #patch used for legend
     color_patch = mpatches.Patch(color=color, label=label)
@@ -424,7 +432,7 @@ def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax
 
 
 ## Plot a fit curve
-def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, figsize=None, linestyle='--',
+def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figsize=None, linestyle='--',
                    xmin=None, xmax=None, add_equation=True, eq_loc='bl', color=None, label='fit',
                    show_r2=False, return_r2=False, **kwargs):
     """
@@ -442,7 +450,8 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, figsize=None,
     fig, ax
     popt, pcov : fit results, covariance matrix
     """
-
+    if ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize)
     xdata = np.array(xdata)
     ydata = np.array(ydata)
 
@@ -467,10 +476,10 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, figsize=None,
         popt, pcov = curve_fit(std_func.linear_func, xdata, ydata)
         if color is None:
             fig, ax = plot(x_for_plot, std_func.linear_func(x_for_plot, *popt), fignum=fignum, subplot=subplot,
-                           label=label, figsize=figsize, linestyle=linestyle)
+                           label=label, figsize=figsize, linestyle=linestyle, ax=ax)
         else:
             fig, ax = plot(x_for_plot, std_func.linear_func(x_for_plot, *popt), fignum=fignum, subplot=subplot,
-                           label=label, figsize=figsize, color=color, linestyle=linestyle, **kwargs)
+                           label=label, figsize=figsize, color=color, linestyle=linestyle, ax=ax, **kwargs)
 
         if add_equation:
             text = '$y=ax+b$: a=%.2f, b=%.2f' % (popt[0], popt[1])
@@ -482,10 +491,10 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, figsize=None,
         popt, pcov = curve_fit(std_func.power_func, xdata, ydata)
         if color is None:
             fig, ax = plot(x_for_plot, std_func.power_func(x_for_plot, *popt), fignum=fignum, subplot=subplot,
-                           label=label, figsize=figsize, linestyle=linestyle, **kwargs)
+                           label=label, figsize=figsize, linestyle=linestyle, ax=ax, **kwargs)
         else:
             fig, ax = plot(x_for_plot, std_func.power_func(x_for_plot, *popt), fignum=fignum, subplot=subplot,
-                           label=label, figsize=figsize, color=color, linestyle=linestyle, **kwargs)
+                           label=label, figsize=figsize, color=color, linestyle=linestyle, ax=ax, **kwargs)
 
         if add_equation:
             text = '$y=ax^b$: a=%.2f, b=%.2f' % (popt[0], popt[1])
@@ -495,10 +504,10 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, figsize=None,
         popt, pcov = curve_fit(func, xdata, ydata)
         if color is None:
             fig, ax = plot(x_for_plot, func(x_for_plot, *popt), fignum=fignum, subplot=subplot, label=label, figsize=figsize,
-                           linestyle=linestyle, **kwargs)
+                           linestyle=linestyle, ax=ax, **kwargs)
         else:
             fig, ax = plot(x_for_plot, func(x_for_plot, *popt), fignum=fignum, subplot=subplot, label=label, figsize=figsize,
-                           color=color, linestyle=linestyle, **kwargs)
+                           color=color, linestyle=linestyle, ax=ax, **kwargs)
         y_fit = func(xdata, *popt)
     #plot(x_for_plot, std_func.power_func(x_for_plot, *popt))
 
@@ -1403,6 +1412,7 @@ def draw_power_triangle(ax, x, y, exponent, w=None, h=None, facecolor='none', ed
         x_base, y_base = 10 ** (exp_x + exp_w * 0.5), 10 ** (exp_y + exp_h - (exp_ymax - exp_ymin) / beta)
         x_height, y_height = 10 ** (exp_x - (exp_xmax - exp_xmin) / beta), 10 ** (exp_y + exp_h * 0.6)
 
+
     if set_base_label_one:
         ax.text(x_base, y_base, '1', fontsize=fontsize)
         ax.text(x_height, y_height, '%.2f' % exponent, fontsize=fontsize)
@@ -1526,7 +1536,7 @@ def get_color_list_gradient(color1='greenyellow', color2='darkgreen', n=10):
 
 def hex2rgb(hex):
     """
-    Converts HEX code to RGB in a numpy array
+    Converts a HEX code to RGB in a numpy array
     Parameters
     ----------
     hex: str, hex code. e.g. #B4FBB8
@@ -1542,14 +1552,13 @@ def hex2rgb(hex):
 
 def cname2hex(cname):
     """
-
+    Converts a color registered on matplotlib to a HEX code
     Parameters
     ----------
-    hex: str, hex code. e.g. #B4FBB8
+    cname
 
     Returns
     -------
-    rgb: numpy array. RGB
 
     """
     colors = dict(mpl.colors.BASE_COLORS, **mpl.colors.CSS4_COLORS) # dictionary. key: names, values: hex codes
@@ -1584,12 +1593,12 @@ def set_color_cycle_gradient(ax, color1='greenyellow', color2='navy', n=10):
 def update_figure_params(params):
     """
     update a default matplotlib setting
-    e.g. params = {'legend.fontsize': 'x-large',
-          'figure.figsize': (15, 5),
-         'axes.labelsize': 'x-large',
-         'axes.titlesize':'x-large',
-         'xtick.labelsize':'x-large',
-         'ytick.labelsize':'x-large'}
+    e.g. params = { 'legend.fontsize': 'x-large',
+                    'figure.figsize': (15, 5),
+                    'axes.labelsize': 'x-large',
+                    'axes.titlesize':'x-large',
+                    'xtick.labelsize':'x-large',
+                    'ytick.labelsize':'x-large'}
     Parameters
     ----------
     params: dictionary
@@ -1611,7 +1620,7 @@ reset_figure_params()
 
 
 # Embedded plots
-def add_subplot_axes(ax, rect, axisbg='w'):
+def add_subplot_axes(ax, rect, axisbg='w', alpha=1):
     """
     Creates a sub-subplot inside the subplot (ax)
     rect: list, [x, y, width, height] e.g. rect = [0.2,0.2,0.7,0.7]
@@ -1624,8 +1633,8 @@ def add_subplot_axes(ax, rect, axisbg='w'):
     Returns
     -------
     subax, Axes class object
-
     """
+
     fig = plt.gcf()
     box = ax.get_position()
     width = box.width
@@ -1639,16 +1648,39 @@ def add_subplot_axes(ax, rect, axisbg='w'):
     height *= rect[3]
     subax = fig.add_axes([x, y, width,height])
     subax.set_facecolor(axisbg)
+    subax.patch.set_alpha(alpha)
     x_labelsize = subax.get_xticklabels()[0].get_size()
     y_labelsize = subax.get_yticklabels()[0].get_size()
-    x_labelsize *= rect[2]**0.5
-    y_labelsize *= rect[3]**0.5
+    x_labelsize *= rect[2]**0.3
+    y_labelsize *= rect[3]**0.3
     subax.xaxis.set_tick_params(labelsize=x_labelsize)
     subax.yaxis.set_tick_params(labelsize=y_labelsize)
     return subax
 
 
 # sketches
+def draw_circle(ax, x, y, r, linewidth=1, edgecolor='r', facecolor='none', fill=False, **kwargs):
+    """
+    Draws a circle in a figure (ax)
+    Parameters
+    ----------
+    ax
+    x
+    y
+    r
+    linewidth
+    edgecolor
+    facecolor
+    fill
+
+    Returns
+    -------
+
+    """
+    circle = plt.Circle((x, y), r, linewidth=linewidth, edgecolor=edgecolor, facecolor=facecolor, fill=fill, **kwargs)
+    ax.add_artist(circle)
+    return circle
+
 def draw_rectangle(ax, x, y, width, height, angle=0.0, linewidth=1, edgecolor='r', facecolor='none', **kwargs):
     """
     Draws a rectangle in a figure (ax)
@@ -1805,7 +1837,7 @@ def get_mask4erroneous_pts(x, y, thd=1):
 
     """
     fractional_dydx =  np.gradient(y, x) / y
-    mask = fractional_dydx < thd
+    mask = np.abs(fractional_dydx) < thd
     mask = np.roll(mask, 1) # due to the convention of np.gradient
     return mask
 
@@ -1847,7 +1879,21 @@ def get_scatter_data_from_fig(fig, axis_number=0):
     return data_list
 
 def get_plot_data_from_fig(fig, axis_number=0):
-    nlines =  len(fig.axes[axis_number].lines)
+    """
+    Returns a list of data included in the figure
+    ... this function extracts data points for fig.ax.lines
+    ... Any other data must be returned
+
+    Parameters
+    ----------
+    fig
+    axis_number
+
+    Returns
+    -------
+
+    """
+    nlines = len(fig.axes[axis_number].lines)
     xlist, ylist = [], []
     for i in range(nlines):
         x = fig.axes[axis_number].lines[i]._xorig
