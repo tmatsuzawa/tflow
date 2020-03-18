@@ -102,29 +102,19 @@ def davis2hdf5_piv(datadir, use_chunks, savedir=None, savepath=None, header='B',
         with open(dpath, 'r') as fyle:
             xlist, ylist, ulist, vlist = [], [], [], []
             lines = fyle.readlines()
-
-            # File format changed since DaVis 10.1
-            if lines[0].__contains__("DaVis;"): # DaVis 10.1
-                delimitter = ";"
-            else: # default for versions older than DaVis 10.1
-                delimitter = " "
-
-            if delimitter == " ":
-                height, width = int(lines[0].split(delimitter)[4]), int(lines[0].split(delimitter)[5])
-            else:
-                height, width = int(lines[0].split(delimitter)[3]), int(lines[0].split(delimitter)[4])
+            height, width = int(lines[0].split()[4]), int(lines[0].split()[5])
             shape = (height, width)
             for i, line in enumerate(lines):
                 if i==0:
-                    if line.__contains__("\"Position\"%s\"mm\"" % delimitter):
+                    if line.__contains__("\"Position\" \"mm\""):
                         scale = 1.
                         pos_unit = 'mm'
                     else:
                         pos_unit = 'px'
-                    if line.__contains__("\"velocity\"%s\"m/s\"" % delimitter):
+                    if line.__contains__("\"velocity\" \"m/s\""):
                         vscale = 1000.
                         vel_unit = 'm/s'
-                    elif line.__contains__("\"displacement\"%s\"pixel\"" % delimitter):
+                    elif line.__contains__("\"displacement\" \"pixel\""):
                         vscale = scale * fps
                         vel_unit = 'px/frame'
                     else:
@@ -134,13 +124,8 @@ def davis2hdf5_piv(datadir, use_chunks, savedir=None, savepath=None, header='B',
                         print('\n Units of Position and Velocity: ' + pos_unit, vel_unit)
                         if vel_unit == 'px/frame':
                             print('scale (mm/px), frame rate(fps): %.5f, %.1f' % (scale, fps))
-                        elif vel_unit == 'm/s':
-                            print('... velocity gets converted to mm/s')
                 if i > 0:
-                    if delimitter == " ":
-                        line = line.replace(',', '.').split()
-                    else:
-                        line = line.split(delimitter)
+                    line = line.replace(',', '.').split()
                     x, y, u, v = [float(i) for i in line]
                     if u == 0:
                         u = np.nan

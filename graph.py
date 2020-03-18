@@ -21,6 +21,7 @@ import glob
 from fractions import Fraction
 from math import modf
 import pickle
+import copy
 import ilpm.vector as vec
 # comment this and plot_fit_curve if it breaks
 import library.basics.std_func as std_func
@@ -211,8 +212,9 @@ def plot(x, y, fignum=1, figsize=None, label='', color=None, subplot=None, legen
     elif ax is None:
         ax = plt.gca()
 
-    if x is None:
-        x = np.range(len(y))
+    if y is None:
+        y = copy.deepcopy(x)
+        x = np.range(len(x))
     # Make sure x and y are np.array
     x, y = np.asarray(x), np.asarray(y)
 
@@ -434,7 +436,7 @@ def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax
 ## Plot a fit curve
 def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figsize=None, linestyle='--',
                    xmin=None, xmax=None, add_equation=True, eq_loc='bl', color=None, label='fit',
-                   show_r2=False, return_r2=False, **kwargs):
+                   show_r2=False, return_r2=False, p0=None, bounds=(-np.inf, np.inf), **kwargs):
     """
     Plots a fit curve given xdata and ydata
     Parameters
@@ -473,10 +475,10 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
     x_for_plot = np.linspace(xmin, xmax, 1000)
     if func is None or func=='linear':
         print('Fitting to a linear function...')
-        popt, pcov = curve_fit(std_func.linear_func, xdata, ydata)
+        popt, pcov = curve_fit(std_func.linear_func, xdata, ydata, p0=p0, bounds=bounds)
         if color is None:
             fig, ax = plot(x_for_plot, std_func.linear_func(x_for_plot, *popt), fignum=fignum, subplot=subplot,
-                           label=label, figsize=figsize, linestyle=linestyle, ax=ax)
+                           label=label, figsize=figsize, linestyle=linestyle, ax=ax, **kwargs)
         else:
             fig, ax = plot(x_for_plot, std_func.linear_func(x_for_plot, *popt), fignum=fignum, subplot=subplot,
                            label=label, figsize=figsize, color=color, linestyle=linestyle, ax=ax, **kwargs)
@@ -488,7 +490,7 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
     elif func=='power':
         print('Fitting to a power law...')
 
-        popt, pcov = curve_fit(std_func.power_func, xdata, ydata)
+        popt, pcov = curve_fit(std_func.power_func, xdata, ydata, p0=p0, bounds=bounds)
         if color is None:
             fig, ax = plot(x_for_plot, std_func.power_func(x_for_plot, *popt), fignum=fignum, subplot=subplot,
                            label=label, figsize=figsize, linestyle=linestyle, ax=ax, **kwargs)
@@ -501,7 +503,7 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
             addtext(ax, text, option=eq_loc)
         y_fit = std_func.power_func(xdata, *popt)
     else:
-        popt, pcov = curve_fit(func, xdata, ydata)
+        popt, pcov = curve_fit(func, xdata, ydata, p0=p0, bounds=bounds)
         if color is None:
             fig, ax = plot(x_for_plot, func(x_for_plot, *popt), fignum=fignum, subplot=subplot, label=label, figsize=figsize,
                            linestyle=linestyle, ax=ax, **kwargs)
@@ -744,17 +746,45 @@ def legend(ax, remove=False, **kwargs):
 
 
 # Colorbar
-def reset_sfmt():
+class FormatScalarFormatter(mpl.ticker.ScalarFormatter):
+    """
+    Ad-hoc class to subclass matplotlib.ticker.ScalarFormatter
+    in order to alter the number of visible digits on color bars
+    """
+    def __init__(self, fformat="%03.1f", offset=True, mathText=True):
+        self.fformat = fformat
+        mpl.ticker.ScalarFormatter.__init__(self,useOffset=offset,useMathText=mathText)
+        self.set_scientific(True)
+        # Scientific notation is used for data < 10^-n or data >= 10^m, where n and m are the power limits set using set_powerlimits((n,m))
+        self.set_powerlimits((0, 0))
+    def _set_format(self):
+        """
+        Call this method to change the format of tick labels
+
+
+        Returns
+        -------
+
+        """
+
+        self.format = self.fformat
+        if self._useMathText:
+            self.format = '$%s$' % mpl.ticker._mathdefault(self.format)
+    def _update_format(self, fformat):
+        self.fformat = fformat
+        self._set_format()
+
+def reset_sfmt(fformat="%03.1f"):
     global sfmt
-    # Scientific format for Color bar- set format=sfmt to activate it
-    sfmt = mpl.ticker.ScalarFormatter(useMathText=True)
-    # Scientific notation is used for data < 10^-n or data >= 10^m, where n and m are the power limits set using set_powerlimits((n,m))
-    sfmt.set_scientific(True)
-    sfmt.set_powerlimits((0, 0))  # (n,m): 10^m <= data < 10 ^ -n]
-    # sfmt.format = '$\mathdefault{%1.1f}$'
+    sfmt = FormatScalarFormatter() # Default format: "%04.1f"
+    # sfmt.fformat = fformat # update format
+    # sfmt._set_format() # this updates format for scientific nota
+    sfmt._update_format(fformat)
+
 reset_sfmt()
 
 def get_sfmt():
+    ""
     global sfmt
     reset_sfmt()
     return sfmt
@@ -802,24 +832,38 @@ def add_colorbar_old(mappable, fig=None, ax=None, fignum=None, label=None, fonts
 
 
 def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', label=None, fontsize=None, option='normal',
-                 tight_layout=True, ticklabelsize=None, aspect='equal', ntick=5, tickinc=None, **kwargs):
+                 tight_layout=True, ticklabelsize=None, aspect='equal', ntick=5, tickinc=None, fformat="%03.1f", **kwargs):
     """
-    Adds a color bar
+    Adds a color bar to an axis object when mappable is passed
+    ...
 
-    e.g.
-        fig = plt.figure()
-        img = fig.add_subplot(111)
-        ax = img.imshow(im_data)
-        colorbar(ax)
     Parameters
     ----------
     mappable
-    location
+    fig: mpl.fig.Figure object
+    ax: mpl.axes.Axes object
+    fignum: int, figure number (num- attribute of the Figure class
+    location: str, 'left', 'right', 'top', 'bottom'
+    label: str
+    fontsize: float
+    option: str- Formatting option of the tick label (normal, scientific, scientific_custom)
+    tight_layout: bool (default: True)
+        ... Applies fig.tight_layout() at the end if True
+    ticklabelsize: float- fontsize of tick numbers
+    aspect: str- 'equal' (default)
+        ... passed to ax.set_aspect()
+    ntick: int, number of ticks (applied only if option=='scientific_custom')
+    tickinc: float, tick increment, default: None (applied only if option=='scientific_custom')
+    fformat: str, tick label format (e.g.- 0.4 x 10^5 instead of 4 x 10^4) default: "%03.1f"(applied only if option=='scientific')
+        ... If tick labels were weird, adjust the formatting style here.
+    kwargs: passed to fig.colorbar()
 
     Returns
     -------
-
+    cb: mpl.colorbar.Colorbase class object- output of fig.colorbar())
     """
+
+
     global sfmt
     def get_ticks_for_sfmt(mappable, n=10, inc=0.5, **kwargs):
         """
@@ -858,9 +902,9 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
             # exp = int(np.ceil(np.log10((zmax - zmin) / n)))
             # dz = (zmax - zmin) / n
             ticks = [i * dz for i in range(int(zmin / dz), int(zmax / dz) + 1)]
-            print(np.log10((zmax - zmin) / n), exp)
-            print((zmax - zmin) / n, dz)
-            print(ticks)
+            # print(np.log10((zmax - zmin) / n), exp)
+            # print((zmax - zmin) / n, dz)
+            # print(ticks)
 
         return ticks
 
@@ -883,7 +927,7 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
     if fig is None:
         fig = plt.gcf()
 
-    reset_sfmt()
+    reset_sfmt(fformat)
 
     divider = axes_grid.make_axes_locatable(ax)
     cax = divider.append_axes(location, size='5%', pad=0.15)
@@ -1618,6 +1662,16 @@ def default_figure_params():
 # Use the settings above as a default
 reset_figure_params()
 
+# plotting styles
+def show_plot_styles():
+    """Prints available plotting styles"""
+    style_list = ['default'] + sorted(style for style in plt.style.available)
+    print(style_list)
+    return style_list
+def use_plot_style(stylename):
+    """Reminder for me how to set a plotting style"""
+    plt.style.use(stylename)
+
 
 # Embedded plots
 def add_subplot_axes(ax, rect, axisbg='w', alpha=1):
@@ -1761,15 +1815,18 @@ def draw_box(ax, xx, yy, w_box=325., h_box=325., xoffset=0, yoffset=0, linewidth
     """
     xmin, xmax = np.nanmin(xx), np.nanmax(xx)
     ymin, ymax = np.nanmin(yy), np.nanmax(yy)
-    if np.nanmean(yy) > 0:
-        xc, yc = (xmax - xmin) / 2., (ymax - ymin) / 2.
-    else:
-        xc, yc = (xmax - xmin) / 2., -(ymax - ymin) / 2.
+    # if np.nanmean(yy) > 0:
+    #     xc, yc = xmin + (xmax - xmin) / 2., ymin + (ymax - ymin) / 2.
+    # else:
+    #     xc, yc = xmin + (xmax - xmin) / 2., ymin - (ymax - ymin) / 2.
+    xc, yc = xmin + (xmax - xmin) / 2., ymin + (ymax - ymin) / 2.
     x0, y0 = xc - w_box / 2. + xoffset, yc - h_box / 2. + yoffset
     draw_rectangle(ax, x0, y0, w_box, h_box, linewidth=linewidth, facecolor=facecolor, zorder=0)
     ax.set_facecolor(fluidcolor)
 
     if scalebar:
+        dx, dy = np.abs(xx[0, 1] - xx[0, 0]), np.abs(yy[1, 0] - yy[0, 0]) # mm/px
+
         #         x0_sb, y0_sb = x0 + 0.8 * w_box, y0 + 0.1*h_box
         x1_sb, y1_sb = x0 + sb_loc[0] * w_box, y0 + sb_loc[1] * h_box
         x0_sb, y0_sb = x1_sb - sb_length, y1_sb
@@ -1901,3 +1958,4 @@ def get_plot_data_from_fig(fig, axis_number=0):
         xlist.append(x)
         ylist.apppend(y)
     return xlist, ylist
+
