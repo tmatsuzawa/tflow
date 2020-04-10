@@ -14,6 +14,7 @@ import matplotlib.patches as mpatches
 import matplotlib.pylab as pylab
 import matplotlib.ticker as ticker
 import mpl_toolkits.axes_grid as axes_grid
+from matplotlib.lines import Line2D
 import itertools
 from scipy import stats
 import numpy as np
@@ -97,8 +98,6 @@ def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, over
         savepath = directory + '/' + os.path.split(path)[1]+ '_%03d.' % ver_no + ext
         ver_no += 1
 
-
-
     if verbose:
         print(("Saving figure to '%s'..." % savepath))
 
@@ -111,7 +110,6 @@ def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, over
             pickle.dump(fig, open(savepath[:-len(ext)-1] + '_fig.pkl', 'wb'))
         except:
             print('... Could not save a fig instance')
-
 
     # Close it
     if close:
@@ -177,7 +175,6 @@ def plotfunc(func, x, param, fignum=1, subplot=111, ax = None, label=None, color
     else:
         fig = plt.gcf()
 
-
     # y = func(x, a, b)
     if len(param)==1:
         a=param[0]
@@ -199,7 +196,7 @@ def plotfunc(func, x, param, fignum=1, subplot=111, ax = None, label=None, color
         ax.legend()
     return fig, ax
 
-def plot(x, y, fignum=1, figsize=None, label='', color=None, subplot=None, legend=False, fig=None, ax=None, maskon=False, thd=1, **kwargs):
+def plot(x, y=None, fignum=1, figsize=None, label='', color=None, subplot=None, legend=False, fig=None, ax=None, maskon=False, thd=1, **kwargs):
     """
     plot a graph using given x,y
     fignum can be specified
@@ -214,7 +211,7 @@ def plot(x, y, fignum=1, figsize=None, label='', color=None, subplot=None, legen
 
     if y is None:
         y = copy.deepcopy(x)
-        x = np.range(len(x))
+        x = np.arange(len(x))
     # Make sure x and y are np.array
     x, y = np.asarray(x), np.asarray(y)
 
@@ -382,9 +379,11 @@ def errorbar(x, y, xerr=0, yerr=0, fignum=1, marker='o', fillstyle='full', lines
     else:
         mask = [True] * len(x)
     if fillstyle == 'none':
-        ax.errorbar(x[mask], y[mask], xerr=xerr[mask], yerr=yerr[mask], marker=marker, mfc=mfc, linestyle=linestyle, label=label, **kwargs)
+        ax.errorbar(x[mask], y[mask], xerr=xerr[mask], yerr=yerr[mask], marker=marker, mfc=mfc, linestyle=linestyle,
+                    label=label, **kwargs)
     else:
-        ax.errorbar(x[mask], y[mask], xerr=xerr[mask], yerr=yerr[mask], marker=marker, fillstyle=fillstyle, linestyle=linestyle, label=label, **kwargs)
+        ax.errorbar(x[mask], y[mask], xerr=xerr[mask], yerr=yerr[mask], marker=marker, fillstyle=fillstyle,
+                    linestyle=linestyle, label=label, **kwargs)
     if legend:
         plt.legend()
     return fig, ax
@@ -583,8 +582,7 @@ def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None
             add_colorbar(cc, ax=ax, label=label, option=option, vmax=vmax, ntick=ntick, tickinc=tickinc)
         else:
             add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, vmax=vmax, ntick=ntick, tickinc=tickinc)
-    if aspect == 'equal':
-        ax.set_aspect('equal')
+    ax.set_aspect(aspect)
     # set edge color to face color
     cc.set_edgecolor('face')
 
@@ -1410,6 +1408,33 @@ def draw_power_triangle(ax, x, y, exponent, w=None, h=None, facecolor='none', ed
     -------
 
     """
+    def simplest_fraction_in_interval(x, y):
+        """Return the fraction with the lowest denominator in [x,y]."""
+        if x == y:
+            # The algorithm will not terminate if x and y are equal.
+            raise ValueError("Equal arguments.")
+        elif x < 0 and y < 0:
+            # Handle negative arguments by solving positive case and negating.
+            return -simplest_fraction_in_interval(-y, -x)
+        elif x <= 0 or y <= 0:
+            # One argument is 0, or arguments are on opposite sides of 0, so
+            # the simplest fraction in interval is 0 exactly.
+            return Fraction(0)
+        else:
+            # Remainder and Coefficient of continued fractions for x and y.
+            xr, xc = modf(1 / x);
+            yr, yc = modf(1 / y);
+            if xc < yc:
+                return Fraction(1, int(xc) + 1)
+            elif yc < xc:
+                return Fraction(1, int(yc) + 1)
+            else:
+                return 1 / (int(xc) + simplest_fraction_in_interval(xr, yr))
+
+    def approximate_fraction(x, e):
+        """Return the fraction with the lowest denominator that differs
+        from x by no more than e."""
+        return simplest_fraction_in_interval(x - e, x + e)
 
     xmin, xmax = ax.get_xlim()
     ymin, ymax = ax.get_ylim()
@@ -1672,6 +1697,14 @@ def use_plot_style(stylename):
     """Reminder for me how to set a plotting style"""
     plt.style.use(stylename)
 
+#
+def get_markers():
+    """Returns a list of available markers for ax.scatter()"""
+    filled_markers = list(Line2D.filled_markers)
+    unfilled_markers = [m for m, func in Line2D.markers.items()
+               if func != 'nothing' and m not in Line2D.filled_markers]
+    markers = filled_markers + unfilled_markers
+    return markers
 
 # Embedded plots
 def add_subplot_axes(ax, rect, axisbg='w', alpha=1):
