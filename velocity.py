@@ -6886,7 +6886,7 @@ def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
         tau0 = time_mod.time()
         print('... reading udata from path')
     if crop is not None and [x0, x1, y0, y1, z0, z1] == [0, None, 0, None, 0, None]:
-        x0, x1, y0, y1, z0, z1 = write_hdf5_dictcrop, -crop, crop, -crop, crop, -crop
+        x0, x1, y0, y1, z0, z1 = crop, -crop, crop, -crop, crop, -crop
 
     if mode == 'w' or 'wb':
         print('... w was passed to h5Py.File(...) which would truncate the file if it exists. \n'
@@ -7317,7 +7317,7 @@ def cart2sph(x, y, z):
     phi = np.arctan2(y, x)
     return r, theta, phi
 
-def car2sph_velocity(ux, uy, uz, xx, yy, zz, xc=0, yc=0, zc=0):
+def cart2sph_velocity(ux, uy, uz, xx, yy, zz, xc=0, yc=0, zc=0):
     """
     Returns velocity in the spherical basis when a velocity vector in cartesian coordinates is given
 
