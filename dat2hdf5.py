@@ -47,7 +47,7 @@ def write_hdf5_dict(filepath, data_dict, chunks=None, overwrite=True, verbose=Tr
         print('... File already exists! No overwriting...')
 
 
-def convert_dat2h5files(dpath, savedir=None, verbose=False, overwrite=True, start=0):
+def convert_dat2h5files(dpath, savedir=None, verbose=False, verbose_fn=True, overwrite=True, start=0, fn_max=np.inf):
     """
     Converts tecplot data files (.data format) to a set of hdf5 files
     Parameters
@@ -84,7 +84,7 @@ def convert_dat2h5files(dpath, savedir=None, verbose=False, overwrite=True, star
         # initialization
         data_lists = [[] for column in COLUMNS]
         with open(dpath, 'r') as f:
-            while fn < 500:
+            while fn < fn_max:
                 ln += 1
                 line = f.readline()
 
@@ -101,6 +101,9 @@ def convert_dat2h5files(dpath, savedir=None, verbose=False, overwrite=True, star
                                         overwrite=overwrite, verbose=verbose)
                         fn += 1
 
+                        if verbose_fn:
+                            if fn % 50 == 0:
+                                print("... frame %d" % fn)
                         # initialization
                         data_lists = [[] for column in COLUMNS]
                     else:
@@ -142,6 +145,7 @@ def main(args):
         print('... Making hdf5 files for dat files in ' + args.dir)
         dat_paths = natural_sort(glob.glob(os.path.join(args.dir, '*.dat')))
         for i, dpath in enumerate(dat_paths):
+            print(".dat being processed: ", os.path.split(dpath)[1])
             convert_dat2h5files(dpath, start=args.start, savedir=args.savedir, overwrite=args.overwrite)
 
 

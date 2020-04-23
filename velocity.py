@@ -4663,10 +4663,10 @@ def count_nans_along_axis(udatapath, axis='z',
         z1 = shape[2] + z1
 
     if dim == 2:
-        print('... 2D udata. Returns the ratio of nans to the column length along x')
+        print('... 2D udata. Returns the ratio of the no. of nans to the column length along x')
         axis = 'x'
     else:
-        print('... 3D udata. Returns the ratio of nans to the number of elements on the plane along %s' % axis)
+        print('... 3D udata. Returns the ratio of the no. of nans to the number of elements on the plane along %s' % axis)
 
     if axis == 'z':
         for z0_ in range(z0, z1):
@@ -7685,6 +7685,117 @@ def get_udata_dim(udatapath):
         shape = f['ux'].shape
     return shape
 
+def suggest_udata_dim2load(dpath, p=1., n=5, show=True, return_tuple=False):
+    """
+    Returns a dictionary of inds = {"x0": x0, "x1": x1, "y0": y0, "y1": y1, "z0": z0, "z1": z1}
+    which can be used to load udata via get_udata_from_path(..., **inds)
+    ... Estimating a reasonable volume for analysis is crucial to reduce the computation time since inpainting data is the
+    rate-limiting step most of the time.
+    ... Estimating the reasonable volume in udata is done by counting the number of nans in the data.
+
+    Parameters
+    ----------
+    dpath: str, path to a udata (h5)
+    p: float, param to determine the reasonable volume to load, default:1
+    ... domain: 0 < p < 2
+    ... The higher p, it returns a bigger volume.
+        ... usually, STB-generated udata contains slices with all nans along z.
+        ... You do not want to inpaint this!
+        ... So keep p around 1 to be reasonable.
+    n: int, number of time slices used for the estimation, default: 5
+    ... usually, the nan distribution does not vary much, so use only a couple of slices
+    show: bool, default:True
+    ... If True, show nan distribution along each axis
+    return_tuple: bool, default: False
+    ... If one wants (x0, x1, y0, y1, z0, z1) instead of a dictionary for some reason, set this True.
+    ... Typically, one likes to pass this information to a function with the kwargs ("x0", "x1", etc.),
+    so simply pass the default output (which is a dictionary) like **dictionary to unpack.
+
+    Returns
+    -------
+
+    """
+    height, width, depth, duration = get_udata_dim(dpath)
+    inc = int(duration / n)
+    # fractional number of nans
+    nx = count_nans_along_axis(dpath, axis='x', inc=inc)
+    ny = count_nans_along_axis(dpath, axis='y', inc=inc)
+    nz = count_nans_along_axis(dpath, axis='z', inc=inc)
+
+    lx, ly, lz = len(nx), len(ny), len(nz)
+
+    x0, _ = find_nearest(nx[:int(lx/2)], (np.nanmin(nx) + np.nanmax(nx)) / 2. * p )
+    x1, _ = find_nearest(nx[int(lx/2):], (np.nanmin(nx) + np.nanmax(nx)) / 2. * p )
+    y0, _ = find_nearest(ny[:int(ly/2)], (np.nanmin(ny) + np.nanmax(ny)) / 2. * p )
+    y1, _ = find_nearest(ny[int(ly/2):], (np.nanmin(ny) + np.nanmax(ny)) / 2. * p )
+    z0, _ = find_nearest(nz[:int(lz/2)], (np.nanmin(nz) + np.nanmax(nz)) / 2. * p )
+    z1, _ = find_nearest(nz[int(lz/2):], (np.nanmin(nz) + np.nanmax(nz)) / 2. * p )
+
+    x1 += int(lx/2)
+    y1 += int(ly/2)
+    z1 += int(lz/2)
+
+    if show:
+        import tflow.graph as graph
+        fig, ax = graph.plot(nx, label='x', subplot=121)
+        fig, ax = graph.plot(ny, label='y', subplot=121)
+        fig, ax = graph.plot(nz, label='z', subplot=121)
+
+        graph.axvline(ax, x=x0, color='C0')
+        graph.axvline(ax, x=x1, color='C0')
+
+        graph.axvline(ax, x=y0, color='C1')
+        graph.axvline(ax, x=y1, color='C1')
+
+        graph.axvline(ax, x=z0, color='C2')
+        graph.axvline(ax, x=z1, color='C2')
+        ax.legend()
+
+        nx_new = count_nans_along_axis(dpath, axis='x', inc=inc, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
+        ny_new = count_nans_along_axis(dpath, axis='y', inc=inc, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
+        nz_new = count_nans_along_axis(dpath, axis='z', inc=inc, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
+
+        fig, ax2 = graph.plot(nx_new, label='x', subplot=122)
+        fig, ax2 = graph.plot(ny_new, label='y', subplot=122)
+        fig, ax2 = graph.plot(nz_new, label='z', subplot=122, figsize=(17, 8))
+        ax.legend()
+    print('... Suggested volume (x0, x1, y0, y1, z0, z1) = (%d, %d, %d, %d, %d, %d)' % (x0, x1, y0, y1, z0, z1))
+    if not return_tuple:
+        # Return x0,... in a dictionary- one can pass this to get_udata_from_path(..., **ind_dict)
+        ind_dict = {"x0": x0, "x1": x1, "y0": y0, "y1": y1, "z0": z0, "z1": z1}
+        return ind_dict
+    else:
+        return x0, x1, y0, y1, z0, z1
+
+def find_nearest(array, value, option='normal'):
+    """
+    Find an element and its index closest to 'value' in 'array'
+    Parameters
+    ----------
+    array
+    value
+
+    Returns
+    -------
+    idx: index of the array where the closest value to 'value' is stored in 'array'
+    array[idx]: value closest to 'value' in 'array'
+
+    """
+    # get the nearest value such that the element in the array is LESS than the specified 'value'
+    if option == 'less':
+        array_new = copy.copy(array)
+        array_new[array_new > value] = np.nan
+        idx = np.nanargmin(np.abs(array_new - value))
+        return idx, array_new[idx]
+    # get the nearest value such that the element in the array is GREATER than the specified 'value'
+    if option == 'greater':
+        array_new = copy.copy(array)
+        array_new[array_new < value] = np.nan
+        idx = np.nanargmin(np.abs(array_new - value))
+        return idx, array_new[idx]
+    else:
+        idx = (np.abs(array-value)).argmin()
+        return idx, array[idx]
 
 # functions to derive major quantities of turbulence from udata and save it into a hdf5 format
 def derive_all(udata, dx, dy, savepath, udatapath='none', **kwargs):
