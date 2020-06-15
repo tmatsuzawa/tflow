@@ -8,6 +8,7 @@
 
 
 import numpy as np
+import sys
 from scipy.spatial.transform import Rotation as R
 import unittest
 
@@ -26,14 +27,40 @@ def mag1(X):
     return np.sqrt((np.asarray(X) ** 2).sum(-1))[..., np.newaxis]
 
 
-def dot(X, Y):
-    '''Calculate the dot product of two arrays of vectors.'''
-    return (np.asarray(X) * Y).sum(-1)
+def dot(X, Y, axis=None):
+    '''Calculate the dot product of two arrays of vectors.
+
+    '''
+    X, Y = np.asarray(X), np.asarray(Y)
+    if axis is None:
+        return (X * Y).sum(-1)
+    elif axis is not None:
+        dimX = len(X.shape)
+        dimY = len(Y.shape)
+        if not (dimX == 1 or dimY==1):
+            raise ValueError('At least ne of the input vectors must be 1D!')
+        elif dimX == 1 and dimY != 1:
+            tmp = X
+            X = Y
+            Y = tmp
+        else:
+            pass
+
+        dummy = X[..., np.newaxis]
+        dummy = np.swapaxes(dummy, axis, -1)
+        dp = np.dot(dummy, Y)
+        # Get rid of the axis along which dot product was computed
+        dp_sqd = np.squeeze(dp, axis=axis)
+        return dp_sqd
+
 
 
 def dot1(X, Y):
     '''Calculate the dot product of two arrays of vectors, keeping the last
     dimension index'''
+    a = np.asarray(X) * Y
+    print(a.shape, Y.shape)
+
     return (np.asarray(X) * Y).sum(-1)[..., np.newaxis]
 
 
@@ -154,9 +181,9 @@ def rot(a, X=None, cutoff=1E-10):
         given be the length of the vector (in radians).  May be a single vector
         or an array of vectors if each point is rotated separately.
 
-    X : [..., 3] array
+    X : [..., 3] array (shape: (n,3) )
         Vectors to rotate; if not specified generates a rotation basis instead.
-
+        ... n 3D vectors.
     cutoff : float
         If length of vector less than this value (1E-10 by default), no rotation
         is performed.  (Used to avoid basis errors)
@@ -225,6 +252,43 @@ def rot(a, X=None, cutoff=1E-10):
         return apply_basis(X, B)
     else:
         return B
+
+def rotate2d(vector, theta, xc=0, yc=0):
+    """
+    Rotates a vector with shape (2, n) by theta around (xc, yc)
+
+
+    Parameters
+    ----------
+    vector
+    theta
+    xc
+    yc
+
+    Returns
+    -------
+
+    """
+    vector = np.asarray(vector)
+    if len(vector.shape) != 1:
+        vector[0, :] -= xc
+        vector[1, :] -= yc
+    else:
+        vector[0] -= xc
+        vector[1] -= yc
+
+    c, s = np.cos(theta), np.sin(theta)
+    R = np.array(((c, -s), (s, c)))
+    rotated_vec = np.matmul(R, vector)
+
+    if len(vector.shape) != 1:
+        vector[0, :] += xc
+        vector[1, :] += yc
+    else:
+        vector[0] += xc
+        vector[1] += yc
+
+    return rotated_vec
 
 
 def normalize_basis(B):
@@ -311,7 +375,7 @@ def get_an_orthonormal_basis(dim, v1=None):
     return basis
 
 
-def apply_right_handedness(basis, thd=10 ** -10):
+def apply_right_handedness(basis, thd=10 ** -2):
     """
     Convert 3D basis to be right-handed
     If 2D basis were given, it converts the basis such that
@@ -327,7 +391,7 @@ def apply_right_handedness(basis, thd=10 ** -10):
         return basis
     else:
         cpd = cross(norm(basis[:, 0]), norm(basis[:, 1]))
-        if np.abs(cpd + norm(basis[:, 2])) < thd:
+        if mag(cpd + norm(basis[:, 2])) < thd:
             basis[:, 2] = -basis[:, 2]
         return basis
 
@@ -413,6 +477,33 @@ def get_rotation_matrix_between_two_vectors(a, b):
                     [0, 0, 1]])
     R = I + A + np.matmul(A, A) * (1 - c) / s ** 2
     return R
+
+
+def get_change_of_basis_matrix(basisA, basisB):
+    """
+    Returns a change-of-basis matrix from basis A to basis B
+    ... each basis must consist of linearly independent vectors
+
+    e.g.
+        basis_A = np.asarray([[1, 0, 0],
+                              [0, 1, 0],
+                              [0, 0, 1]])#standard basis
+        basis_B = np.asarray([[1,0, 1],
+                              [1,2,4],
+                              [1,-1,-1]])
+    """
+    a, b = basisA, basisB
+    Mae = a  # change of basis from a to a standard basis
+    Mbe = b  # change of basis from b to a standard basis
+    if np.linalg.det(Mbe) == 0:
+        #         print('... change-of-basis matrix is proven to be ALWAYS invertible but the code says it is.')
+        print(
+            '... You supplied a inappropriate basis for basis B! Probably it is not linearly indepenent. Please check.')
+        sys.exit()
+
+    Mab = np.matmul(np.linalg.inv(Mbe),
+                    Mae)  # change of basis from a to b, which is equal to the inverse of Mbe since a is a standard basis
+    return Mab
 
 
 class TestCases(unittest.TestCase):

@@ -1,29 +1,25 @@
-from scipy.stats import binned_statistic
 from tqdm import tqdm
 import numpy as np
 import re
 import h5py
-from scipy.interpolate import interp2d
-from scipy.interpolate import UnivariateSpline
 from scipy import interpolate
+from scipy.interpolate import interp2d, griddata, UnivariateSpline, RegularGridInterpolator, LinearNDInterpolator
+from scipy.stats import binned_statistic
 import scipy.integrate as integrate
-from scipy.optimize import minimize
-import numpy.ma as ma
-from scipy import signal
-from scipy import interpolate
-from scipy.interpolate import griddata
-from scipy import ndimage
+from scipy.optimize import minimize, curve_fit
+from scipy import ndimage, interpolate, signal
 from scipy.stats import multivariate_normal
 import itertools
 import os, copy, sys, re  # fundamentals
 import time as time_mod
-import ilpm.vector as vec  # irvinelab codes
 
 import warnings
-
+import matplotlib.cbook
+warnings.filterwarnings("ignore",category=matplotlib.cbook.mplDeprecation)
 warnings.simplefilter('ignore', RuntimeWarning)
-# For plotting
+warnings.simplefilter('ignore', FutureWarning)
 import matplotlib.pyplot as plt
+import ilpm.vector as vec  # irvinelab codes
 import tflow.graph as graph
 import subprocess
 
@@ -61,16 +57,55 @@ author: takumi matsuzawa
 
 
 ########## Fundamental operations ##########
-def get_duidxj_tensor(udata, dx=1., dy=1., dz=1.):
+def get_duidxj_tensor(udata, dx=1., dy=1., dz=1., xyz_orientations=np.asarray([1, -1, 1]),
+                      xx=None, yy=None, zz=None):
     """
     Assumes udata has a shape (d, nrows, ncols, duration) or  (d, nrows, ncols)
     ... one can easily make udata by np.stack((ux, uy))
 
+    Important Warning:
+    ... udata is np.stack((ux, uy, uz))
+    ... udata.shape = dim, nrows, ncols, duration
     Parameters
     ----------
     udata: numpy array with shape (ux, uy) or (ux, uy, uz)
         ... assumes ux/uy/uz has a shape (nrows, ncols, duration) or (nrows, ncols, nstacks, duration)
-        ... can handle udata without temporal axis
+        ... can handle udata without a temporal axis
+    dx:
+    dy:
+    dz:
+    xyz_orientations: 1d array-like with shape (3,)
+        ... xyz_orientations = [djdx, didy, dkdz]
+        ... HOW TO DETERMINE xyz_orientations:
+                1. Does the xx[0, :] (or xx[0, :, 0] for 3D) monotonically increase as the index increases?
+                    If True, djdx = 1
+                    If False, djdx = -1
+                2. Does the yy[:, 0] (or yy[:, 0, 0] for 3D) monotonically increase as the index increases?
+                    If True, didy = 1
+                    If False, didy = -1
+                3. Does the zz[0, 0, :] monotonically increase as the index increases?
+                    If True, dkdz = 1
+                    If False, dkdz = -1
+            ... If you are not sure what this is, use
+
+        ... Factors between index space (ijk) and physical space (xyz)
+
+        ... This factor is necessary since the conventions used for the index space and the physical space are different.
+            Consider a 3D array a. a[i, j, k]. The convention used for this module is to interpret this array as a[y, x, z].
+            (In case of udata, udata[dim, y, x, z, t])
+            All useful modules such as numpy are written in the index space, but this convention is not ideal for physicists
+            for several reasons.
+            1. many experimental data are not organized in the index space.
+            2. One always requires conversion between the index space and physical space especially at the end of the analysis.
+            (physicists like to present in the units of physical units not in terms of ijk)
+
+        ... This array is essentially a Jacobian between the index space basis (ijk) and the physical space basis (xyz)
+            All information needed is just dx/dj, dy/di, dz/dk because ijk and xyz are both orthogonal bases.
+            There is no off-diagonal elements in the Jacobian matrix, and one needs to supply only 3 elements for 3D udata.
+            If I strictly use the Cartesian basis for xyz (as it should), then I could say they are both orthonormal.
+            This makes each element of the Jacobian array to be either 1 or -1, reflecting the directions of +x/+y/+z
+            with respect to +j/+i/+k
+
 
     Returns
     -------
@@ -79,8 +114,15 @@ def get_duidxj_tensor(udata, dx=1., dy=1., dz=1.):
             e.g.-  sij(x, y, t) = sij[y, x, t, i, j]
         ... sij = d ui / dxj
     """
+
+    if xx is not None and yy is not None:
+        xyz_orientations = get_jacobian_xyz_ijk(xx, yy, zz)
+
     shape = udata.shape  # shape=(dim, nrows, ncols, nstacks) if nstacks=0, shape=(dim, nrows, ncols)
-    if shape[0] == 2:
+    dim = shape[0]
+
+
+    if dim == 2:
         ux, uy = udata[0, ...], udata[1, ...]
         try:
             dim, nrows, ncols, duration = udata.shape
@@ -90,17 +132,16 @@ def get_duidxj_tensor(udata, dx=1., dy=1., dz=1.):
             ux = ux.reshape((ux.shape[0], ux.shape[1], duration))
             uy = uy.reshape((uy.shape[0], uy.shape[1], duration))
 
-        duxdx = np.gradient(ux, dx, axis=1)
-        duxdy = np.gradient(ux, dy, axis=0)
-        duydx = np.gradient(uy, dx, axis=1)
-        duydy = np.gradient(uy, dy, axis=0)
+        duxdx = np.gradient(ux, dx, axis=1) * xyz_orientations[0]
+        duxdy = np.gradient(ux, dy, axis=0) * xyz_orientations[1] # +dy is the column up. np gradient computes difference by going DOWN in the column, which is the opposite
+        duydx = np.gradient(uy, dx, axis=1) * xyz_orientations[0]
+        duydy = np.gradient(uy, dy, axis=0) * xyz_orientations[1]
         sij = np.zeros((nrows, ncols, duration, dim, dim))
         sij[..., 0, 0] = duxdx
         sij[..., 0, 1] = duxdy
         sij[..., 1, 0] = duydx
         sij[..., 1, 1] = duydy
-    elif shape[0] == 3:
-        dim = 3
+    elif dim == 3:
         ux, uy, uz = udata[0, ...], udata[1, ...], udata[2, ...]
         try:
             # print ux.shape
@@ -111,15 +152,15 @@ def get_duidxj_tensor(udata, dx=1., dy=1., dz=1.):
             ux = ux.reshape((ux.shape[0], ux.shape[1], ux.shape[2], duration))
             uy = uy.reshape((uy.shape[0], uy.shape[1], uy.shape[2], duration))
             uz = uz.reshape((uz.shape[0], uz.shape[1], uz.shape[2], duration))
-        duxdx = np.gradient(ux, dx, axis=1)
-        duxdy = np.gradient(ux, dy, axis=0)
-        duxdz = np.gradient(ux, dz, axis=2)
-        duydx = np.gradient(uy, dx, axis=1)
-        duydy = np.gradient(uy, dy, axis=0)
-        duydz = np.gradient(uy, dz, axis=2)
-        duzdx = np.gradient(uz, dx, axis=1)
-        duzdy = np.gradient(uz, dy, axis=0)
-        duzdz = np.gradient(uz, dz, axis=2)
+        duxdx = np.gradient(ux, dx, axis=1) * xyz_orientations[0]
+        duxdy = np.gradient(ux, dy, axis=0) * xyz_orientations[1]
+        duxdz = np.gradient(ux, dz, axis=2) * xyz_orientations[2]
+        duydx = np.gradient(uy, dx, axis=1) * xyz_orientations[0]
+        duydy = np.gradient(uy, dy, axis=0) * xyz_orientations[1]
+        duydz = np.gradient(uy, dz, axis=2) * xyz_orientations[2]
+        duzdx = np.gradient(uz, dx, axis=1) * xyz_orientations[0]
+        duzdy = np.gradient(uz, dy, axis=0) * xyz_orientations[1]
+        duzdz = np.gradient(uz, dz, axis=2) * xyz_orientations[2]
 
         sij = np.zeros((nrows, ncols, nstacks, duration, dim, dim))
         sij[..., 0, 0] = duxdx
@@ -131,7 +172,7 @@ def get_duidxj_tensor(udata, dx=1., dy=1., dz=1.):
         sij[..., 2, 0] = duzdx
         sij[..., 2, 1] = duzdy
         sij[..., 2, 2] = duzdz
-    elif shape[0] > 3:
+    elif dim > 3:
         print('...Not implemented yet.')
         return None
     return sij
@@ -226,8 +267,7 @@ def div(udata):
     div_u: numpy array
           ... div_u has a shape (height, width, depth, duration) (3D) or (height, width, duration) (2D)
     """
-    sij = get_duidxj_tensor(
-        udata)  # shape (nrows, ncols, duration, 2, 2) (dim=2) or (nrows, ncols, nstacks, duration, 3, 3) (dim=3)
+    sij = get_duidxj_tensor(udata)  # shape (nrows, ncols, duration, 2, 2) (dim=2) or (nrows, ncols, nstacks, duration, 3, 3) (dim=3)
     dim = len(sij.shape) - 3  # spatial dim
     div_u = np.zeros(sij.shape[:-2])
     for d in range(dim):
@@ -235,7 +275,7 @@ def div(udata):
     return div_u
 
 
-def curl(udata, dx=1., dy=1., dz=1.):
+def curl(udata, dx=1., dy=1., dz=1., xyz_orientations=np.asarray([1, -1, 1]), xx=None, yy=None, zz=None):
     """
     Computes curl of a velocity field using a rate of strain tensor
     ... if you already have velocity data as ux = array with shape (m, n) and uy = array with shape (m, n),
@@ -252,7 +292,7 @@ def curl(udata, dx=1., dy=1., dz=1.):
         shape: (height, width, duration) (2D) or (height, width, duration) (2D)
 
     """
-    sij = get_duidxj_tensor(udata, dx=dx, dy=dy, dz=dz)
+    sij = get_duidxj_tensor(udata, dx=dx, dy=dy, dz=dz, xyz_orientations=xyz_orientations, xx=xx, yy=yy, zz=zz)
     dim = len(sij.shape) - 3  # spatial dim
     eij, gij = decompose_duidxj(sij)
     if dim == 2:
@@ -262,13 +302,17 @@ def curl(udata, dx=1., dy=1., dz=1.):
         omega1, omega2, omega3 = 2. * gij[..., 2, 1], 2. * gij[..., 0, 2], 2. * gij[..., 1, 0]
         # omega1, omega2, omega3 = -2. * gij[..., 2, 1], 2. * gij[..., 0, 2], -2. * gij[..., 1, 0]
         omega = np.stack((omega1, omega2, omega3))
+        # print(gij.shape, omega1.shape)
+        # a = omega3[..., 17, 0] != 0
+        # print(omega3[..., 17, 0], a.any())
+
     else:
         print('Not implemented yet!')
         return None
     return omega
 
 
-def curl_2d(ux, uy, dx=1., dy=1.):
+def curl_2d(ux, uy, dx=1., dy=1., xyz_orientations=np.asarray([1, -1]), xx=None, yy=None, zz=None):
     """
     Calculate curl of 2D (or 2D+1) field
 
@@ -288,10 +332,12 @@ def curl_2d(ux, uy, dx=1., dy=1.):
     omega: 2D numpy array
         vorticity field
     """
+    if xx is not None and yy is not None:
+        xyz_orientations = get_jacobian_xyz_ijk(xx, yy, zz)
 
     # duxdx = np.gradient(ux, axis=1)
-    duxdy = np.gradient(ux, dy, axis=0)
-    duydx = np.gradient(uy, dx, axis=1)
+    duxdy = np.gradient(ux, dy, axis=0) * xyz_orientations[0]
+    duydx = np.gradient(uy, dx, axis=1) * xyz_orientations[1]
     # duydy = np.gradient(uy, axis=0)
 
     omega = duydx - duxdy
@@ -347,12 +393,11 @@ def get_enstrophy(udata, dx=1., dy=1., dz=1.):
     omega = curl(udata, dx=dx, dy=dy, dz=dz)
     shape = omega.shape  # shape=(dim, nrows, ncols, nstacks, duration) if nstacks=0, shape=(dim, nrows, ncols, duration)
     if dim == 2:
-        enstrophy = omega ** 2 / 2.
+        enstrophy = omega ** 2
     elif dim == 3:
         enstrophy = np.zeros(shape[1:])
-        for d in range(dim):
-            enstrophy += omega[d, ...] ** 2
-        enstrophy /= 2.
+    for d in range(dim):
+        enstrophy += omega[d, ...] ** 2
     return enstrophy
 
 
@@ -372,7 +417,7 @@ def get_time_avg_energy(udata):
     """
     dim = udata.shape[0]
     energy = get_energy(udata)
-    energy_avg = np.nanmean(energy, axis=dim)
+    energy_avg = np.nanmean(energy, axis=-1)
     return energy_avg
 
 
@@ -380,7 +425,7 @@ def get_time_avg_enstrophy(udata, dx=1., dy=1., dz=1.):
     """
     Returns a time-averaged-enstrophy field
     ... NOT MEAN FLOW ENSTROPHY
-
+fsl
     Parameters
     ----------
     udata: nd array
@@ -392,7 +437,7 @@ def get_time_avg_enstrophy(udata, dx=1., dy=1., dz=1.):
     """
     dim = udata.shape[0]
     enstrophy = get_enstrophy(udata, dx=dx, dy=dy, dz=dz)
-    enstrophy_avg = np.nanmean(enstrophy, axis=dim)
+    enstrophy_avg = np.nanmean(enstrophy, axis=-1)
     return enstrophy_avg
 
 
@@ -500,6 +545,161 @@ def get_turbulence_intensity_local(udata):
     for t in range(u_t_rms.shape[-1]):
         ti_local[..., t] = u_t_rms[..., t] / u_rms
     return ti_local
+
+# Circulation computation (Use of spatially 2D udata is recommended)
+
+def compute_circulation(udata, xx, yy, zz=None, contour=None, rs=[10.], xc=0, yc=0, zc=0,
+                        n=100, return_contours=False):
+    """
+    Returns circulation along a given contour (if None, a circular contour by default) with udata and spatial grids as inputs
+        ... it is compatible with spatially 2D/3D udata
+            Yet, 2D udata is probably easier to handle. If you need a sliced velocity field from a volumetric udata,
+            consider using slice_udata_3d()
+        ... For 3D udata, you probably want to pass a contour manually.
+        ... Default contour is a circle(s) with radius of 10 and its center at (xc, yc) or (xc, yc, zc).
+            If you want the contours with multiple radii, try something like rs = [10, 20, 25, ...]
+        ... if you want to draw contours later, you can output pts on the contours by setting return_contours True.
+
+    How it works:
+        It computes a Riemann sum of addends defined by velocity \cdot dl at each point on the contour.
+        ... In case of
+                1) a part of the contour were out of the plane / volume
+                2) udata contains nans at a point on the contour
+            this function first computes the average of the addends, then multiples the avg by the number of pts along the contour.
+            This way, it still computes the correct value of circulation if these cases occur, and still outputs
+            somewhat meaningful values even if these cases occur.
+
+    Parameters
+    ----------
+    udata
+    xx
+    yy
+    zz
+    contour: 2d array with shape (n, dim), default: None
+        ... contour must be closed but it is not necessary to pass a closed contour.
+            The contour will be closed by connecting the first and last pts in this array.
+            (It is also okay to pass a contour with an array of a closed contour to this function)
+        ... default contour is circular with a radius (or radii) of 10 around the center (xc, yc, zc)
+        ... contour[:, 0]- x-coords of pts on the contour
+            contour[:, 1]- y-coords of pts on the contour
+            contour[:, 2]- z-coords of pts on the contour
+    rs: list, radii in the same units as xx/yy/zz
+        ... only relevant if "contours" is None
+    xc: float, x-coordinate of the center of a circular contour(s), default:0.
+        ... only relevant if "contours" is None
+    yc: float, y-coordinate of the center of a circular contour(s), default:0.
+        ... only relevant if "contours" is None
+    zc: float, z-coordinate of the center of a circular contour(s), default:0.
+        ... only relevant if "contours" is None
+    n: number of sampled pts on the circular contour
+        ... only relevant if "contours" is None
+    return_contours: bool, default: False
+        ... If True, it returns pts on the contour(s)
+        ... This feature could be handy if you'd like to plot the contour(s) later
+
+    Returns
+    -------
+    gammas: nd array with shape (duration, ) or (len(rs), duration), circulation values
+    contours: nd array (optional)
+    """
+    contours = []
+    udata = fix_udata_shape(udata)
+    dim, duration = udata.shape[0], udata.shape[-1]
+
+    if np.isnan([xc, yc, zc]).any():
+        gammas = np.empty((len(rs), duration))
+        gammas[:] = np.nan
+        if return_contours:
+            contours = np.empty((len(rs), n, 2))
+            contours[:] = np.nan
+            return gammas, contours
+        else:
+            gammas
+
+    if dim == 3 and zz is None:
+        raise ValueError(
+            '... Spatial 3D udata is provided. grid for z-coordinates must be also supplied for interpolation.')
+
+    if contour is None:
+        if dim == 3:
+            warnings.warn(
+                "Depreciated! You probably want to pass a contour to compute circulation using volumetric udata.",
+                DeprecationWarning)
+            print('... you provided spatially 3D udata. By default, it computes a line integral along \
+            a circular contour(s) with its center (xc, yc, zc=0) on the xy plane')
+            print('... If you preferred to compute circulation using spatialy 3D udata along different contours, \
+            you must pass a contour manually. See docstrings.')
+            print('... Alternative is passing a planar udata by slicing a volumetric udata which can be obtained by \
+            velocity.slice_udata_3d(udata, xx, yy, zz, surface_vector), cartesian_coords_of_a_pt_on_the_plane')
+
+        thetas = np.linspace(0, 2 * np.pi, n)
+
+        gammas = np.empty((len(rs), duration))
+        for m, r in enumerate(rs):
+            xs = xc + r * np.cos(thetas)
+            ys = yc + r * np.sin(thetas)
+            zs = np.zeros_like(xs) + zc
+
+            dx = np.diff(xs, append=xs[0])
+            dy = np.diff(ys, append=ys[0])
+            dz = np.zeros(len(xs))
+
+            if dim == 2:
+                dl = np.stack((dx, dy)).T
+                contour = np.stack((xs, ys)).T # x, y
+                contour4int_func = contour[:, [1, 0]] # y, x
+            else:
+                dl = np.stack((dx, dy, dz)).T
+                contour = np.stack((xs, ys, zs)).T # x, y
+                contour4int_func = contour[:, [1, 0, 2]] # y, x, z
+            contours.append(contour)
+
+            # Interpolating function, output of interpolate_udata_at_instant_of_time(), requires arguments y, x, z
+            # in that order (... this is just a convention)
+            # To accomodate this, change the order of the contour array
+            for t in range(duration):
+                fs = interpolate_udata_at_instant_of_time(udata, xx, yy, zz=zz, t=t)
+                gamma = 0  # initialization
+                for i in range(dim):
+                    uxi_along_cntr = fs[i](contour4int_func)  # fs[i]( (y, x, z) ): ui at (x, y, z)
+                    gamma += uxi_along_cntr * dl[:, i]
+
+                gammas[m, t] = np.nanmean(gamma) * len(uxi_along_cntr)
+    else:
+        contours.append(contour)
+        if contour.shape[-1] == 2:
+            contour4int_func = contour[:, [1, 0]]
+        elif contour.shape[-1] == 3:
+            contour4int_func = contour[:, [1, 0, 2]]
+
+
+        if dim != contour.shape[-1]:
+            print('... udata dimension and contour dimension does not match!')
+            print('... This makes ambiguious how to compute a line integral. Aborting... ')
+            sys.exit(1)
+        else:
+            dxis = []
+            for i in range(dim):
+                dxi = np.diff(contour[:, i], append=contour[0, i])
+                dxis.append(dxi)
+            dl = np.stack([dxi for dxi in dxis]).T
+
+            gammas = np.empty(duration)
+            for t in range(duration):
+                fs = interpolate_udata_at_instant_of_time(udata, xx, yy, zz=zz, t=t)
+                gamma = 0  # initialization
+                for i in range(dim):
+                    uxi_along_cntr = fs[i](contour4int_func)
+                    gamma += uxi_along_cntr * dl[:, i]
+
+                gammas[t] = np.nanmean(gamma) * len(uxi_along_cntr)
+    if return_contours:
+        contours = np.asarray(contours)
+        return gammas, contours
+    else:
+        return gammas
+
+
 
 
 ########## Energy spectrum, Dissipation spectrum ##########
@@ -4300,6 +4500,25 @@ def rankine_vortex_line_3d_gen(xx, yy, zz, x0=0, y0=0, z0=0, gamma=1., a=1.,
 
     return udata
 
+def get_unidirectional_flow(xx, yy, t=np.asarray([0, 1]), U=10, c=0,
+                            decay=None, decay_scale=1):
+    theta = np.arctan2(t[0], t[1])
+    ux = np.ones_like(xx) * U * np.cos(theta)
+    uy = np.ones_like(xx) * U * np.sin(theta)
+    udata = np.stack((ux, uy))
+
+    dd = np.abs( ( xx + np.tan(theta) * yy + c) ) / np.sqrt(1 + np.tan(theta) ** 2)
+
+    if decay == 'linear':
+        udata = udata * (1 - dd / np.max(dd))
+    elif decay == 'exp':
+        udata = udata * np.exp(- decay_scale * dd / np.max(dd))
+    else:
+        pass
+    return udata
+
+
+
 
 def get_sample_turb_field_3d(return_coord=True):
     """
@@ -4573,14 +4792,14 @@ def get_time_avg_energy_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None, 
     else:
         from tqdm import tqdm
 
-    with h5py.File(udatapath) as f:
+    with h5py.File(udatapath, mode='r') as f:
         try:
             height, width, depth, duration = f['ux'].shape
             height, width, depth = f['ux'][y0:y1, x0:x1, z0:z1, 0].shape
             dim = 3
         except:
             height, width, duration = f['ux'].shape
-            height, width = f['ux'][y0:y1, x0:x1, z0:z1, 0].shape
+            height, width = f['ux'][y0:y1, x0:x1, 0].shape
             dim = 2
         if t1 is None:
             t1 = duration
@@ -4935,7 +5154,7 @@ def get_time_avg_field_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None, z
 
 def export_raw_file_from_dpath(udatapath, func=get_energy, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                                t0=0, t1=None, inc=1, savedir=None, dtype='uint32', thd=None,
-                               interpolate=None, **kwargs):
+                               interpolate=None, notebook=True, running_avg=1, **kwargs):
     """
     Intended for 4D visualization. e.g. use ORS Dragonfly for visualiztion
     Exports a raw file of the output of a given function (default: get_energuy) at each time step.
@@ -4960,25 +5179,36 @@ def export_raw_file_from_dpath(udatapath, func=get_energy, x0=0, x1=None, y0=0, 
     savedir
     dtype
     thd
-    interpolate
+    interpolate: str, default None
+        ... choose from 'idw' and 'localmean'
+        ... Inverse distance weighting (IDW) - gaussian mean
+        ... assigns mean of the surrounding values at the missing points
     kwargs
 
     Returns
     -------
 
     """
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+    else:
+        from tqdm import tqdm
+
     udatadir, udaname = os.path.split(udatapath)
     pdir = os.path.split(udatadir)[0]
     if savedir is None:
         savedir = os.path.join(pdir, 'raw_files')
         savedir = os.path.join(os.path.join(savedir, udaname[:-3]), func.__name__)
 
-    with h5py.File(udatapath) as f:
-        shape = f['ux'].shape
-        duration = shape[-1]
-        savedir += '_%03dx%03dx%03dx%05dx_inc%d' % (shape[0], shape[1], shape[2], shape[3], inc)
-        if interpolate is not None:
-            savedir += '_%s' % interpolate
+    dummy = get_udata_from_path(udatapath, return_xy=False,
+                                                x0=x0, x1=x1, y0=y0, y1=y1,
+                                                z0=z0, z1=z1,
+                                                t0=0, t1=1, verbose=False)
+    shape = dummy.shape[1:]
+    duration = get_udata_dim(udatapath)[-1]
+    savedir += '_%03dx%03dx%03dx%05dx_inc%d' % (shape[0], shape[1], shape[2], shape[3], inc)
+    if interpolate is not None:
+        savedir += '_%s' % interpolate
 
     if t1 is None:
         t1 = duration
@@ -4987,14 +5217,20 @@ def export_raw_file_from_dpath(udatapath, func=get_energy, x0=0, x1=None, y0=0, 
         udata, xx, yy, zz = get_udata_from_path(udatapath, return_xy=True,
                                                 x0=x0, x1=x1, y0=y0, y1=y1,
                                                 z0=z0, z1=z1,
-                                                t0=t, t1=t + 1, verbose=False)
+                                                t0=t, t1=t + running_avg, verbose=True)
         dx, dy, dz = get_grid_spacing(xx, yy, zz)
-        # Perform 3D interpolation
-        if interpolate is not None:
-            udata = clean_udata(udata, xx, yy, zz, verbose=False, method=interpolate)
 
-            # Save energy
-        data2save = func(udata, **kwargs)[..., 0]  # save 3d array
+        # Save a scalar field derived from
+        if running_avg == 1:
+            # Perform 3D interpolation
+            if interpolate is not None:
+                udata = clean_udata(udata, verbose=False, method=interpolate)
+            data2save = func(udata, **kwargs)[..., 0]  # save 3d array
+        else:
+            data2save = func(udata, **kwargs)[...]  # save 3d array
+            if interpolate is not None:
+                data2save = replace_nans(data2save, method=interpolate, showtqdm=False,
+                                         max_iter=10, tol=0.05, kernel_radius=2, kernel_sigma=2)
 
         if thd is not None:
             keep = data2save < thd
@@ -5003,11 +5239,12 @@ def export_raw_file_from_dpath(udatapath, func=get_energy, x0=0, x1=None, y0=0, 
         data2save = data2save
 
         savepath = os.path.join(savedir, 't%05d.raw' % t)
-
         if not os.path.exists(savedir):
             os.makedirs(savedir)
         data2save.astype(dtype).tofile(savepath)
 
+    if notebook:
+        from tqdm import tqdm
 
 def export_raw_file(data2save, savepath, dtype='uint32', thd=np.inf, interpolate=None, fill_value=np.nan,
                     contrast=True, log10=False, **kwargs):
@@ -5067,6 +5304,637 @@ def export_raw_file(data2save, savepath, dtype='uint32', thd=np.inf, interpolate
     if not os.path.exists(savedir):
         os.makedirs(savedir)
     data2save.astype(dtype).tofile(savepath)
+
+######### Helper for volumetric data ########
+## Generate a 2D slice from a 3D data
+def slicer(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, show=False, notebook=True,
+           debug=False):
+    """
+    Samples points on the cross section of a volume defined by 3D grid (xx, yy, zz) in two different bases and transformation matrices
+    ... The area vector (normal to the cross section) and a point on the cross section must be supplied.
+    ... It returns xs, ys, zs, ps, qs, ns, Mac, Mca, basisC
+    (xyz coordinates, coordinates in a different basis, transformation matrices, the new basis)
+
+    Details:
+        Cartesian coordinates use a standard basis (e1, e2, e3).
+        This is not a natural basis for an arbitrary cross section of a cuboid since it is a 2d field embedded in 3d!
+        Hence, a new basis should be created to extract a 2d slice of a volumetric data.
+        We denote the coordinates of the pts in the new basis (n, p, q). The first basis vector is a unit area vector of the cross section.
+        This basis is orthonormal by construction, and the transformation between the bases is unitary (i.e. length conserving)
+        This way, the final outputs are literally the pts on the cross section of a cuboid.
+
+    How it works:
+        1. Create an arbitrary orthonormal basis, one of which is a unit area vector given by you
+        2. Find points which are intersections of the plane and the cuboid
+        3. Using the intersecting points and the constructed basis (BasisB), it figures out how much the basis vectors need to
+        span to cover the entire cross section
+        4. It samples points within the bounds set by Step 3. (This could take seconds)
+        5. The basis vectors (of basisB) are not usually aligned with the direction along the longest direction of the cross section.
+        Fix the basis vector directions based on the sampled points. The new basis is called basisC.
+        6. Get a change-of-basis matrix from ilpm.vec or tflow.vec between the standard basis (basisA) and basisC
+        7. Apply conventions on the basisC.
+            (a) The diretion with a LONGER side of the cross section is always called p.
+            (b) The direction of increase in p is the same direction as x. (The same goes for q and y)
+            (c) Enforce the basisC to be right-handed. n x p  = q
+        7. Transform the xyz coordinates into npq coordinates using the matrix obtained in Step 6
+        8. Return xyz coordinates and npq coordinates and tranformation matrices (Mac: change-of-basis matrix FROM basisA to basisC)
+
+    e.g.
+    1.
+        # xx, yy, zz = get_equally_spaced_grid(udata_stb) # if you have 3D udata
+        x, y, z = np.arange(50), np.arange(30), np.arange(40)
+        xx, yy, zz = np.meshgrid(y, x, z)
+
+        n = [0.1, -0.1, 0.4] # Area vector (x, y, z)
+        pt = [0, 0, 10] # Cartesian coordinates of a point which lives on the plane (x, y, z)
+        xs, ys, zs, ps, qs, ns, Mac, Mca, basis = slicer(xx, yy, zz, n, pt, show=False)
+        plt.scatter(ps, qs)
+    2.
+        # Get a different point on the cross section in xyz
+        pt_a = np.asarray([0, -10, 20]) # xyz coordinate of a point
+        pt_c = np.matmul(Mac, pt_a) # npq coordinate of the same point
+        new_pt_c = pt_c + basis[:, 1] * 2.5 + basis[:, 2] * -4 # another point on the cross seciton but in basisC
+        new_pt_a = np.matmul(Mca, new_pt_c) # xyz coordinate of the new point
+
+    3.
+        # Get different points on the cross section in xyz
+        pts_a = np.asarray([0, -10, 20], [-2, -11, 26]).T # xyz coordinate of a point- Shape must be (3, m)
+        pts_c = np.matmul(Mac, pts_a) # npq coordinate of the same point
+        new_pts_c = pts_c * 0.5 # points on the cross seciton but in basisC
+        new_pts_a = np.matmul(Mca, new_pts_c) # xyz coordinate of the new points
+
+    Tips:
+        If you have Takumi's plotting module (found at takumi.graph or takumi's github, or ask takumi)
+        one can easily visualize the cross section by uncommenting the sections in the function AND setting "show=True".
+
+    Parameters
+    ----------
+    xx: 3d numpy array, x coordinates of udata is assumed
+    yy: 3d numpy array, y coordinates of udata is assumed
+    zz: 3d numpy array, z coordinates of udata is assumed
+    n: 1d array-like, area vector in the standard basis (no need to be normalized)
+    pt: 1d array-like, a Cartesian coordinate of a point which lives on the cross section (x, y, z)
+    basis: 1d array-like, use a user-specified basis instead of a randomly created orthonormal basis for basisB
+        ... I do not recomment passing a basis unless there is a reason such as repeatability.
+        This might give you unexpected errors.
+    spacing: float, value must be greater than 0. Spatial resolution of the sampled grid. If None, it uses the spacing of xx
+    show: bool, If True, it plots sampled points on the cross section as well as a cuboid (in a wire frame) both in 3D and 2D.
+        ... You must have Takumi's latest plotting module to work. This is not absolute dependencies for public version.
+        Therefore, ask Takumi to how to activate it.
+    debug: bool, for developers
+        ... If True, it prints the basisB and basisC at the end of the code.
+
+    Returns
+    -------
+    xs, ys, zs, npq_coords[1, :], npq_coords[2, :], npq_coords[0, :], Mac, Mca, basisC
+    ... Cartesian coordinats of points on the cross section defined by its normal vector and a containing point
+    ... New coordinates (n, p, q)- for usefulness, the function outputs in order of (p, q, n). n should be always zero.
+    You should print out the values of n whenever you are in doubt.
+    ... Mac: change-of-basis matrix from basis A (standard basis) to basisC
+    ... Mca: change-of-basis matrix from basis C to basis A (standard basis)- inverse of Mac
+    ... basisC: new basis for npq coordinates
+    """
+
+    def insideBox(x, y, z, xx, yy, zz):
+        xmin, xmax = np.nanmin(xx), np.nanmax(xx)
+        ymin, ymax = np.nanmin(yy), np.nanmax(yy)
+        zmin, zmax = np.nanmin(zz), np.nanmax(zz)
+        #             w, h, d = xmax-xmin, ymax-ymin, zmax-zmin
+        return x >= xmin and x <= xmax and y >= ymin and y <= ymax and z >= zmin and z <= zmax
+
+    def get_vertices_of_cross_section_of_a_cuboid(xx, yy, zz, n, pt):
+        x0, x1 = np.nanmin(xx), np.nanmax(xx)
+        y0, y1 = np.nanmin(yy), np.nanmax(yy)
+        z0, z1 = np.nanmin(zz), np.nanmax(zz)
+
+        n[n == 0] = 1e-10
+        n = vec.norm(n)
+        a, b, c = n[0], n[1], n[2]
+
+        fz = lambda x, y: pt[2] - 1 / c * (a * (x - pt[0]) + b * (y - pt[1]))
+        fy = lambda x, z: pt[1] - 1 / b * (a * (x - pt[0]) + c * (z - pt[2]))
+        fx = lambda y, z: pt[0] - 1 / a * (b * (y - pt[1]) + c * (z - pt[2]))
+
+        verts = []
+        for (x, y) in list(itertools.product([x0, x1], [y0, y1])):
+            vert = np.asarray([x, y, fz(x, y)])
+            verts.append(vert)
+        for (y, z) in list(itertools.product([y0, y1], [z0, z1])):
+            vert = np.asarray([fx(y, z), y, z])
+            verts.append(vert)
+        for (z, x) in list(itertools.product([z0, z1], [x0, x1])):
+            vert = np.asarray([x, fy(x, z), z])
+            verts.append(vert)
+        verts = np.asarray(verts).T
+        for i in range(12):
+            if any(np.abs(verts[:, i]) > 1e6) or not insideBox(verts[0, i], verts[1, i], verts[2, i], xx, yy, zz):
+                verts[:, i] = np.nan
+        return verts
+
+    def find_rotation_angle_for_new_basis(us, vs, basis, Mab, show=False):
+        from scipy.optimize import curve_fit
+        keep = np.diff(vs) < 0
+        #         ind = np.argmax(vs[:-1][keep])
+
+        inds = np.argwhere(vs[:-1][keep] == np.amax(vs[:-1][keep]))
+        ind1, ind2 = inds[0, 0], inds[-1, 0]
+
+        u1, v1 = us[:-1][keep][:ind1], vs[:-1][keep][:ind1]
+        u2, v2 = us[:-1][keep][ind2:], vs[:-1][keep][ind2:]
+        try:
+            popt1, pcov1 = curve_fit(lambda x, a, b: a * x + b, u1, v1)
+            popt2, pcov2 = curve_fit(lambda x, a, b: a * x + b, u2, v2)
+            theta1, theta2 = np.arctan(popt1[0]), np.arctan(popt2[0])
+            theta = np.pi / 2 - theta1
+            #             p = vec.norm(np.asarray([0, 1, popt1[0] ]))#in new basis (basisB)- n, u, v
+            #             q = vec.norm(np.asarray([0, 1, popt2[0] ]))¥
+            if ind1 > (len(vs[:-1][keep])-len(inds)) / 2:
+                p = vec.norm(np.asarray([0, 1, popt1[0]]))  # in new basis (basisB)- n, u, v
+                q = vec.norm(np.asarray([0, 1, -1 / popt1[0]]))
+            else:
+                p = vec.norm(np.asarray([0, 1, popt2[0]]))  # in new basis (basisB)- n, u, v
+                q = vec.norm(np.asarray([0, 1, -1 / popt2[0]]))
+
+            npq_basis_in_basisB = np.asarray([[1, 0, 0], p, q]).T
+            Mba = np.linalg.inv(Mab)
+            npq_basis = np.matmul(Mba, npq_basis_in_basisB)  # basisC vectors in basisA
+        except:
+            print('curve_fit failed. theta was set to be zero.')
+            #             print('u1, v1', u1, v1)
+            #             print('u2, v2', u2, v2)
+            theta = 0
+            npq_basis = basis  # in basis A
+
+        if show:
+            try:
+                fig, ax = graph.scatter(us, vs, s=1, fignum=2)  # in basisB
+                fig, ax = graph.scatter(us[:-1][keep], vs[:-1][keep], s=1, fignum=2)
+                fig, ax = graph.scatter(us[:-1][keep][ind1:ind2], vs[:-1][keep][ind1:ind2],
+                                        s=50, fignum=2, zorder=200, marker='x', color='r')
+                fig, ax, _, _ = graph.plot_fit_curve(u1, v1, lambda x, a, b: a * x + b, fignum=2, zorder=100)
+                fig, ax, _, _ = graph.plot_fit_curve(u2, v2, lambda x, a, b: a * x + b, fignum=2, zorder=100)
+                ax.set_aspect('equal')
+            except:
+                pass
+
+        return theta, npq_basis
+
+
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+        # print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+    else:
+        from tqdm import tqdm
+
+
+    if spacing is None:
+        dx, dy, dz = get_grid_spacing(xx, yy, zz)
+        spacing = min([dx, dy, dz])
+    n = vec.norm(np.asarray(n))
+
+    # Basis A (Standard basis)
+    basis_std = np.asarray([[1, 0, 0],
+                            [0, 1, 0],
+                            [0, 0, 1]])  # udata uses a standard basis (y, x, z)
+    if basis is None:
+        # Basis B vectors in basis A- the first column is equal to the given normal vector
+        basisB = vec.get_an_orthonormal_basis(3, v1=n)  # new basis (w, v, u)
+    else:
+        basisB = basis  # use a user-specified basis instead of a randomly created orthonormal basis
+
+    # change-of-basis matrix between basis A and basis B
+    Mab = vec.get_change_of_basis_matrix(basis_std,
+                                         basisB)  # change-of-basis-marix from a standard basis to a new basis
+    Mba = np.linalg.inv(Mab)  # change-of-babsis matrix from basis b to the basis a
+
+    # coordinate of the point on the place in terms of basis B
+    pt_b = np.matmul(Mab, np.asarray(pt))  # pt in the basis b- (n, u, v)
+
+    # change of coordinates: (x, y, z) to (n, u, v)
+    coords_in_vector_a = np.swapaxes(np.asarray(list(itertools.product(xx[0, :, 0], yy[:, 0, 0], zz[0, 0, :]))), 0, 1)
+    coords_in_vector_b = np.matmul(Mab, coords_in_vector_a)  # in basis b = {n, u, v}
+
+    # Sample points on the plane in the volume (xx, yy, zz)- ROBUST BUT SLOWER
+    #     ## METHOD 1: Brutal search using the basis vectors of basis B
+    #     ## This is naturally done in basis B instead of the basis A (std basis)
+    #     ### Prepration for sampling on the plane
+    #     nmin, nmax = int(np.floor(np.nanmin(coords_in_vector_b[0, :]))), int(np.ceil(np.nanmax(coords_in_vector_b[0, :])))
+    #     umin, umax = int(np.floor(np.nanmin(coords_in_vector_b[1, :]))), int(np.ceil(np.nanmax(coords_in_vector_b[1, :])))
+    #     vmin, vmax = int(np.floor(np.nanmin(coords_in_vector_b[2, :]))), int(np.ceil(np.nanmax(coords_in_vector_b[2, :])))
+    #     ulist = list(range(umin, umax))
+    #     vlist = list(range(vmin, vmax))
+    #     uvlist = list(itertools.product(ulist, vlist))
+
+    #   METHOD2- Find the
+    verts_a = get_vertices_of_cross_section_of_a_cuboid(xx, yy, zz, n, pt)
+    verts_b = np.matmul(Mab, verts_a)
+    nmin, nmax = int(np.floor(np.nanmin(verts_b[0, :]))), int(np.ceil(np.nanmax(verts_b[0, :])))
+    umin, umax = int(np.floor(np.nanmin(verts_b[1, :]))), int(np.ceil(np.nanmax(verts_b[1, :])))
+    vmin, vmax = int(np.floor(np.nanmin(verts_b[2, :]))), int(np.ceil(np.nanmax(verts_b[2, :])))
+
+    ulist = list(range(umin, umax))
+    vlist = list(range(vmin, vmax))
+
+    ### Initialization for sampling pts on the plane
+    xs, ys, zs = [], [], []
+    us, vs, ws = [], [], []  # coordinates in the new basis (coefficients)
+
+    # Sample pts on the plane
+    for (counter_u, counter_v) in tqdm(list(itertools.product(ulist, vlist))):
+
+        pt_a_tmp = pt + basisB[:, 1] * counter_u * spacing + basisB[:, 2] * counter_v * spacing
+        pt_b_tmp = np.matmul(Mab, pt_a_tmp)
+
+        if insideBox(pt_a_tmp[0], pt_a_tmp[1], pt_a_tmp[2], xx, yy, zz):
+            #             pt_b_tmp = np.matmul(Mab, pt_a_tmp) # pt in the basis b- (u,v, w)
+
+            us.append(pt_b_tmp[1])
+            vs.append(pt_b_tmp[2])
+            ws.append(pt_b_tmp[0])
+
+            # in stadard basis
+            xs.append(pt_a_tmp[0])
+            ys.append(pt_a_tmp[1])
+            zs.append(pt_a_tmp[2])
+
+    xs = np.asarray(xs)
+    ys = np.asarray(ys)
+    zs = np.asarray(zs)
+    us = np.asarray(us)
+    vs = np.asarray(vs)
+    ws = np.asarray(ws)
+
+    Mab = vec.get_change_of_basis_matrix(basis_std, basisB)
+    theta, basisC = find_rotation_angle_for_new_basis(us, vs, basisB, Mab, show=show)
+
+    if show:
+        # plots in basisB
+        fig, ax = graph.arrow(0, 0, np.matmul(Mab, basisB[:, 1])[1] * 20, np.matmul(Mab, basisB[:, 1])[2] * 20,
+                              color='c', fignum=2, width=1)  # this should be 1,0 and 0, 1 in basis B
+        graph.arrow(0, 0, np.matmul(Mab, basisB[:, 2])[1] * 20, np.matmul(Mab, basisB[:, 2])[2] * 20,
+                    color='m', fignum=2, width=1)  # in basisA
+
+        graph.arrow(0, 0, np.matmul(Mab, basisC[:, 1])[1] * 20, np.matmul(Mab, basisC[:, 1])[2] * 20,
+                    color='b', fignum=2, width=1)
+        graph.arrow(0, 0, np.matmul(Mab, basisC[:, 2])[1] * 20, np.matmul(Mab, basisC[:, 2])[2] * 20,
+                    color='g', fignum=2, width=1)
+        graph.title(ax, 'find_rotation_angle_for_new_basis')
+        graph.labelaxes(ax, 'u', 'v')
+
+    Mbc = vec.get_change_of_basis_matrix(basisB, basisC)
+    Mac = vec.get_change_of_basis_matrix(basis_std, basisC) # this will be updated later due to the convention
+    Mca = np.linalg.inv(Mac)
+
+    xyz_coords = np.stack((xs, ys, zs))
+    wuv_coords = np.stack((ws, us, vs))
+
+    npq_coords = np.matmul(Mac, xyz_coords)  # (3, n)
+
+    # Convention1: Make the longer side of the plane denoted by "p"
+    ps, qs = npq_coords[1, :], npq_coords[2, :]
+    w = np.nanmax(ps) - np.nanmin(ps)
+    h = np.nanmax(qs) - np.nanmin(qs)
+
+    if apply_convention:
+        if w < h:
+            print('Lengths in the p-q basis (w, h)', w, h)
+            basisC[:, [1, 2]] = basisC[:, [2, 1]]
+            basisC[:, 2] *= -1
+
+        # Convention2: Let the directionality of p be consistent with x
+        if basisC[0, 1] < 0:
+            basisC[:, 1] *= -1
+
+        basisC = vec.apply_right_handedness(basisC)
+
+    # Finally, a natural basis on this plane (basisC) is ready
+    ## Get a change-of-basis matrix from basis A to basis C
+    Mac = vec.get_change_of_basis_matrix(basis_std, basisC)
+    Mca = np.linalg.inv(Mac)
+    ## Transform coordinates of pts on the plane (expressed in basis A) into coords in basis C
+    npq_coords = np.matmul(Mac, xyz_coords)  # (3, n)
+
+    # In case one needs to check bases used in the process
+    if debug:
+        print('basisB:')
+        print(basisB)
+        print('basisC: ')
+        print(basisC)
+        print('Right-handed basisC (this should be the same as above): ')
+        print(vec.apply_right_handedness(basisC))
+
+    if show:
+        fig1, ax1 = graph.scatter3d(xs, ys, zs, s=1, fignum=1, subplot=121)
+        graph.arrow3D(pt[0], pt[1], pt[2], basisC[0, 0] * 50, basisC[1, 0] * 50, basisC[2, 0] * 50,
+                      ax=ax1, zorder=1000, mutation_scale=10)
+        graph.arrow3D(pt[0], pt[1], pt[2], basisC[0, 1] * 50, basisC[1, 1] * 50, basisC[2, 1] * 50,
+                      ax=ax1, zorder=1000, color='b')
+        graph.arrow3D(pt[0], pt[1], pt[2], basisC[0, 2] * 50, basisC[1, 2] * 50, basisC[2, 2] * 50,
+                      ax=ax1, zorder=1000, color='g')
+        graph.draw_cuboid(ax1, xx, yy, zz, color='k', zorder=100)
+
+        # ax1.view_init(90, 0)
+        # ax1.view_init(0, 90)
+
+        pt_c = np.matmul(Mac, pt)
+        ps, qs, ns = npq_coords[1, :], npq_coords[2, :], npq_coords[0, :]
+        fig2, ax2 = graph.scatter(ps, qs, s=1, fignum=1, subplot=122)
+        fig2, ax2 = graph.scatter([pt_c[1]], [pt_c[2]], s=200, marker='x', ax=ax2, figsize=(16, 8))
+        graph.labelaxes(ax2, 'p', 'q')
+        ax2.set_aspect('equal')
+
+    if notebook:
+        from tqdm import tqdm as tqdm
+
+    return xs, ys, zs, npq_coords[1, :], npq_coords[2, :], npq_coords[0, :], Mac, Mca, basisC
+
+
+## Get a slice of a 3D velocity field
+def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
+                   method='nn', max_iter=10, tol=0.05, basis=None, apply_convention=True,
+                   u_basis='npq', notebook=True):
+    """
+    Returns a spatially 2D udata which is on the cross section of a volumetric data
+    ... There are two ways to return the velocity field on the cross section.
+        1. In the standard basis (xyz, i.e. ux, uy, uz)
+        2. In the NEW basis (which I call npq basis, i.e. un, up, uq)
+            the basis vector n is identical to the unit area vector of the cross section
+    ... By default, this function returns a 2D velocity field in the NEW basis (npq) as well as its coordinates in the same basis.
+        ... This is a natural choice since the cross section is spanned by the new basis vectors p and q.
+        ... Any postional vector on the cross section is expresed by its linear combinations.
+            r = c1 \hat{p} + c2 \hat{q}
+            (c1, c2) are the coordinates in the pq basis.
+            (Technically, the basis vectors are n, p, q but the coefficient of the n basis vector is always zero on the cross section.)
+            By default, this function returns...
+            1. velocity field in the NEW basis (npq) on the cross section
+            2. Coordinates in the pq basis (technically npq basis, but the coordinate in the basis vector n is always zero so I don't return it)
+    ... You CAN retrieve the velocity field in the standard basis (xyz, i.e. ux, uy, uz).
+        Just set "u_basis" equal to "xyz"
+        If you want both (in npq and xyz basses), set  "u_basis" equal to "both"
+    ... If you want a change-of-basis matrix from basis A to basis B, use ilpm.vector.get_change_of_basis_matrix(basisA, basisB)
+        e.g.
+            Mab = vec.get_change_of_basis_matrix(basis_xyz, basis_npq) # transformation matrix from xyz coords to npq coords
+            Mba = np.linalg.inv(Mab) # the change-of-basis matrix is ALWAYS unitary.
+
+    Example:
+
+    Parameters
+    ----------
+    udata: spatially 3d udata (4D or 5D array) with shape (dim, height, width, depth, duration) or  (dim, height, width, depth)
+    xx: 3d array, grid of x-coordinate
+    yy: 3d array, grid of y-coordinate
+    zz: 3d array, grid of z-coordinate
+    n: 1d array-like, area vector (it does not have to be normalized)
+    pt: 1d array-like, xyz coordinates of a point on the plane (Note that n and pt uniquely defines a plane)
+    spacing: float, must be greater than 0. Sampling spatial resolution on the plane
+    show: bool, tflow.graph or takumi.graph is required. If True, it will automatically plot the sampled points on the
+        cross section in a 3D view as well as the new basis vectors
+    method: str, interpolation method of udata, options: 'nn', 'localmean', 'idw'
+        ... volumetric udata may contain lots of np.nan, and cleaning udata often results better results.
+        ... 'nn': nearest neighbor filling
+        ... 'localmean': filling using a direct covolution (inpainting with a neighbor averaging kernel)
+        ... 'idw': filling using a direct covolution (inpainting with a Gaussian kernel)
+    max_iter: int, parameter for replacng nans in udata clean_udata()
+    tol: float, parameter for replacng nans in udata clean_udata()
+    basis: 3x3 matrix, column vectors are the basis vectors.
+        ... If given, the basis vectors are used to span the crosss section.
+        ... The basis vectors may be rotated or converted to right-handed at the end.
+        ...
+    apply_convention: bool, If True, it enforces the new basis to follow the convention (right-handed etc.)
+    u_basis: str, default: "npq", options: "npq", "xyz" / "standard" "std", "both"
+        ... the basis used to represent a velocity field on the plane
+        ... "npq": It returns velocity vectors in the npq basis. Returning udata[i, ...] = (un, up, uq)
+            (un, up, uq) = (velocity component parallel to the area vector,
+                            vel comp parallel to the second basis vector p,
+                            vel comp parallel to the second basis vector q)
+        ... "xyz". "standard", or "std": It returns velocity vectors in the npq basis. Returning udata[i, ...] = (ux, uy, uz)
+
+
+
+    Returns
+    -------
+    udata_si_npq_basis: udata in the npq basis on the plane spanned by the basis vectors p and q.
+        ... its shape is (dim, height, width, duration) = (3, height, width, duration)
+        ... udata_si_npq_basis[0, ...] is velocity u \cdot \hat{n}
+        ... udata_si_npq_basis[1, ...] is velocity u \cdot \hat{p}
+        ... udata_si_npq_basis[2, ...] is velocity u \cdot \hat{q}
+    pp: 2d nd array, p-grid
+    qq: 2d nd array, q-grid
+    """
+
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+        # print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+    else:
+        from tqdm import tqdm
+
+
+    if spacing is None:
+        dx, dy, dz = get_grid_spacing(xx, yy, zz)
+        spacing = min([dx, dy, dz])
+    udata = fix_udata_shape(udata)
+    dim, duration = udata.shape[0], udata.shape[-1]
+
+    # Clean udata
+    udata = clean_udata(udata, method=method, max_iter=max_iter, tol=tol)
+
+    # Extract info about the cross section
+    xs, ys, zs, ps, qs, ns, Mab, Mba, basis = slicer(xx, yy, zz, n, pt, spacing=spacing,
+                                                     basis=basis, apply_convention=apply_convention,
+                                                     show=show)
+
+    udata_si = np.empty_like(udata)
+    udata_si_npq_basis = np.empty_like(udata)
+    for i, t in tqdm(enumerate(range(duration))):
+        # udata_s_tmp = clean_udata(udata[..., t:t + 1])
+        fs = interpolate_udata_at_instant_of_time(udata, xx, yy, zz, t=t, bounds_error=False)
+
+        pmin, pmax, qmin, qmax = np.nanmin(ps), np.nanmax(ps), np.nanmin(qs), np.nanmax(qs)
+        p = np.arange(pmin, pmax, spacing)
+        q = np.arange(qmin, qmax, spacing)
+        n = [0]
+        pp, qq, nn = np.meshgrid(p, q, n) # THIS WORKS! DO not touch this
+        shape = pp.shape
+        pts_b = np.stack((nn.flatten(), pp.flatten(), qq.flatten())) # npq
+
+        pts_a = np.matmul(Mba, pts_b)  # x, y, z
+        pts_a[[0, 1], :] = pts_a[[1, 0], :] # interpolating function takes (y, x, z) not (x, y, z). Swap axes.
+
+        ux_si = fs[0](pts_a.T).reshape(shape)
+        uy_si = fs[1](pts_a.T).reshape(shape)
+        uz_si = fs[2](pts_a.T).reshape(shape)
+
+        uis_si = np.stack((ux_si.flatten(), uy_si.flatten(), uz_si.flatten()))
+        uis_si_npq = np.matmul(Mab, uis_si)
+        un_si, up_si, uq_si = uis_si_npq[0, ...].reshape(shape), uis_si_npq[1, ...].reshape(shape), uis_si_npq[2, ...].reshape(shape)
+        if i == 0:
+            master_shape = (3, ) + shape + (duration, )
+            udata_si_xyz_basis = np.empty(master_shape)
+            udata_si_npq_basis = np.empty(master_shape)
+
+        udata_si_xyz_basis[..., t] = np.stack((ux_si, uy_si, uz_si))
+        udata_si_npq_basis[..., t] = np.stack((un_si, up_si, uq_si))  # un, up, uq- velocity also obeys the transformation rule as position
+
+    udata_si_xyz_basis = np.squeeze(udata_si_xyz_basis)  # ux, uy, uz
+    udata_si_npq_basis = np.squeeze(udata_si_npq_basis)  # un, up, uq
+
+    pp, qq = np.squeeze(pp), np.squeeze(qq) #2D grid
+
+    if notebook:
+        from tqdm import tqdm as tqdm
+
+    if u_basis == 'npq':
+        return udata_si_npq_basis, pp, qq
+    elif u_basis in ['standard', 'std', 'xyz']:
+        return udata_si_xyz_basis, pp, qq
+    elif u_basis == 'both':
+        return udata_si_npq_basis, udata_si_xyz_basis, pp, qq
+    else:
+        print('... Pass which basis is used to represent the extraceted velocity field on the slice')
+        print('... Choices: "npq"- (un, up, uq) velocity parallel to the surface vector, and its transverse directions')
+        print('... Choices: "xyz"- (ux, uy, uz) velocity in the standard basis')
+        return None
+
+
+
+def interpolate_udata_at_instant_of_time(udata, xx, yy, zz=None, t=0, bounds_error=False, **kwargs):
+    """
+    Returns interpolating functions of each spatial component of a velocity field at instant of time
+    ... Returns a tuple (f_ux, f_uy, f_uz)
+    ... f_ux( (y, x, z) ): ux at (x, y, z)
+
+    Parameters
+    ----------
+    udata:
+    xx: 2d/3d array, x-grid
+    yy: 2d/3d array, x-grid
+    zz: 2d/3d array, x-grid
+    t: int, default: 0
+        This function generates interpolating functions of udata at time index of t
+    kwargs: kwargs will be passed to scipy.interpolate.RegularGridInterpolator()
+    Returns
+    -------
+
+    """
+    udata = fix_udata_shape(udata)
+    try:
+        dim, height, width, depth, duration = udata.shape
+    except:
+        dim, height, width, duration = udata.shape
+
+    if zz is not None:
+        y, x, z = yy[:, 0, 0], xx[0, :, 0], zz[0, 0, :]
+        if np.all(np.diff(z) < 0):
+            z = np.flip(z)
+            udata = np.flip(udata, axis=3)
+    else:
+        y, x = yy[:, 0], xx[0, :]
+    if np.all(np.diff(x) < 0):
+        x = np.flip(x)
+        udata = np.flip(udata, axis=2)
+    if np.all(np.diff(y) < 0):
+        y = np.flip(y)
+        udata = np.flip(udata, axis=1)
+
+    if zz is None:
+        f_ux = RegularGridInterpolator((y, x), udata[0, ..., t], bounds_error=bounds_error, **kwargs)  # ux interpolating function
+        f_uy = RegularGridInterpolator((y, x), udata[1, ..., t], bounds_error=bounds_error, **kwargs)  # uy interpolating function
+        if dim == 3:
+            f_uz = RegularGridInterpolator((y, x), udata[2, ..., t], bounds_error=bounds_error, **kwargs)  # uz interpolating function
+    else:
+        f_ux = RegularGridInterpolator((y, x, z), udata[0, ..., t], bounds_error=bounds_error, **kwargs)  # ux interpolating function
+        f_uy = RegularGridInterpolator((y, x, z), udata[1, ..., t], bounds_error=bounds_error, **kwargs)  # uy interpolating function
+        if dim == 3:
+            f_uz = RegularGridInterpolator((y, x, z), udata[2, ..., t], bounds_error=bounds_error, **kwargs)  # uz interpolating function
+
+    if dim == 3:
+        return f_ux, f_uy, f_uz
+    else:
+        return f_ux, f_uy
+
+
+def interpolate_scalar_field_at_instant_of_time(field, xx, yy, zz=None, t=0, bounds_error=False, **kwargs):
+    """
+    Returns  an interpolating function a scalar field (energy, enstrophy etc.) at instant of time
+    ... field_i( (y, x, z) ): the field at (x, y, z)
+    Parameters
+    ----------
+    field
+    xx
+    yy
+    zz
+    t
+    bounds_error
+    kwargs
+
+    Returns
+    -------
+    field_i: function
+    """
+    dim = len(xx.shape)
+
+    try:
+        try:
+            height, width, depth, duration = field.shape
+        except:
+            height, width, duration = field.shape
+    except:
+        field = field.reshape(field.shape + (1,))
+        try:
+            height, width, depth, duration = field.shape
+        except:
+            height, width, duration = field.shape
+
+    if zz is not None:
+        y, x, z = yy[:, 0, 0], xx[0, :, 0], zz[0, 0, :]
+        if np.all(np.diff(z) < 0):
+            z = np.flip(z)
+            field = np.flip(field, axis=1)
+    else:
+        y, x = yy[:, 0], xx[0, :]
+    if np.all(np.diff(x) < 0):
+        x = np.flip(x)
+        field = np.flip(field, axis=1)
+    if np.all(np.diff(y) < 0):
+        y = np.flip(y)
+        field = np.flip(field, axis=0)
+
+    if zz is None:
+        field_i = RegularGridInterpolator((y, x), field[..., t], bounds_error=bounds_error,
+                                       **kwargs)  # interpolating function
+    else:
+        field_i = RegularGridInterpolator((y, x, z), field[..., t], bounds_error=bounds_error,
+                                          **kwargs)
+    return field_i
+
+def interpolate_vector_field_at_instant_of_time(vfield, xx, yy, zz=None, t=0, bounds_error=False, **kwargs):
+    """
+    Returns interpolating functions of a vector field (e.g. vorticity field: omega)
+    ... e.g.
+        Input: vorticity field (omega) with shape (3, height, width, depth, duration)
+        Output: a list of interpolating functions for each spatial direction- [omega_x, omega_y, omega_z]
+
+    Parameters
+    ----------
+    vfield
+    xx
+    yy
+    zz
+    t
+    bounds_error
+    kwargs
+
+    Returns
+    -------
+    funcs: list of functions
+    """
+    dim = vfield.shape[0]
+    funcs = []
+    for d in range(dim):
+        func = interpolate_scalar_field_at_instant_of_time(vfield[d, ...], xx, yy, zz=zz, t=t, bounds_error=bounds_error, **kwargs)
+        funcs.append(func)
+    return funcs
+
 
 
 ########## FFT tools ########
@@ -5427,6 +6295,7 @@ def clean_udata(udata, mask=None,
     -------
 
     """
+
     if notebook:
         from tqdm import tqdm_notebook as tqdm
         # print('Using tqdm_notebook. If this is a mistake, set notebook=False')
@@ -5450,13 +6319,16 @@ def clean_udata(udata, mask=None,
     if nnans == 0:  # udata is already clean (No nan values and no values beyond cutoff)
         return udata
 
-    # Initialization of an inpainted field
-    udata_i = np.empty_like(udata)
-
-    for t in tqdm(range(duration), disable=not showtqdm):
-        for i in range(ncomp):
-            udata_i[i, ..., t] = replace_nans(udata[i, ..., t], max_iter=max_iter, tol=tol, kernel_radius=kernel_radius,
-                                              kernel_sigma=kernel_sigma, method=method, showtqdm=verbose)
+    # Method 1
+    if method == 'nn': # nearest neighbor filling
+        udata_i = replace_nan_w_nn_udata(udata, notebook=notebook)
+    else:
+        # Initialization of an inpainted field
+        udata_i = np.empty_like(udata)
+        for t in tqdm(range(duration), disable=not showtqdm):
+            for i in range(ncomp):
+                udata_i[i, ..., t] = replace_nans(udata[i, ..., t], max_iter=max_iter, tol=tol, kernel_radius=kernel_radius,
+                                                  kernel_sigma=kernel_sigma, method=method, showtqdm=verbose)
     if notebook:
         from tqdm import tqdm as tqdm
 
@@ -5655,6 +6527,102 @@ def find_crop_no(udata, tol=0.2):
     print('No of edges to remove in indices: %d' % i, ratio, nnans, ntot)
     return i
 
+# Dealing with missing values in a field
+def replace_nan_w_nn(data, notebook=False, verbose=False):
+    """
+    The fastest and most robust method to fill the missing values in ND data.
+    ... Nearest neighbor filling of ND data
+    ... Do not use this function to interpolate udata! Use replace_nan_w_nn_udata(udata) instead.
+    ... This is not designed for udata because NN filling for ND data treats all axes equally. Since individual axis of
+    udata means (velocity components, height, width, depth, duration), applying this function to udata requires care.
+    ... NN filling occurs from the right to left.
+        i.e. array[n-3, n-2, n-1, n, n+1] = 100, np.nan, np.nan, np.nan, 200
+            -> 100, np.nan, np.nan, 200, 200 # Step1: Fill from the right first
+            -> 100, 100, np.nan, 200, 200 # Step2: Then, fill from the left
+             -> 100, 100, 200, 200, 200  # Repeat Step1: Fill from the right
+
+    Parameters
+    ----------
+    data: ND data with missing values (np.nan)
+    verbose: str, defualt False
+
+    Returns
+    -------
+    data: ND data, missing values are filled with the nearest neighbor values.
+    """
+
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+        # print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+    else:
+        from tqdm import tqdm
+
+    isnan = np.isnan(data)
+
+    if not isnan.any():
+        if verbose:
+            print('replace_nan_w_nn: no nan in data')
+
+        if notebook:
+            from tqdm import tqdm as tqdm
+        return data
+    else:
+        while isnan.any():
+            dim = len(data.shape)
+            for i in range(dim):
+                slices = [slice(None)] * dim  # Initialize
+                slices1 = slices[:]
+                slices2 = slices[:]
+                slices1[i] = slice(0, -1)
+                slices2[i] = slice(1, None)
+
+                # replace from the right (from the bottom)
+                fill = np.logical_and(isnan[slices1], ~isnan[slices2])
+                data[slices1][fill] = data[slices2][fill]
+                isnan[slices1][fill] = False
+
+                # replace from the left (from the top)
+                fill = np.logical_and(isnan[slices2], ~isnan[slices1])
+                data[slices2][fill] = data[slices1][fill]
+                isnan[slices2][fill] = False
+            isnan = np.isnan(data)
+
+        if notebook:
+            from tqdm import tqdm as tqdm
+        return data
+
+def replace_nan_w_nn_udata(udata, notebook=False, verbose=False):
+    """
+    The fastest and most robust function to fill the missing values in udata
+
+    Parameters
+    ----------
+    udata
+    verbose: str, default: False
+
+    Returns
+    -------
+    udata_filled: ND array with shape (dim, height, width, depth, duration) or  (dim, height, width, duration)
+            ... missing values (np.nan) are filled with the nearest neighbors
+    """
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+        # print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+    else:
+        from tqdm import tqdm
+
+    udata = fix_udata_shape(udata)
+    dim, duration = udata.shape[0], udata.shape[-1]
+
+    udata_filled = np.empty_like(udata)
+    for t in tqdm(range(duration)):
+        for i in range(dim):
+            udata_filled[i, ..., t] = replace_nan_w_nn(udata[i, ..., t], verbose=verbose)
+
+    if notebook:
+        from tqdm import tqdm as tqdm
+
+    return udata_filled
 
 def replace_nans(array, max_iter=50, tol=0.05, kernel_radius=2, kernel_sigma=2, method='idw',
                  notebook=True, verbose=False, showtqdm=True):
@@ -5743,9 +6711,11 @@ def replace_nans(array, max_iter=50, tol=0.05, kernel_radius=2, kernel_sigma=2, 
     if method == 'localmean':
         #         print('kernel_size', kernel_size)
         kernel = np.ones(kernel_shape)
-    elif method == 'idw':
+    elif method == 'idw': # inverse distance weighting (with gaussian kernel)
         kernel = makeGaussianKernel(kernel_size, kernel_sigma, dim)
     #         print(kernel.shape, 'kernel')
+    elif method == 'nn': # newarest neighbor
+        filled = replace_nan_w_nn(array, notebook=notebook)
     else:
         raise ValueError('method is not valid. Choose from idw and localmean')
 
@@ -5801,15 +6771,18 @@ def replace_nans(array, max_iter=50, tol=0.05, kernel_radius=2, kernel_sigma=2, 
                       Refining max_int and tol. is recommended' % it)
                 print('variance: ', variance)
             replaced_old = copy.deepcopy(replaced_new)
+
+
     if notebook:
         from tqdm import tqdm as tqdm
 
     return filled
 
 def clean_data(data, mask=None,
-                method='idw', max_iter=50, tol=0.05, kernel_radius=2, kernel_sigma=2,
+                method='idw', max_iter=10, tol=0.05, kernel_radius=2, kernel_sigma=2,
                 cutoff=np.inf, showtqdm=True, verbose=False, notebook=True):
     """
+    Fills missing values (np.nan) in an array by nearest neighbor filling OR direct convolution (inpainting)
     ND interpolation using direct convolution (replac_nan(...))
 
     Parameters
@@ -5821,7 +6794,8 @@ def clean_data(data, mask=None,
     cutoffU
     fill_value
     verbose
-    method
+    method: str, choose from 'nn', 'localmean', 'idw'
+        ... computation is more expensive as it gets more right.
     notebook
 
     Returns
@@ -5843,10 +6817,12 @@ def clean_data(data, mask=None,
     if nnans == 0:  # udata is already clean (No nan values and no values beyond cutoff)
         return data
 
-    # Initialization of an inpainted field
-
-    data = replace_nans(data, max_iter=max_iter, tol=tol, kernel_radius=kernel_radius,
-                                              kernel_sigma=kernel_sigma, method=method, showtqdm=verbose)
+    if method == 'nn': # nearest neighbor filling
+        data = replace_nan_w_nn(data, notebook=notebook)
+    else:
+        # Initialization of an inpainted field
+        data = replace_nans(data, max_iter=max_iter, tol=tol, kernel_radius=kernel_radius,
+                                                  kernel_sigma=kernel_sigma, method=method, showtqdm=verbose)
     if notebook:
         from tqdm import tqdm as tqdm
 
@@ -5875,14 +6851,27 @@ def get_center_of_energy(dpath, inc=10, x0=0, x1=None, y0=0, y1=None, z0=0, z1=N
     -------
 
     """
-    # Load dummy udata
-    udata, xx, yy, zz = get_udata_from_path(dpath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, t0=0, t1=1,
-                                                return_xy=True, verbose=False)
-    etavg = get_time_avg_energy_from_udatapath(dpath, inc=inc, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
-    xc = np.nansum(etavg * xx) / np.nansum(etavg)
-    yc = np.nansum(etavg * yy) / np.nansum(etavg)
-    zc = np.nansum(etavg * zz) / np.nansum(etavg)
-    center_of_energy = np.asarray([xc, yc, zc])
+    # dummy
+    udata = get_udata_from_path(dpath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, t0=0, t1=1,
+                                            return_xy=False, verbose=False)
+    dim = udata.shape[0]
+    if dim == 3:
+        # Load dummy udata
+        udata, xx, yy, zz = get_udata_from_path(dpath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, t0=0, t1=1,
+                                                    return_xy=True, verbose=False)
+        etavg = get_time_avg_energy_from_udatapath(dpath, inc=inc, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
+        xc = np.nansum(etavg * xx) / np.nansum(etavg)
+        yc = np.nansum(etavg * yy) / np.nansum(etavg)
+        zc = np.nansum(etavg * zz) / np.nansum(etavg)
+        center_of_energy = np.asarray([xc, yc, zc])
+    else:
+        # Load dummy udata
+        udata, xx, yy = get_udata_from_path(dpath, x0=x0, x1=x1, y0=y0, y1=y1, t0=0, t1=1,
+                                                    return_xy=True, verbose=False)
+        etavg = get_time_avg_energy_from_udatapath(dpath, inc=inc, x0=x0, x1=x1, y0=y0, y1=y1)
+        xc = np.nansum(etavg * xx) / np.nansum(etavg)
+        yc = np.nansum(etavg * yy) / np.nansum(etavg)
+        center_of_energy = np.asarray([xc, yc, ])
     return center_of_energy
 
     # # plotting usual stuff # REQUIRES graph module. Ask Takumi for details or check out takumi's git on immense
@@ -6978,7 +7967,8 @@ def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
 
 # Spatial Pofile
 def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=None, n=50,
-                        return_center=False):
+                        return_center=False,
+                        zz=None, z0=0, z1=None):
     """
     Returns a spatial profile (radial histogram) of 3D object with shape (height, width, duration)
     ... Computes a histogram of a given quantity as a function of distance from the center (xc, yc)
@@ -7012,25 +8002,50 @@ def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=N
     ... std of the quantity between r and r+dr with shape (n, duration)
     """
     duration = qty.shape[-1]
-    x, y = xx[y0:y1, x0:x1], yy[y0:y1, x0:x1]
-    qty_local = qty[y0:y1, x0:x1, ...]
-    if xc is None or yc is None:
-        # find a center of the mass from the initial image
-        xc_i, yc_i = ndimage.measurements.center_of_mass(qty_local[y0:y1, x0:x1, 0])
-        xc, yc = x[int(np.round(xc_i)), int(np.round(yc_i))], y[int(np.round(xc_i)), int(np.round(yc_i))]
-        print('spatial_profile: (xc, yc)=(%.2f, %.2f)' % (xc, yc))
-    elif xc is None and yc is None:
-        xc, yc = 0, 0
-    r, theta = cart2pol(x - xc, y - yc)
 
-    shape = (n, duration)
-    rs = np.empty(shape)
-    qty_ms = np.empty(shape)
-    qty_errs = np.empty(shape)
-    for t in tqdm(list(range(duration))):
-        rs[:, t], qty_ms[:, t], qty_errs[:, t] = get_binned_stats(r.flatten(),
-                                                                  qty_local[..., t].flatten(),
-                                                                  n_bins=n)
+    if zz is None:
+        x, y = xx[y0:y1, x0:x1], yy[y0:y1, x0:x1]
+        qty_local = qty[y0:y1, x0:x1, ...]
+        if xc is None or yc is None:
+            # find a center of the mass from the initial image
+            yc_i, xc_i = ndimage.measurements.center_of_mass(qty_local[..., 0])
+            yc, xc = y[int(np.round(yc_i)), int(np.round(xc_i))], x[int(np.round(yc_i)), int(np.round(xc_i))]
+            print('spatial_profile: (xc, yc)=(%.2f, %.2f)' % (xc, yc))
+        elif xc is None and yc is None:
+            xc, yc = 0, 0
+        r, theta = cart2pol(x - xc, y - yc)
+
+        shape = (n, duration)
+        rs = np.empty(shape)
+        qty_ms = np.empty(shape)
+        qty_errs = np.empty(shape)
+        for t in tqdm(list(range(duration))):
+            rs[:, t], qty_ms[:, t], qty_errs[:, t] = get_binned_stats(r.flatten(),
+                                                                      qty_local[..., t].flatten(),
+                                                                      n_bins=n)
+    else:
+        x, y, z = xx[y0:y1, x0:x1, z0:z1], yy[y0:y1, x0:x1, z0:z1], zz[y0:y1, x0:x1, z0:z1],
+        qty_local = qty[y0:y1, x0:x1, z0:z1, ...]
+        if xc is None or yc is None:
+            # find a center of the mass from the initial image
+            yc_i, xc_i, zc_i = ndimage.measurements.center_of_mass(qty_local[..., 0])
+
+            xc = x[int(np.round(yc_i)), int(np.round(xc_i)), int(np.round(zc_i))]
+            yc = y[int(np.round(yc_i)), int(np.round(xc_i)), int(np.round(zc_i))]
+            zc = z[int(np.round(yc_i)), int(np.round(xc_i)), int(np.round(zc_i))]
+            print('spatial_profile: (xc, yc, zc)=(%.2f, %.2f, %.2f)' % (xc, yc, zc))
+        elif xc is None and yc is None and zc is None:
+            xc, yc, zc = 0, 0, 0
+        r, theta, phi = cart2sph(x - xc, y - yc, z-zc)
+
+        shape = (n, duration)
+        rs = np.empty(shape)
+        qty_ms = np.empty(shape)
+        qty_errs = np.empty(shape)
+        for t in tqdm(list(range(duration))):
+            rs[:, t], qty_ms[:, t], qty_errs[:, t] = get_binned_stats(r.flatten(),
+                                                                      qty_local[..., t].flatten(),
+                                                                      n_bins=n)
     if not return_center:
         return rs, qty_ms, qty_errs
     else:
@@ -7072,7 +8087,6 @@ def fix_udata_shape(udata):
         dim = 3
         ux, uy, uz = udata[0, ...], udata[1, ...], udata[2, ...]
         try:
-            # print ux.shape
             nrows, ncols, nstacks, duration = ux.shape
             return udata
         except:
@@ -7082,6 +8096,45 @@ def fix_udata_shape(udata):
             uy = uy.reshape((uy.shape[0], uy.shape[1], uy.shape[2], duration))
             uz = uz.reshape((uz.shape[0], uz.shape[1], uz.shape[2], duration))
             return np.stack((ux, uy, uz))
+
+
+
+def get_jacobian_xyz_ijk(xx, yy, zz=None):
+    """
+    Returns diagonal elements of Jacobian between index space basis and physical space
+    ... This returns xyz_orientations for get_duidxj_tensor().
+    ... Further details can be found in the docstring of get_duidxj_tensor()
+
+    Parameters
+    ----------
+    xx
+    yy
+    zz
+
+    Returns
+    -------
+    jacobian: 1d array
+        ... expected input of xyz_orientations for get_duidxj_tensor
+    """
+
+    dim = len(xx.shape)
+    if dim == 2:
+        x = xx[0, :]
+        y = yy[:, 0]
+        increments = [np.nanmean(np.diff(x)), np.nanmean(np.diff(y))]
+    elif dim == 3:
+        x = xx[0, :, 0]
+        y = yy[:, 0, 0]
+        z = zz[0, 0, :]
+        increments = [np.nanmean(np.diff(x)), np.nanmean(np.diff(y)), np.nanmean(np.diff(z))]
+    else:
+        raise ValueError('... xx, yy, zz must have dimensions of 2 or 3. ')
+
+    mapping = {True: 1, False: -1}
+    jacobian = np.asarray([mapping[increment > 0] for increment in increments])  # Only diagonal elements
+
+    return jacobian
+
 
 def count_nans(arr):
     """Returns the number of nans in the given array"""
@@ -7319,7 +8372,8 @@ def cart2sph(x, y, z):
 
 def cart2sph_velocity(ux, uy, uz, xx, yy, zz, xc=0, yc=0, zc=0):
     """
-    Returns velocity in the spherical basis when a velocity vector in cartesian coordinates is given
+    Returns velocity in the spherical basis
+    when a velocity vector in cartesian coordinates is given
 
     z = r cos theta
     y = r sin theta sin phi
@@ -7485,7 +8539,7 @@ def get_phase_average(x, period_ind=None,
     ... Assume x is a periodic data, and you are interested in averaging data by locking the phase.
        This function returns time (a cycle), phase-averaged data, std of the data
     ... Two methods to do this
-        1. This is easy IF data is spaced evenly in time
+        1. This is easy IF data is evenly spaced in time
         ... average [x[0], x[period], x[period*2], ...],
            then average [x[1], x[1+period], x[1+period*2], ...], ...
         2. Provide a time array as well as data.
@@ -7500,7 +8554,7 @@ def get_phase_average(x, period_ind=None,
     x: ND array, data
         ... one of the array shape must must match len(time)
     period_ind: int
-        ... period in index space
+        ... period as the number of indices
     time: 1d array, default: None
         ... time of data
     freq: float
@@ -7567,15 +8621,15 @@ def get_phase_average(x, period_ind=None,
             keep = keep1 * keep2
 
             indices = np.arange(x.shape[axis])[keep]
-            x_pavg[..., i] = np.nanmean(x.take(indices=indices, axis=axis), axis=0)
-            x_perr[..., i] = np.nanstd(x.take(indices=indices, axis=axis), axis=0)
+            x_pavg[..., i] = np.nanmean(x.take(indices=indices, axis=axis), axis=axis)
+            x_perr[..., i] = np.nanstd(x.take(indices=indices, axis=axis), axis=axis)
 
         x_pavg = np.swapaxes(x_pavg, axis, -1)
         x_perr = np.swapaxes(x_perr, axis, -1)
     return t_p, x_pavg, x_perr
 
 
-def write_hdf5_dict(filepath, data_dict, overwrite=False):
+def write_hdf5_dict(filename, data_dict, overwrite=False, verbose=True):
     """
     Stores data_dict = {'varname0': var0, 'varname1': var1, ...} in hdf5
     - A quick function to store multiple data into a single hdf5 file
@@ -7591,13 +8645,15 @@ def write_hdf5_dict(filepath, data_dict, overwrite=False):
     -------
 
     """
-    filedir = os.path.split(filepath)[0]
+    filedir = os.path.split(filename)[0]
     if not os.path.exists(filedir):
         os.makedirs(filedir)
 
     ext = '.h5'
-    filename = filepath + ext
-    hf = h5py.File(filename, 'a')
+    if not filename[-3:] == ext:
+        filename = filename + ext
+
+    hf = h5py.File(filename, mode='a')
     for key in data_dict:
         if key in hf.keys() and overwrite:
             del hf[key]
@@ -7608,10 +8664,12 @@ def write_hdf5_dict(filepath, data_dict, overwrite=False):
                 del hf[key]
                 hf.create_dataset(key, data=data_dict[key])
             else:
-                print(key, ' already exists in the h5 file! It will NOT be overwriting the existing data')
+                if verbose:
+                    print(key, ' already exists in the h5 file! It will NOT be overwriting the existing data')
 
     hf.close()
-    print('Data was successfully saved as ' + filename)
+    if verbose:
+        print('Data was successfully saved as ' + filename)
 
 
 def convert_dat2h5files(dpath, savedir=None, verbose=False, overwrite=True, start=0):

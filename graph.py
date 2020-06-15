@@ -15,6 +15,12 @@ import matplotlib.pylab as pylab
 import matplotlib.ticker as ticker
 import mpl_toolkits.axes_grid as axes_grid
 from matplotlib.lines import Line2D
+import matplotlib.lines as mlines
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.collections import LineCollection
+from matplotlib.patches import FancyArrowPatch
+from mpl_toolkits.mplot3d import proj3d
+import mpl_toolkits
 import itertools
 from scipy import stats
 import numpy as np
@@ -113,7 +119,7 @@ def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, over
 
     # Close it
     if close:
-        plt.close()
+        plt.close(fignum)
 
     if verbose:
         print("... Done")
@@ -159,7 +165,7 @@ def set_fig(fignum, subplot=None, dpi=100, figsize=None, **kwargs):
         ax = fig.add_subplot(subplot, **kwargs)
         return fig, ax
     else:
-        ax = fig.add_subplot(111)
+        ax = fig.add_subplot(111, **kwargs)
         return fig, ax
 
 
@@ -196,7 +202,8 @@ def plotfunc(func, x, param, fignum=1, subplot=111, ax = None, label=None, color
         ax.legend()
     return fig, ax
 
-def plot(x, y=None, fignum=1, figsize=None, label='', color=None, subplot=None, legend=False, fig=None, ax=None, maskon=False, thd=1, **kwargs):
+def plot(x, y=None, fignum=1, figsize=None, label='', color=None, subplot=None, legend=False,
+         fig=None, ax=None, maskon=False, thd=1, **kwargs):
     """
     plot a graph using given x,y
     fignum can be specified
@@ -238,15 +245,165 @@ def plot(x, y=None, fignum=1, figsize=None, label='', color=None, subplot=None, 
     return fig, ax
 
 
+def plot_multicolor(x, y=None, colored_by=None, cmap='viridis',
+                    fignum=1, figsize=None,
+                    subplot=None,
+                    fig=None, ax=None, maskon=False, thd=1,
+                    linewidth=2, vmin=None, vmax=None, **kwargs):
+    """
+    plot a graph using given x,y
+    fignum can be specified
+    any kwargs from plot can be passed
+
+    org source: https://matplotlib.org/3.1.1/gallery/lines_bars_and_markers/multicolored_line.html
+    """
+
+    if colored_by is None:
+        print('... colored_by is None. Pass a list/array by which line segments are colored. Using x instead...')
+        colored_by = x
+
+    if vmin is None:
+        vmin = np.nanmin(colored_by)
+    if vmax is None:
+        vmax = np.nanmax(colored_by)
+
+    if fig is None and ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    elif fig is None:
+        fig = plt.gcf()
+    elif ax is None:
+        ax = plt.gca()
+
+    if y is None:
+        y = copy.deepcopy(x)
+        # x = np.arange(len(x))
+    # Make sure x and y are np.array
+    x, y = np.asarray(x), np.asarray(y)
+
+    if len(x) > len(y):
+        print("Warning : x and y data do not have the same length")
+        x = x[:len(y)]
+    elif len(y) > len(x):
+        print("Warning : x and y data do not have the same length")
+        y = y[:len(x)]
+    if maskon:
+        mask = get_mask4erroneous_pts(x, y, thd=thd)
+    else:
+        mask = [True] * len(x)
+
+    x, y, colored_by = x[mask], y[mask], colored_by[mask]
+    # Create a set of line segments so that we can color them individually
+    # This creates the points as a N x 1 x 2 array so that we can stack points
+    # together easily to get the segments. The segments array for line collection
+    # needs to be (numlines) x (points per line) x 2 (for x and y)
+    points = np.array([x, y]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+    norm = plt.Normalize(vmin, vmax)
+    lc = LineCollection(segments, cmap=cmap, norm=norm)
+
+    # Set the values used for colormapping
+    lc.set_array(colored_by)
+    lc.set_linewidth(linewidth)
+    line = ax.add_collection(lc)
+
+    # autoscale does not work for collection => manually set x/y limits
+    ax.set_xlim(x.min(), x.max())
+    ax.set_ylim(y.min(), y.max())
+
+    return fig, ax
+
+def plot_with_arrows(x, y=None, fignum=1, figsize=None, label='', color=None, subplot=None, legend=False, fig=None, ax=None, maskon=False, thd=1, **kwargs):
+    fig, ax = plot(x, **kwargs)
+    lines = ax.get_lines()
+    for i, line in enumerate(lines):
+        add_arrow_to_line(ax, line)
+
+def plot3d(x, y, z, fignum=1, figsize=None, label='', color=None, subplot=None, fig=None,
+           ax=None, labelaxes=True, **kwargs):
+    """
+    plot a 3D graph using given x,y, z
+    """
+
+    if fig is None and ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize, projection='3d')
+    elif fig is None:
+        fig = plt.gcf()
+    elif ax is None:
+        ax = plt.gca()
+    # Make sure x and y are np.array
+    x, y, z = np.asarray(x), np.asarray(y), np.asarray(z)
+
+    if not len(x)==len(y)==len(z):
+        raise ValueError('... x, y, z do not have the same length.')
+
+    # #                     color=color,
+    #                     color=color,
+    #                    )
+    if color is None:
+        line, = ax.plot(x, y, z, label=label, **kwargs)
+    else:
+        line, = ax.plot(x, y, z, color=color, label=label, **kwargs)
+    if labelaxes:
+        ax.set_xlabel('x (mm)')
+        ax.set_ylabel('y (mm)')
+        ax.set_zlabel('z (mm)')
+
+    set_axes_equal(ax)
+    return fig, ax
+
+def plot_surface(x, y, z, shade=True, fig=None, ax=None, fignum=1, subplot=None, figsize=None,
+                 azdeg=0, altdeg=65):
+    """
+    plot_surface for the graph module
+        ... By default, it enables the shading feature
+
+    Source: https://stackoverflow.com/questions/28232879/phong-shading-for-shiny-python-3d-surface-plots/31754643
+    Parameters
+    ----------
+    x
+    y
+    z
+    shade
+    fignum
+    subplot
+    figsize
+
+    Returns
+    -------
+
+    """
+    # example
+    # x, y = np.mgrid[-3:3:100j,-3:3:100j]
+    # z = 3*(1 - x)**2 * np.exp(-x**2 - (y + 1)**2) - 10*(x/5 - x**3 - y**5)*np.exp(-x**2 - y**2) - 1./3*np.exp(-(x + 1)**2 - y**2)
+
+    if fig is None and ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize, projection='3d')
+    elif fig is None:
+        fig = plt.gcf()
+    elif ax is None:
+        ax = plt.gca()
+
+    # Create light source object.
+    ls = mpl.colors.LightSource(azdeg=azdeg, altdeg=altdeg)
+    if shade:
+        # Shade data, creating an rgb array.
+        rgb = ls.shade(z, plt.cm.RdYlBu)
+    else:
+        rgb = None
+    surf = ax.plot_surface(x, y, z, rstride=1, cstride=1, linewidth=0,
+                       antialiased=False, facecolors=rgb)
+    return fig, ax, surf
+
 def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None, label='', color='k', alpha=0.6, subplot=None, legend=False, **kwargs):
     """
     plot universal 1d energy spectrum (Saddoughi, 1992)
     """
     if fig is None and ax is None:
         fig, ax = set_fig(fignum, subplot, figsize=figsize)
-    elif ax is not None and fig is None:
+    elif fig is None:
         fig = plt.gcf()
-    elif fig is not None and ax is None:
+    elif ax is None:
         ax = plt.gca()
 
     x = np.asarray([1.27151, 0.554731, 0.21884, 0.139643, 0.0648844, 0.0198547, 0.00558913, 0.00128828, 0.000676395, 0.000254346])
@@ -260,7 +417,8 @@ def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None, label='', color='k
     return fig, ax
 
 
-def scatter(x, y, ax=None, fignum=1, figsize=None, marker='o', fillstyle='full', label=None, subplot=None, legend=False,
+def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
+            marker='o', fillstyle='full', label=None, subplot=None, legend=False,
             maskon=False, thd=1,
             **kwargs):
     """
@@ -269,10 +427,16 @@ def scatter(x, y, ax=None, fignum=1, figsize=None, marker='o', fillstyle='full',
     any kwargs from plot can be passed
     Use the homemade function refresh() to draw and plot the figure, no matter the way python is called (terminal, script, notebook)
     """
-    if ax is None:
+    if fig is None and ax is None:
         fig, ax = set_fig(fignum, subplot, figsize=figsize)
-    else:
-        fig = ax.get_figure()
+    elif fig is None:
+        fig = plt.gcf()
+    elif ax is None:
+        ax = plt.gca()
+
+    if figsize is not None:
+        fig.set_size_inches(figsize)
+
     x, y = np.array(x), np.array(y)
     if len(x.flatten()) > len(y.flatten()):
         print("Warning : x and y data do not have the same length")
@@ -294,6 +458,41 @@ def scatter(x, y, ax=None, fignum=1, figsize=None, marker='o', fillstyle='full',
         plt.legend()
     return fig, ax
 
+def scatter3d(x, y, z, ax=None, fig=None, fignum=1, figsize=None, marker='o',
+            fillstyle='full', label=None, subplot=None, legend=False,
+            labelaxes=True, **kwargs):
+    """
+    plot a graph using given x,y
+    fignum can be specified
+    any kwargs from plot can be passed
+    Use the homemade function refresh() to draw and plot the figure, no matter the way python is called (terminal, script, notebook)
+    """
+    if fig is None and ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize, projection='3d')
+    elif fig is None:
+        fig = plt.gcf()
+    elif ax is None:
+        ax = plt.gca()
+
+    x, y, z = np.array(x), np.array(y), np.asarray(z)
+
+    if fillstyle =='none':
+        # Scatter plot with open markers
+        facecolors = 'none'
+        # ax.scatter(x, y, color=color, label=label, marker=marker, facecolors=facecolors, edgecolors=edgecolors, **kwargs)
+        ax.scatter(x, y, z, label=label, marker=marker, facecolors=facecolors, **kwargs)
+    else:
+        ax.scatter(x, y, z, label=label, marker=marker, **kwargs)
+    if legend:
+        plt.legend()
+
+    if labelaxes:
+        ax.set_xlabel('x (mm)')
+        ax.set_ylabel('y (mm)')
+        ax.set_zlabel('z (mm)')
+
+    set_axes_equal(ax)
+    return fig, ax
 
 def pdf(data, nbins=10, return_data=False, vmax=None, vmin=None, fignum=1, figsize=None, subplot=None, density=True, analyze=False, **kwargs):
     def compute_pdf(data, nbins=10):
@@ -435,7 +634,7 @@ def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax
 ## Plot a fit curve
 def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figsize=None, linestyle='--',
                    xmin=None, xmax=None, add_equation=True, eq_loc='bl', color=None, label='fit',
-                   show_r2=False, return_r2=False, p0=None, bounds=(-np.inf, np.inf), **kwargs):
+                   show_r2=False, return_r2=False, p0=None, bounds=(-np.inf, np.inf), maskon=True, thd=1,**kwargs):
     """
     Plots a fit curve given xdata and ydata
     Parameters
@@ -470,6 +669,12 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
         xmin = np.min(xdata)
     if xmax is None:
         xmax = np.max(xdata)
+
+    if maskon:
+        mask = get_mask4erroneous_pts(xdata, ydata, thd=thd)
+        xdata = xdata[mask]
+        ydata = ydata[mask]
+
 
     x_for_plot = np.linspace(xmin, xmax, 1000)
     if func is None or func=='linear':
@@ -627,6 +832,19 @@ def imshow(griddata, xmin=0, xmax=1, ymin=0, ymax=1, cbar=True, vmin=0, vmax=0, 
     return fig, ax, cax, cc
 
 
+# quiver
+def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None, inc_x=1, inc_y=1, inc=None, aspect='equal', **kwargs):
+    if ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    else:
+        fig = plt.gcf()
+    if inc is not None:
+        inc_x = inc_y = inc
+    ax.quiver(x[::inc_y, ::inc_x], y[::inc_y, ::inc_x], u[::inc_y, ::inc_x], v[::inc_y, ::inc_x], **kwargs)
+    ax.set_aspect(aspect)
+    return fig, ax
+
+
 
 ## Miscellanies
 def show():
@@ -721,6 +939,180 @@ def axvband(ax, x0, x1, y0=None, y1=None, color='C1', alpha=0.2, **kwargs):
     ax.fill_between(np.linspace(x0, x1, 2), y0, y1, alpha=alpha, color=color, **kwargs)
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(y0, y1)
+
+# Arrow plots
+class Arrow3D(FancyArrowPatch):
+    def __init__(self, xs, ys, zs, *args, **kwargs):
+        FancyArrowPatch.__init__(self, (0, 0), (0, 0), *args, **kwargs)
+        self._verts3d = xs, ys, zs
+
+    def draw(self, renderer):
+        xs3d, ys3d, zs3d = self._verts3d
+        xs, ys, zs = proj3d.proj_transform(xs3d, ys3d, zs3d, renderer.M)
+        self.set_positions((xs[0], ys[0]), (xs[1], ys[1]))
+        FancyArrowPatch.draw(self, renderer)
+
+def add_arrow_to_line(axes, line, arrow_locs=[0.2, 0.4, 0.6, 0.8], head_width=15, transform=None, **kwargs):
+    if isinstance(line, mlines.Line2D):
+        add_arrow_to_line2D(axes, line, arrow_locs=arrow_locs, head_width=head_width, transform=transform, **kwargs)
+    else:
+        add_arrow_to_line3D(axes, line, arrow_locs=arrow_locs, head_width=head_width, transform=transform, **kwargs)
+
+
+def add_arrow_to_line2D(
+    axes, line, arrow_locs=[0.2, 0.4, 0.6, 0.8],
+    arrowstyle='-|>', head_width=15, transform=None):
+    """
+    Add arrows to a matplotlib.lines.Line2D at selected locations.
+
+    Parameters:
+    -----------
+    axes:
+    line: Line2D object as returned by plot command
+    arrow_locs: list of locations where to insert arrows, % of total length
+    arrowstyle: style of the arrow
+    arrowsize: size of the arrow
+    transform: a matplotlib transform instance, default to data coordinates
+
+    Returns:
+    --------
+    arrows: list of arrows
+    """
+    if not isinstance(line, mlines.Line2D):
+        raise ValueError("expected a matplotlib.lines.Line2D object")
+    x, y = line.get_xdata(), line.get_ydata()
+
+    arrow_kw = {
+        "arrowstyle": arrowstyle,
+        "mutation_scale": head_width * line.get_linewidth(),
+    }
+
+    color = line.get_color()
+    use_multicolor_lines = isinstance(color, np.ndarray)
+    if use_multicolor_lines:
+        raise NotImplementedError("multicolor lines not supported")
+    else:
+        arrow_kw['color'] = color
+
+    linewidth = line.get_linewidth()
+    if isinstance(linewidth, np.ndarray):
+        raise NotImplementedError("multiwidth lines not supported")
+    else:
+        arrow_kw['linewidth'] = linewidth
+
+    if transform is None:
+        transform = axes.transData
+
+    arrows = []
+    for loc in arrow_locs:
+        s = np.cumsum(np.sqrt(np.diff(x) ** 2 + np.diff(y) ** 2))
+        n = np.searchsorted(s, s[-1] * loc)
+        arrow_tail = (x[n], y[n])
+        arrow_head = (np.mean(x[n:n + 2]), np.mean(y[n:n + 2]))
+        p = mpatches.FancyArrowPatch(
+            arrow_tail, arrow_head, transform=transform,
+            **arrow_kw)
+        axes.add_patch(p)
+        arrows.append(p)
+    return arrows
+
+def add_arrow_to_line3D(
+        axes, line, arrow_locs=[0.2, 0.4, 0.6, 0.8], head_width=15, lw=1, transform=None, **kwargs):
+    """
+    Add arrows to a matplotlib.lines.Line2D at selected locations.
+
+    example:
+        # plotting
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+
+        x = np.linspace(0, 10, 11)
+        y = np.linspace(0, 10, 11)
+        z = np.zeros(11)
+        line, = ax.plot(x,y,z, alpha=1, lw=3, color='k')
+        add_arrow_to_line3D(ax, line, arrow_locs=np.linspace(0., 1., 5), alpha=0.3)
+
+    Parameters:
+    -----------
+    axes:
+    line: Line2D object as returned by plot command
+    arrow_locs: list of locations where to insert arrows, % of total length
+    arrowstyle: style of the arrow
+    arrowsize: size of the arrow
+    transform: a matplotlib transform instance, default to data coordinates
+
+    Returns:
+    --------
+    arrows: list of arrows
+    """
+    if not isinstance(line, mpl_toolkits.mplot3d.art3d.Line3D):
+        raise ValueError("expected a matplotlib.lines.Line3D object")
+    x, y, z = line.get_data_3d()
+
+    length = len(x)
+    if length < 2:
+        return None
+    else:
+        arrow_kw = {}
+
+        color = line.get_color()
+        use_multicolor_lines = isinstance(color, np.ndarray)
+        if use_multicolor_lines:
+            raise NotImplementedError("multicolor lines not supported")
+        else:
+            kwargs['color'] = color
+
+        linewidth = line.get_linewidth()
+        if isinstance(linewidth, np.ndarray):
+            raise NotImplementedError("multiwidth lines not supported")
+        else:
+            kwargs['linewidth'] = linewidth
+
+        if transform is None:
+            transform = axes.transData
+
+        arrows = []
+        for loc in arrow_locs:
+            s = np.cumsum(np.sqrt(np.diff(x) ** 2 + np.diff(y) ** 2 + np.diff(z) ** 2))
+            n = np.searchsorted(s, s[-1] * loc)
+            arrow_tail = (x[n], y[n], z[n])
+            arrow_head = (np.mean(x[n:n + 2]), np.mean(y[n:n + 2]), np.mean(z[n:n + 2]))
+            arrow_lines = list(zip(arrow_tail, arrow_head))
+
+            arrow = Arrow3D(
+                arrow_lines[0], arrow_lines[1], arrow_lines[2],
+                mutation_scale=head_width,
+                lw=lw, **kwargs)
+            ax.add_artist(arrow)
+            arrows.append(arrow)
+        return arrows
+
+def arrow3D(x, y, z, dx, dy, dz, lw=3, arrowstyle='-|>', color='r', mutation_scale=20,
+            ax=None, fig=None, fignum=1, subplot=111, figsize=None, **kwargs):
+    if fig is None and ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    elif fig is None:
+        fig = plt.gcf()
+    elif ax is None:
+        ax = plt.gca()
+
+    arrow_obj = Arrow3D([x, x+dx], [y, y+dy],
+                        [z, z+dz], mutation_scale=mutation_scale,
+                        lw=lw, arrowstyle=arrowstyle, color=color, **kwargs)
+    ax.add_artist(arrow_obj)
+    return fig, ax, arrow_obj
+
+def arrow(x, y, dx, dy,
+            ax=None, fig=None, fignum=1, subplot=111, figsize=None, **kwargs):
+    if fig is None and ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    elif fig is None:
+        fig = plt.gcf()
+    elif ax is None:
+        ax = plt.gca()
+
+    ax.arrow(x, y, dx, dy, **kwargs)
+    return fig, ax
 
 ## Legend
 # Legend
@@ -830,38 +1222,24 @@ def add_colorbar_old(mappable, fig=None, ax=None, fignum=None, label=None, fonts
 
 
 def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', label=None, fontsize=None, option='normal',
-                 tight_layout=True, ticklabelsize=None, aspect='equal', ntick=5, tickinc=None, fformat="%03.1f", **kwargs):
+                 tight_layout=True, ticklabelsize=None, aspect='equal', ntick=5, tickinc=None, **kwargs):
     """
-    Adds a color bar to an axis object when mappable is passed
-    ...
+    Adds a color bar
 
+    e.g.
+        fig = plt.figure()
+        img = fig.add_subplot(111)
+        ax = img.imshow(im_data)
+        colorbar(ax)
     Parameters
     ----------
     mappable
-    fig: mpl.fig.Figure object
-    ax: mpl.axes.Axes object
-    fignum: int, figure number (num- attribute of the Figure class
-    location: str, 'left', 'right', 'top', 'bottom'
-    label: str
-    fontsize: float
-    option: str- Formatting option of the tick label (normal, scientific, scientific_custom)
-    tight_layout: bool (default: True)
-        ... Applies fig.tight_layout() at the end if True
-    ticklabelsize: float- fontsize of tick numbers
-    aspect: str- 'equal' (default)
-        ... passed to ax.set_aspect()
-    ntick: int, number of ticks (applied only if option=='scientific_custom')
-    tickinc: float, tick increment, default: None (applied only if option=='scientific_custom')
-    fformat: str, tick label format (e.g.- 0.4 x 10^5 instead of 4 x 10^4) default: "%03.1f"(applied only if option=='scientific')
-        ... If tick labels were weird, adjust the formatting style here.
-    kwargs: passed to fig.colorbar()
+    location
 
     Returns
     -------
-    cb: mpl.colorbar.Colorbase class object- output of fig.colorbar())
+
     """
-
-
     global sfmt
     def get_ticks_for_sfmt(mappable, n=10, inc=0.5, **kwargs):
         """
@@ -925,7 +1303,7 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
     if fig is None:
         fig = plt.gcf()
 
-    reset_sfmt(fformat)
+    reset_sfmt()
 
     divider = axes_grid.make_axes_locatable(ax)
     cax = divider.append_axes(location, size='5%', pad=0.15)
@@ -1213,6 +1591,7 @@ def suptitle(title, fignum=None, **kwargs):
     Add a centered title to the figure.
     If fignum is given, it adds a title, then it reselects the figure which selected before this method was called.
     ... this is because figure class does not have a suptitle method.
+    ...
     Parameters
     ----------
     title
@@ -1573,7 +1952,6 @@ def get_colors_and_cmap_using_values(values, cmap=None, color1='greenyellow', co
     colors = cmap(norm(values))
     return colors, cmap, norm
 
-
 def get_color_list_gradient(color1='greenyellow', color2='darkgreen', n=10):
     """
     Returns a list of colors in RGB between color1 and color2
@@ -1602,6 +1980,27 @@ def get_color_list_gradient(color1='greenyellow', color2='darkgreen', n=10):
     color_list = list(zip(r, g, b))
     return color_list
 
+def get_color_from_cmap(cmapname='viridis', n=10, lut=12):
+    """
+    A simple function which returns a list of RGBA values from a cmap (evenly spaced)
+    ... If one desires to assign a color based on values, use get_colors_and_cmap_using_values()
+    ... If one prefers to get colors between two colors of choice, use get_color_list_gradient()
+    Parameters
+    ----------
+    cmapname: str, standard cmap name
+    n: int, number of colors
+    lut, int,
+        ... If lut is not None it must be an integer giving the number of entries desired in the lookup table,
+        and name must be a standard mpl colormap name.
+
+    Returns
+    -------
+    colors
+
+    """
+    cmap = mpl.cm.get_cmap(cmapname, lut)
+    colors = cmap(np.linspace(0, 1, n))
+    return colors
 
 def hex2rgb(hex):
     """
@@ -1686,6 +2085,37 @@ def default_figure_params():
 
 # Use the settings above as a default
 reset_figure_params()
+
+## 3D plotting
+def set_axes_equal(ax):
+    '''Make axes of 3D plot have equal scale so that spheres appear as spheres,
+    cubes as cubes, etc..  This is one possible solution to Matplotlib's
+    ax.set_aspect('equal') and ax.axis('equal') not working for 3D.
+
+    Input
+      ax: a matplotlib axis, e.g., as output from plt.gca().
+    '''
+
+    x_limits = ax.get_xlim3d()
+    y_limits = ax.get_ylim3d()
+    z_limits = ax.get_zlim3d()
+
+    x_range = abs(x_limits[1] - x_limits[0])
+    x_middle = np.mean(x_limits)
+    y_range = abs(y_limits[1] - y_limits[0])
+    y_middle = np.mean(y_limits)
+    z_range = abs(z_limits[1] - z_limits[0])
+    z_middle = np.mean(z_limits)
+
+    # The plot bounding box is a sphere in the sense of the infinity
+    # norm, hence I call half the max range the plot radius.
+    plot_radius = 0.5*max([x_range, y_range, z_range])
+
+    ax.set_xlim3d([x_middle - plot_radius, x_middle + plot_radius])
+    ax.set_ylim3d([y_middle - plot_radius, y_middle + plot_radius])
+    ax.set_zlim3d([z_middle - plot_radius, z_middle + plot_radius])
+
+
 
 # plotting styles
 def show_plot_styles():
@@ -1880,6 +2310,29 @@ def draw_box(ax, xx, yy, w_box=325., h_box=325., xoffset=0, yoffset=0, linewidth
     ax.spines["right"].set_visible(False)
     ax.spines["left"].set_visible(False)
 
+
+def draw_cuboid(ax, xx, yy, zz, color='c', lw=2, subplot=None,
+                figsize=None, **kwargs):
+
+
+    xmin, xmax = np.nanmin(xx), np.nanmax(xx)
+    ymin, ymax = np.nanmin(yy), np.nanmax(yy)
+    zmin, zmax = np.nanmin(zz), np.nanmax(zz)
+    rx = [xmin, xmax]
+    ry = [ymin, ymax]
+    rz = [zmin, zmax]
+    w, h, d = xmax - xmin, ymax - ymin, zmax - zmin
+    for s, e in itertools.combinations(np.array(list(itertools.product(rx, ry, rz))), 2):
+        dist = np.linalg.norm(s - e)
+        if dist in [w, h, d]:
+            ax.plot3D(*zip(s, e), color=color, lw=lw, **kwargs)
+
+    ax.set_xlim(rx)
+    ax.set_ylim(ry)
+    ax.set_zlim(rz)
+    set_axes_equal(ax)
+
+
 ## misc.
 def simplest_fraction_in_interval(x, y):
     """Return the fraction with the lowest denominator in [x,y]."""
@@ -1914,7 +2367,8 @@ def get_mask4erroneous_pts(x, y, thd=1):
     Retruns a mask that can be sued to hide erroneous data points for 1D plots
     ... e.g. x[mask], y[mask] hide the jumps which appear to be false to human eyes
     ... Uses P = dy/dx / y to determine whether data points appear to be false
-        If P is high, we'd expect a jump. thd is a threashold of P.
+        If P is high, we'd expect a jump. thd is a threshold of P.
+
     Parameters
     ----------
     x: 1d array
@@ -1992,3 +2446,244 @@ def get_plot_data_from_fig(fig, axis_number=0):
         ylist.apppend(y)
     return xlist, ylist
 
+## Interactive plotting
+class LineDrawer(object):
+    """
+    Class which allows users to draw lines/splines by clicking pts on the plot
+        ... Default: lines/splines are closed.
+        ... make sure that matplotlib backend is interactive
+
+    Procedure for self.draw_lines() or self.draw_splines:
+        It uses plt.ginput()
+        1. Add a point by a left click
+        2. Remove a point by a right click
+        3. Stop interaction (move onto the next line to draw)
+
+    Example
+        # Pass matplotlib.axes._subplots.AxesSubplot object whose coordinates are used for extracting pts
+        ld = LineDrawer(ax)
+
+        # Draw lines/splines
+        ld.draw_lines(n=5) # Draw 5 lines (connecting 5 set of points)
+        # ld.draw_splines(n=2) # Or draw 2 splines based on the clicked points
+
+        xs, ys = ld.xs, ld.ys # Retrieve x and y coords of pts used to draw lines/splines
+        # xis, yis = ld.xis, ld.yis # Retrieve x and y coords for each spline
+
+        # plot the first contour
+        plt.plot(xs[0], ys[0]
+
+        # for example, I could feed this contour to compute a line integral using vel.compute_circulation()
+
+
+    """
+
+    def __init__(self, ax):
+        self.ax = ax
+
+    def get_contour(self, npt=100, close=True):
+        ax = self.ax
+        xy = plt.ginput(npt)
+
+        x = [p[0] for p in xy]
+        y = [p[1] for p in xy]
+        #         line = ax.scatter(x,y, marker='x', s=20, zorder=100)
+        #         ax.figure.canvas.draw()
+        #         self.lines.append(line)
+
+        if close:
+            # append the starting x,y coordinates
+            x = np.r_[x, x[0]]
+            y = np.r_[y, y[0]]
+
+        self.x = x
+        self.y = y
+
+        return x, y
+
+    def draw_lines(self, n=1, close=True):
+        ax = self.ax
+        xs, ys = [], []
+        for i in range(n):
+            x, y = self.get_contour(close=close)
+            xs.append(x)
+            ys.append(y)
+
+            ax.plot(x, y)
+
+        self.xs = xs
+        self.ys = ys
+
+    def spline_fit(self, x, y, n=1000):
+        from scipy import interpolate
+        # fit splines to x=f(u) and y=g(u), treating both as periodic. also note that s=0
+        # is needed in order to force the spline fit to pass through all the input points.
+        tck, u = interpolate.splprep([x, y], s=0, per=True)
+
+        # evaluate the spline fits for 1000 evenly spaced distance values
+        xi, yi = interpolate.splev(np.linspace(0, 1, n), tck)
+
+        return xi, yi
+
+    def draw_splines(self, n=1, npt=100, n_sp=1000, close=True):
+        ax = self.ax
+
+        xs, ys = [], []
+        xis, yis = [], []
+        for i in range(n):
+            x, y = self.get_contour(npt=npt, close=close)
+            xi, yi = self.spline_fit(x, y, n=n_sp)
+
+            xs.append(x)
+            ys.append(y)
+
+            xis.append(xi)
+            yis.append(yi)
+
+            # ax.plot(x, y)
+            ax.plot(xi, yi)
+
+        self.xs = xs
+        self.ys = ys
+        self.xis = xis
+        self.yis = yis
+
+    def return_pts_on_splines(self):
+        return self.xis, self.yis
+
+    def close(self):
+        plt.close()
+
+
+class PointFinder(object):
+    def __init__(self, ax, xx, yy, weight=None):
+        self.ax = ax
+        self.xx = xx
+        self.yy = yy
+        self.ind = None
+
+        if weight is None:
+            self.weight = np.ones_like(xx)
+        else:
+            self.weight = weight
+
+    def get_pts(self, npt=100):
+        def find_indices(xx, yy, xs, ys):
+            xg, yg = xx[0, :], yy[:, 0]
+            xmin, xmax, ymin, ymax = xg.min(), xg.max(), yg.min(), yg.max()
+            # i_list, j_list = [], []
+            inds = []
+            for n in range(len(xs)):
+                if xs[n] > xmin and xs[n] < xmax and ys[n] > ymin and ys[n] < ymax:
+
+                    X = np.abs(xg - xs[n])
+                    Y = np.abs(yg - ys[n])
+                    j = int(np.where(X == X.min())[0])
+                    i = int(np.where(Y == Y.min())[0])
+                    # i_list.append(i)
+                    # j_list.append(j)
+                else:
+                    i, j = np.nan, np.nan
+                inds.append(np.asarray([i, j]))
+            return inds
+
+
+        ax = self.ax
+        xy = plt.ginput(npt)
+        x = [p[0] for p in xy]
+        y = [p[1] for p in xy]
+
+        inds = find_indices(self.xx, self.yy, x, y)
+        self.ind = inds
+        self.x = x
+        self.y = y
+        return x, y, inds
+
+    def find_local_center_of_mass(self, kernel_radius=2):
+        def get_subarray(arr, i, j, kernel_radius):
+            arr = np.asarray(arr)
+            nrows, ncols = arr.shape
+
+            imax = i + kernel_radius
+            imin = i - kernel_radius
+            jmax = j + kernel_radius
+            jmin = j - kernel_radius
+
+
+            if imax >= nrows:
+                imax = nrows - 1
+            if imin < 0:
+                imin = 0
+            if jmax >= ncols:
+                jmax = ncols - 1
+            if jmin < 0:
+                jmin = 0
+            subarr = arr[imin:imax, jmin:jmax]
+            return subarr
+
+        xcs, ycs = [], []
+
+
+        for n, idx in enumerate(self.ind):
+            if ~np.isnan(idx[0]):
+                xx_sub = get_subarray(self.xx, idx[0], idx[1], kernel_radius=kernel_radius)
+                yy_sub = get_subarray(self.yy, idx[0], idx[1], kernel_radius=kernel_radius)
+                weight_sub = get_subarray(self.weight, idx[0], idx[1], kernel_radius=kernel_radius)
+
+                xc = np.nansum(xx_sub * weight_sub) / np.nansum(weight_sub)
+                yc = np.nansum(yy_sub * weight_sub) / np.nansum(weight_sub)
+            else:
+                xc, yc = np.nan, np.nan
+            xcs.append(xc)
+            ycs.append(yc)
+
+            self.ax.scatter([xc], [yc], marker='x', color='k')
+        self.xc = xcs
+        self.yc = ycs
+
+        return xcs, ycs
+
+    def get_local_center_of_mass(self, npt=100, kernel_radius=2):
+        x, y, inds = self.get_pts(npt=npt)
+        xcs, ycs = self.find_local_center_of_mass(kernel_radius=kernel_radius)
+        return xcs, ycs
+
+    # def get_local_center_of_mass(self, weight, kernel_size=3):
+    #     from scipy import ndimage
+    #     import numpy as np
+    #     arr_conv = ndimage.generic_filter(weight, np.nanmean, size=kernel_size,
+    #                                       mode='constant', cval=np.NaN)
+
+## backend
+def get_current_backend():
+    gui = mpl.get_backend()
+    print(gui)
+    return gui
+
+def list_available_backends():
+    current_backend = mpl.get_backend()
+
+    gui_backends = [i for i in mpl.rcsetup.interactive_bk]
+    non_gui_backends = mpl.rcsetup.non_interactive_bk
+    # gui_env = ['TKAgg', 'GTKAgg', 'Qt4Agg', 'WXAgg']
+
+    backends = gui_backends + non_gui_backends
+
+    available_backends = []
+
+    print ("Non Gui backends are:", non_gui_backends)
+    print ("Gui backends I will test for", gui_backends)
+    for backend in backends:
+        try:
+            mpl.use(backend, warn=False, force=True)
+            available_backends.append(backend)
+        except:
+            continue
+    print('Available backends:')
+    print(available_backends)
+
+    mpl.use(current_backend)
+    print("Currently using:", mpl.get_backend() )
+
+def use_backend(name='agg'):
+    mpl.use(name)
