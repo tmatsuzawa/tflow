@@ -5446,7 +5446,7 @@ def slicer(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, s
             theta1, theta2 = np.arctan(popt1[0]), np.arctan(popt2[0])
             theta = np.pi / 2 - theta1
             #             p = vec.norm(np.asarray([0, 1, popt1[0] ]))#in new basis (basisB)- n, u, v
-            #             q = vec.norm(np.asarray([0, 1, popt2[0] ]))¥
+            #             q = vec.norm(np.asarray([0, 1, popt2[0] ]))
             if ind1 > (len(vs[:-1][keep])-len(inds)) / 2:
                 p = vec.norm(np.asarray([0, 1, popt1[0]]))  # in new basis (basisB)- n, u, v
                 q = vec.norm(np.asarray([0, 1, -1 / popt1[0]]))
