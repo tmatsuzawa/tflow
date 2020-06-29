@@ -1980,7 +1980,7 @@ def get_color_list_gradient(color1='greenyellow', color2='darkgreen', n=10):
     color_list = list(zip(r, g, b))
     return color_list
 
-def get_color_from_cmap(cmapname='viridis', n=10, lut=12):
+def get_color_from_cmap(cmap='viridis', n=10, lut=12):
     """
     A simple function which returns a list of RGBA values from a cmap (evenly spaced)
     ... If one desires to assign a color based on values, use get_colors_and_cmap_using_values()
@@ -1998,7 +1998,7 @@ def get_color_from_cmap(cmapname='viridis', n=10, lut=12):
     colors
 
     """
-    cmap = mpl.cm.get_cmap(cmapname, lut)
+    cmap = mpl.cm.get_cmap(cmap, lut)
     colors = cmap(np.linspace(0, 1, n))
     return colors
 
