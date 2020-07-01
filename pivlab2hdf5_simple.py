@@ -59,6 +59,7 @@ def pivlab2hdf5_dirbase(dirbase, overwrite=False):
         print('Processing %s' % datadir)
 
         datafiles = glob.glob(datadir + '/*.txt')
+        datafiles = sorted(datafiles)
 
         for i, datafile in enumerate(tqdm(datafiles)):
             if not 'piv_settings/' in datafile:

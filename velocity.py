@@ -4542,7 +4542,7 @@ def get_sample_turb_field_3d(return_coord=True):
     # get module location
     mod_loc = os.path.abspath(__file__)
     pdir, filename = os.path.split(mod_loc)
-    datapath = os.path.join(pdir, 'reference_data/isoturb_slice2.h5')
+    datapath = os.path.join(pdir, 'velocity_ref/isoturb_slice2.h5')
     data = h5py.File(datapath, 'r')
 
     keys = list(data.keys())
@@ -5434,7 +5434,8 @@ def slicer(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, s
     def find_rotation_angle_for_new_basis(us, vs, basis, Mab, show=False):
         from scipy.optimize import curve_fit
         keep = np.diff(vs) < 0
-        # ind = np.argmax(vs[:-1][keep])
+        #         ind = np.argmax(vs[:-1][keep])
+
         inds = np.argwhere(vs[:-1][keep] == np.amax(vs[:-1][keep]))
         ind1, ind2 = inds[0, 0], inds[-1, 0]
 
@@ -5524,16 +5525,15 @@ def slicer(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, s
     #     vlist = list(range(vmin, vmax))
     #     uvlist = list(itertools.product(ulist, vlist))
 
-    #   METHOD2- Find the pts on the cross section
+    #   METHOD2- Find the
     verts_a = get_vertices_of_cross_section_of_a_cuboid(xx, yy, zz, n, pt)
     verts_b = np.matmul(Mab, verts_a)
+    nmin, nmax = int(np.floor(np.nanmin(verts_b[0, :]))), int(np.ceil(np.nanmax(verts_b[0, :])))
+    umin, umax = int(np.floor(np.nanmin(verts_b[1, :]))), int(np.ceil(np.nanmax(verts_b[1, :])))
+    vmin, vmax = int(np.floor(np.nanmin(verts_b[2, :]))), int(np.ceil(np.nanmax(verts_b[2, :])))
 
-    nmin, nmax = int(np.floor(np.nanmin(verts_b[0, :] - pt_b[0]) / spacing)), int(np.ceil(np.nanmax(verts_b[0, :]  - pt_b[0]) / spacing))
-    umin, umax = int(np.floor(np.nanmin(verts_b[1, :] - pt_b[1]) / spacing)), int(np.ceil(np.nanmax(verts_b[1, :]  - pt_b[1]) / spacing))
-    vmin, vmax = int(np.floor(np.nanmin(verts_b[2, :] - pt_b[2]) / spacing)), int(np.ceil(np.nanmax(verts_b[2, :]  - pt_b[2]) / spacing))
-
-    ulist = np.asarray(list(range(umin, umax)))
-    vlist = np.asarray(list(range(vmin, vmax)))
+    ulist = list(range(umin, umax))
+    vlist = list(range(vmin, vmax))
 
     ### Initialization for sampling pts on the plane
     xs, ys, zs = [], [], []
@@ -5541,6 +5541,7 @@ def slicer(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, s
 
     # Sample pts on the plane
     for (counter_u, counter_v) in tqdm(list(itertools.product(ulist, vlist))):
+
         pt_a_tmp = pt + basisB[:, 1] * counter_u * spacing + basisB[:, 2] * counter_v * spacing
         pt_b_tmp = np.matmul(Mab, pt_a_tmp)
 
@@ -5567,34 +5568,18 @@ def slicer(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, s
     theta, basisC = find_rotation_angle_for_new_basis(us, vs, basisB, Mab, show=show)
 
     if show:
-        umin, umax = np.nanmin(us), np.nanmax(us)
-        vmin, vmax = np.nanmin(vs), np.nanmax(vs)
-        arrow_length = min(umax-umin, vmax-vmin) * 0.2
-
-        pt_b = np.matmul(Mab, pt)
-
         # plots in basisB
-        fig, ax = graph.arrow(pt_b[1], pt_b[2],
-                              np.matmul(Mab, basisB[:, 1])[1] * arrow_length,
-                              np.matmul(Mab, basisB[:, 1])[2] * arrow_length,
-                              color='c', fignum=2, width=spacing*0.25)  # this should be 1,0 and 0, 1 in basis B
-        graph.arrow(pt_b[1], pt_b[2],
-                    np.matmul(Mab, basisB[:, 2])[1] * arrow_length,
-                    np.matmul(Mab, basisB[:, 2])[2] * arrow_length,
-                    color='m', fignum=2, width=spacing*0.25)  # in basisA
+        fig, ax = graph.arrow(0, 0, np.matmul(Mab, basisB[:, 1])[1] * 20, np.matmul(Mab, basisB[:, 1])[2] * 20,
+                              color='c', fignum=2, width=1)  # this should be 1,0 and 0, 1 in basis B
+        graph.arrow(0, 0, np.matmul(Mab, basisB[:, 2])[1] * 20, np.matmul(Mab, basisB[:, 2])[2] * 20,
+                    color='m', fignum=2, width=1)  # in basisA
 
-        graph.arrow(pt_b[1], pt_b[2],
-                    np.matmul(Mab, basisC[:, 1])[1] * arrow_length,
-                    np.matmul(Mab, basisC[:, 1])[2] * arrow_length,
-                    color='b', fignum=2, width=spacing*0.25)
-        graph.arrow(pt_b[1], pt_b[2],
-                    np.matmul(Mab, basisC[:, 2])[1] * arrow_length,
-                    np.matmul(Mab, basisC[:, 2])[2] * arrow_length,
-                    color='g', fignum=2, width=spacing*0.25)
+        graph.arrow(0, 0, np.matmul(Mab, basisC[:, 1])[1] * 20, np.matmul(Mab, basisC[:, 1])[2] * 20,
+                    color='b', fignum=2, width=1)
+        graph.arrow(0, 0, np.matmul(Mab, basisC[:, 2])[1] * 20, np.matmul(Mab, basisC[:, 2])[2] * 20,
+                    color='g', fignum=2, width=1)
         graph.title(ax, 'find_rotation_angle_for_new_basis')
         graph.labelaxes(ax, 'u', 'v')
-        ax.set_aspect('equal')
-
 
     Mbc = vec.get_change_of_basis_matrix(basisB, basisC)
     Mac = vec.get_change_of_basis_matrix(basis_std, basisC) # this will be updated later due to the convention
@@ -5639,18 +5624,12 @@ def slicer(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, s
         print(vec.apply_right_handedness(basisC))
 
     if show:
-        xmin, xmax = np.nanmin(xx), np.nanmax(xx)
-        ymin, ymax = np.nanmin(yy), np.nanmax(yy)
-        zmin, zmax = np.nanmin(zz), np.nanmax(zz)
-        arrow_length = np.nanmax([xmax - xmin, ymax-ymin, zmax-zmin]) * 0.4
-        print(arrow_length)
-
         fig1, ax1 = graph.scatter3d(xs, ys, zs, s=1, fignum=1, subplot=121)
-        graph.arrow3D(pt[0], pt[1], pt[2], basisC[0, 0] * arrow_length, basisC[1, 0] * arrow_length, basisC[2, 0] * arrow_length,
+        graph.arrow3D(pt[0], pt[1], pt[2], basisC[0, 0] * 50, basisC[1, 0] * 50, basisC[2, 0] * 50,
                       ax=ax1, zorder=1000, mutation_scale=10)
-        graph.arrow3D(pt[0], pt[1], pt[2], basisC[0, 1] * arrow_length, basisC[1, 1] * arrow_length, basisC[2, 1] * arrow_length,
+        graph.arrow3D(pt[0], pt[1], pt[2], basisC[0, 1] * 50, basisC[1, 1] * 50, basisC[2, 1] * 50,
                       ax=ax1, zorder=1000, color='b')
-        graph.arrow3D(pt[0], pt[1], pt[2], basisC[0, 2] * arrow_length, basisC[1, 2] * arrow_length, basisC[2, 2] * arrow_length,
+        graph.arrow3D(pt[0], pt[1], pt[2], basisC[0, 2] * 50, basisC[1, 2] * 50, basisC[2, 2] * 50,
                       ax=ax1, zorder=1000, color='g')
         graph.draw_cuboid(ax1, xx, yy, zz, color='k', zorder=100)
 
@@ -5773,25 +5752,21 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
         pmin, pmax, qmin, qmax = np.nanmin(ps), np.nanmax(ps), np.nanmin(qs), np.nanmax(qs)
         p = np.arange(pmin, pmax, spacing)
         q = np.arange(qmin, qmax, spacing)
-        # n = [0] # this may not be right in general
-        n = np.matmul(Mab, pt)[0]
+        n = [0]
         pp, qq, nn = np.meshgrid(p, q, n) # THIS WORKS! DO not touch this
         shape = pp.shape
         pts_b = np.stack((nn.flatten(), pp.flatten(), qq.flatten())) # npq
 
         pts_a = np.matmul(Mba, pts_b)  # x, y, z
         pts_a[[0, 1], :] = pts_a[[1, 0], :] # interpolating function takes (y, x, z) not (x, y, z). Swap axes.
-        print(pts_a)
-        print(pt, np.matmul(Mab, pt), np.matmul(Mba, np.matmul(Mab, pt)))
+
         ux_si = fs[0](pts_a.T).reshape(shape)
         uy_si = fs[1](pts_a.T).reshape(shape)
         uz_si = fs[2](pts_a.T).reshape(shape)
 
         uis_si = np.stack((ux_si.flatten(), uy_si.flatten(), uz_si.flatten()))
         uis_si_npq = np.matmul(Mab, uis_si)
-        un_si, up_si, uq_si = uis_si_npq[0, ...].reshape(shape), \
-                              uis_si_npq[1, ...].reshape(shape), \
-                              uis_si_npq[2, ...].reshape(shape)
+        un_si, up_si, uq_si = uis_si_npq[0, ...].reshape(shape), uis_si_npq[1, ...].reshape(shape), uis_si_npq[2, ...].reshape(shape)
         if i == 0:
             master_shape = (3, ) + shape + (duration, )
             udata_si_xyz_basis = np.empty(master_shape)
@@ -6299,7 +6274,7 @@ def fill_unphysical_with_sth(U, mask, fill_value=np.nan):
 
 
 def clean_udata(udata, mask=None,
-                method='idw', max_iter=50, tol=0.05, kernel_radius=2, kernel_sigma=2,
+                method='nn', max_iter=10, tol=0.05, kernel_radius=2, kernel_sigma=2,
                 cutoff=np.inf, showtqdm=True, verbose=False, notebook=True):
     """
     ND interpolation using direct convolution (replac_nan(...))
@@ -6313,7 +6288,8 @@ def clean_udata(udata, mask=None,
     cutoffU
     fill_value
     verbose
-    method
+    method: str- options are 'nn' (nearest neighbor filling), 'local mean',
+        'idw' (convolution with a Gaussian kernel)
     notebook
 
     Returns
@@ -6649,7 +6625,7 @@ def replace_nan_w_nn_udata(udata, notebook=False, verbose=False):
 
     return udata_filled
 
-def replace_nans(array, max_iter=50, tol=0.05, kernel_radius=2, kernel_sigma=2, method='idw',
+def replace_nans(array, max_iter=50, tol=0.05, kernel_radius=2, kernel_sigma=2, method='nn',
                  notebook=True, verbose=False, showtqdm=True):
     """Replace NaN elements in an array using an iterative image inpainting algorithm.
     The algorithm is the following:
@@ -6672,8 +6648,8 @@ def replace_nans(array, max_iter=50, tol=0.05, kernel_radius=2, kernel_sigma=2, 
     kernel_size : int
     the size of the kernel, default is 1
     method : str
-    the method used to replace invalid values. Valid options are
-    `localmean`, 'idw' (Gaussian kernel).
+        ... the method used to replace invalid values. Valid options are
+        'nn' (nearest neighbor filling- the fastest method)`localmean`, 'idw' (Gaussian kernel).
     Returns
     -------
     filled : nd np.ndarray
@@ -7895,6 +7871,170 @@ def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
     udata, xx, yy
 
     """
+    ### Dummy to determine wheteher this file is a nested udata
+    with h5py.File(udatapath, 'r') as f:
+        keys = f.keys()
+    ###
+    if not 'ux' in keys:
+        print('... get_udata_from_path() is not compatible with a structure in this h5.  \n Try get_udata_from_path_nested() instead.')
+        results = get_udata_from_path_nested(udatapath, ind=0,
+                                   x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1,
+                                   t0=t0, t1=t1, inc=inc, frame=frame, return_xy=return_xy, verbose=verbose,
+                                   slicez=slicez, crop=crop, mode=mode,
+                                   reverse_x=reverse_x, reverse_y=reverse_y, reverse_z=reverse_z)
+        return results
+    else:
+        if verbose:
+            tau0 = time_mod.time()
+            print('... reading udata from path')
+        if crop is not None and [x0, x1, y0, y1, z0, z1] == [0, None, 0, None, 0, None]:
+            x0, x1, y0, y1, z0, z1 = crop, -crop, crop, -crop, crop, -crop
+
+        if mode == 'w' or mode == 'wb':
+            print('... w was passed to h5Py.File(...) which would truncate the file if it exists. \n'
+                  'Probably, this is not what you want. Pass r for read-only')
+            raise ValueError
+
+        with h5py.File(udatapath, 'r') as f:
+            if 'z' in f.keys():
+                dim = 3
+            else:
+                dim = 2
+
+            if dim == 2:
+                if frame is None:
+                    ux = f['ux'][y0:y1, x0:x1, t0:t1:inc]
+                    uy = f['uy'][y0:y1, x0:x1, t0:t1:inc]
+                else:
+                    frame = np.asarray(frame)
+                    ux = f['ux'][y0:y1, x0:x1, frame]
+                    uy = f['uy'][y0:y1, x0:x1, frame]
+
+                udata = np.stack((ux, uy))
+
+                if return_xy:
+                    xx, yy = f['x'][y0:y1, x0:x1], f['y'][y0:y1, x0:x1]
+            elif dim == 3:
+                if frame is None and slicez is None:
+                    ux = f['ux'][y0:y1, x0:x1, z0:z1, t0:t1:inc]
+                    uy = f['uy'][y0:y1, x0:x1, z0:z1, t0:t1:inc]
+                    uz = f['uz'][y0:y1, x0:x1, z0:z1, t0:t1:inc]
+                elif frame is None and slicez is not None:
+                    ux = f['ux'][y0:y1, x0:x1, slicez, t0:t1:inc]
+                    uy = f['uy'][y0:y1, x0:x1, slicez, t0:t1:inc]
+                    uz = f['uz'][y0:y1, x0:x1, slicez, t0:t1:inc]
+                elif frame is not None and slicez is not None:
+                    frame = np.asarray(frame)
+                    ux = f['ux'][y0:y1, x0:x1, slicez, frame]
+                    uy = f['uy'][y0:y1, x0:x1, slicez, frame]
+                    uz = f['uz'][y0:y1, x0:x1, slicez, frame]
+                else:
+                    frame = np.asarray(frame)
+                    ux = f['ux'][y0:y1, x0:x1, z0:z1, frame]
+                    uy = f['uy'][y0:y1, x0:x1, z0:z1, frame]
+                    uz = f['uz'][y0:y1, x0:x1, z0:z1, frame]
+                udata = np.stack((ux, uy, uz))
+                if return_xy:
+                    if slicez is None:
+                        xx, yy, zz = f['x'][y0:y1, x0:x1, z0:z1], f['y'][y0:y1, x0:x1, z0:z1], f['z'][y0:y1, x0:x1, z0:z1]
+                    else:
+                        xx, yy, zz = f['x'][y0:y1, x0:x1, slicez], f['y'][y0:y1, x0:x1, slicez], f['z'][0, 0, slicez]
+        tau1 = time_mod.time()
+        if verbose:
+            print('... time took to load udata in sec: ', tau1 - tau0)
+
+        if return_xy:
+            if dim == 2:
+                if reverse_x:
+                    udata[...] = udata[:, :, ::-1, :]
+                    xx[...] = xx[:, ::-1]
+                    yy[...] = yy[:, ::-1]
+
+                if reverse_y:
+                    udata[...] = udata[:, ::-1, :, :]
+                    xx[...] = xx[::-1, :]
+                    yy[...] = yy[::-1, :]
+                return udata, xx, yy
+            elif dim == 3:
+                if reverse_x:
+                    udata[...] = udata[:, :, ::-1, :, :]
+                    xx[...] = xx[:, ::-1, :]
+                    yy[...] = yy[:, ::-1, :]
+                    zz[...] = zz[:, ::-1, :]
+
+                if reverse_y:
+                    udata[...] = udata[:, ::-1, :, :, :]
+                    xx[...] = xx[::-1, :, :]
+                    yy[...] = yy[::-1, :, :]
+                    zz[...] = zz[::-1, :, :]
+
+                if reverse_z:
+                    udata[...] = udata[:, :, :, ::-1, :]
+                    xx[...] = xx[:, :, ::-1]
+                    yy[...] = yy[:, :, ::-1]
+                    zz[...] = zz[:, :, ::-1]
+
+                return udata, xx, yy, zz
+        else:
+            return udata
+
+
+def get_udata_from_path_nested(udatapath, ind=0,
+                               x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
+                        t0=0, t1=None, inc=1, frame=None, return_xy=False, verbose=True,
+                        slicez=None, crop=None, mode='r',
+                        reverse_x=False, reverse_y=False, reverse_z=False):
+    """
+    A function to read udata from a hdf5 file
+    ... This function is suited for a nested structure Takumi used temporaly.
+        This format stores udata generated by multiple PIV settings
+        (different Dt, interrogation window size, etc) on the same movie
+
+    ... The hdf5 should have a following structure
+        /piv/exp/__quantity_like_piston_velocity_piston_position_etc
+        /piv/piv000/__quantity_like_ux_uy_x_y_lambda_etc
+        /piv/piv001/__quantity_like_ux_uy_x_y_lambda_etc
+        ...
+        /piv/piv010/__quantity_like_ux_uy_x_y_lambda_etc
+
+    ... Specify which udata to load via "ind"
+
+
+
+    Parameters
+    ----------
+    udatapath, str
+    ind: int, index to specify which piv data to load in a nested h5
+    x0: int
+    x1: int
+    y0: int
+    y1: int
+    z0: int
+    z1: int
+    t0: int
+    t1: int
+    inc: int
+    frame: int
+    return_xy: bool, If True, it retursn a 2D/3D grid which can be used for pcolormesh etc.
+    verbose: bool, If True, it reports progress
+    slicez: int, default: None
+        ... Feature for loading a planar udata from a volumetric udata
+            If given, it returns a (ux, uy, uz) on a plane z=slizez (in index space)
+    crop: int, default: None
+        If given, it will make x0=y0=z0=crop, x1=y1=z1=-crop
+        ... This literally "crops" a velocity field in a square/cubic mannar
+    reverse_x: bool, If True, it reverses the order of x
+        ... This is sometimes useful if external function requires a monotonically increasing array.
+            e.g. interpolation in scipy/numpy
+    reverse_y: bool, If True, it reverses the order of y
+    reverse_z: bool, If True, it reverses the order of z
+
+
+    Returns
+    -------
+    udata, xx, yy
+
+    """
 
     if verbose:
         tau0 = time_mod.time()
@@ -7906,50 +8046,71 @@ def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
         print('... w was passed to h5Py.File(...) which would truncate the file if it exists. \n'
               'Probably, this is not what you want. Pass r for read-only')
         raise ValueError
-    with h5py.File(udatapath, mode) as f:
-        if 'z' in f.keys():
-            dim = 3
-        else:
-            dim = 2
 
-        if dim == 2:
-            if frame is None:
-                ux = f['ux'][y0:y1, x0:x1, t0:t1:inc]
-                uy = f['uy'][y0:y1, x0:x1, t0:t1:inc]
+
+    with h5py.File(udatapath, mode='r') as fyle:
+        if verbose:
+            print('... Top keys are...', fyle.keys())
+        if 'piv' in fyle.keys():
+            if verbose:
+                print('... This must be a set of udata which might be accompanied with its derivatives')
+            pivnames = sorted(fyle['piv'].keys())
+            n_pivdata = len(pivnames)
+
+            if verbose:
+                print('... %d udata are found.' % n_pivdata)
+                print('... Loading the %d-th udata (key: %s)' % (ind, pivnames[ind]))
+                print('... the loading data has these %d derivatives (make sure (ux, uy, x, y) exist)'
+                      % len(fyle['piv'][pivnames[ind]].keys()),
+                      fyle['piv'][pivnames[ind]].keys())
+
+            f = fyle['piv'][pivnames[ind]]
+
+            if 'z' in f.keys():
+                dim = 3
             else:
-                frame = np.asarray(frame)
-                ux = f['ux'][y0:y1, x0:x1, frame]
-                uy = f['uy'][y0:y1, x0:x1, frame]
+                dim = 2
 
-            udata = np.stack((ux, uy))
-
-            if return_xy:
-                xx, yy = f['x'][y0:y1, x0:x1], f['y'][y0:y1, x0:x1]
-        elif dim == 3:
-            if frame is None and slicez is None:
-                ux = f['ux'][y0:y1, x0:x1, z0:z1, t0:t1:inc]
-                uy = f['uy'][y0:y1, x0:x1, z0:z1, t0:t1:inc]
-                uz = f['uz'][y0:y1, x0:x1, z0:z1, t0:t1:inc]
-            elif frame is None and slicez is not None:
-                ux = f['ux'][y0:y1, x0:x1, slicez, t0:t1:inc]
-                uy = f['uy'][y0:y1, x0:x1, slicez, t0:t1:inc]
-                uz = f['uz'][y0:y1, x0:x1, slicez, t0:t1:inc]
-            elif frame is not None and slicez is not None:
-                frame = np.asarray(frame)
-                ux = f['ux'][y0:y1, x0:x1, slicez, frame]
-                uy = f['uy'][y0:y1, x0:x1, slicez, frame]
-                uz = f['uz'][y0:y1, x0:x1, slicez, frame]
-            else:
-                frame = np.asarray(frame)
-                ux = f['ux'][y0:y1, x0:x1, z0:z1, frame]
-                uy = f['uy'][y0:y1, x0:x1, z0:z1, frame]
-                uz = f['uz'][y0:y1, x0:x1, z0:z1, frame]
-            udata = np.stack((ux, uy, uz))
-            if return_xy:
-                if slicez is None:
-                    xx, yy, zz = f['x'][y0:y1, x0:x1, z0:z1], f['y'][y0:y1, x0:x1, z0:z1], f['z'][y0:y1, x0:x1, z0:z1]
+            if dim == 2:
+                if frame is None:
+                    ux = f['ux'][y0:y1, x0:x1, t0:t1:inc]
+                    uy = f['uy'][y0:y1, x0:x1, t0:t1:inc]
                 else:
-                    xx, yy, zz = f['x'][y0:y1, x0:x1, slicez], f['y'][y0:y1, x0:x1, slicez], f['z'][0, 0, slicez]
+                    frame = np.asarray(frame)
+                    ux = f['ux'][y0:y1, x0:x1, frame]
+                    uy = f['uy'][y0:y1, x0:x1, frame]
+
+                udata = np.stack((ux, uy))
+
+                if return_xy:
+                    xx, yy = f['x'][y0:y1, x0:x1], f['y'][y0:y1, x0:x1]
+            elif dim == 3:
+                if frame is None and slicez is None:
+                    ux = f['ux'][y0:y1, x0:x1, z0:z1, t0:t1:inc]
+                    uy = f['uy'][y0:y1, x0:x1, z0:z1, t0:t1:inc]
+                    uz = f['uz'][y0:y1, x0:x1, z0:z1, t0:t1:inc]
+                elif frame is None and slicez is not None:
+                    ux = f['ux'][y0:y1, x0:x1, slicez, t0:t1:inc]
+                    uy = f['uy'][y0:y1, x0:x1, slicez, t0:t1:inc]
+                    uz = f['uz'][y0:y1, x0:x1, slicez, t0:t1:inc]
+                elif frame is not None and slicez is not None:
+                    frame = np.asarray(frame)
+                    ux = f['ux'][y0:y1, x0:x1, slicez, frame]
+                    uy = f['uy'][y0:y1, x0:x1, slicez, frame]
+                    uz = f['uz'][y0:y1, x0:x1, slicez, frame]
+                else:
+                    frame = np.asarray(frame)
+                    ux = f['ux'][y0:y1, x0:x1, z0:z1, frame]
+                    uy = f['uy'][y0:y1, x0:x1, z0:z1, frame]
+                    uz = f['uz'][y0:y1, x0:x1, z0:z1, frame]
+                udata = np.stack((ux, uy, uz))
+                if return_xy:
+                    if slicez is None:
+                        xx, yy, zz = f['x'][y0:y1, x0:x1, z0:z1], f['y'][y0:y1, x0:x1, z0:z1], f['z'][y0:y1, x0:x1,
+                                                                                               z0:z1]
+                    else:
+                        xx, yy, zz = f['x'][y0:y1, x0:x1, slicez], f['y'][y0:y1, x0:x1, slicez], f['z'][0, 0, slicez]
+
     tau1 = time_mod.time()
     if verbose:
         print('... time took to load udata in sec: ', tau1 - tau0)
@@ -7990,10 +8151,11 @@ def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
         return udata
 
 
+
 # Spatial Pofile
 def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=None, n=50,
                         return_center=False,
-                        zz=None, z0=0, z1=None, zc=None):
+                        zz=None, z0=0, z1=None):
     """
     Returns a spatial profile (radial histogram) of 3D object with shape (height, width, duration)
     ... Computes a histogram of a given quantity as a function of distance from the center (xc, yc)
@@ -8051,14 +8213,16 @@ def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=N
     else:
         x, y, z = xx[y0:y1, x0:x1, z0:z1], yy[y0:y1, x0:x1, z0:z1], zz[y0:y1, x0:x1, z0:z1],
         qty_local = qty[y0:y1, x0:x1, z0:z1, ...]
-        if xc is None or yc is None and zc is None:
+        if xc is None or yc is None:
             # find a center of the mass from the initial image
             yc_i, xc_i, zc_i = ndimage.measurements.center_of_mass(qty_local[..., 0])
 
             xc = x[int(np.round(yc_i)), int(np.round(xc_i)), int(np.round(zc_i))]
             yc = y[int(np.round(yc_i)), int(np.round(xc_i)), int(np.round(zc_i))]
             zc = z[int(np.round(yc_i)), int(np.round(xc_i)), int(np.round(zc_i))]
-        print('spatial_profile: (xc, yc, zc)=(%.2f, %.2f, %.2f)' % (xc, yc, zc))
+            print('spatial_profile: (xc, yc, zc)=(%.2f, %.2f, %.2f)' % (xc, yc, zc))
+        elif xc is None and yc is None and zc is None:
+            xc, yc, zc = 0, 0, 0
         r, theta, phi = cart2sph(x - xc, y - yc, z-zc)
 
         shape = (n, duration)
@@ -8073,6 +8237,7 @@ def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=N
         return rs, qty_ms, qty_errs
     else:
         return rs, qty_ms, qty_errs, np.asarray([xc, yc])
+
 
 ########## Helpers ###########
 
