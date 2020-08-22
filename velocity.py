@@ -1,27 +1,32 @@
+# coding=utf-8
 from tqdm import tqdm
 import numpy as np
+import numpy.ma as ma
 import re
 import h5py
-from scipy import interpolate
+from scipy import fftpack, signal
 from scipy.interpolate import interp2d, griddata, UnivariateSpline, RegularGridInterpolator, LinearNDInterpolator
-from scipy.stats import binned_statistic
+from scipy.stats import binned_statistic, binned_statistic_2d, multivariate_normal
 import scipy.integrate as integrate
 from scipy.optimize import minimize, curve_fit
-from scipy import ndimage, interpolate, signal
-from scipy.stats import multivariate_normal
+from scipy import ndimage, interpolate, signal, special
+from scipy.signal import butter, medfilt, filtfilt # filters for signal processing
 import itertools
 import os, copy, sys, re  # fundamentals
 import time as time_mod
+import subprocess
+import bezier
 
 import warnings
 import matplotlib.cbook
-warnings.filterwarnings("ignore",category=matplotlib.cbook.mplDeprecation)
+
+warnings.filterwarnings("ignore", category=matplotlib.cbook.mplDeprecation)
 warnings.simplefilter('ignore', RuntimeWarning)
 warnings.simplefilter('ignore', FutureWarning)
 import matplotlib.pyplot as plt
 import ilpm.vector as vec  # irvinelab codes
 import tflow.graph as graph
-import subprocess
+import bezier # required to plot bezier curves (not critical)
 
 path_mod = os.path.abspath(__file__)
 moddirpath = os.path.dirname(path_mod)
@@ -117,10 +122,12 @@ def get_duidxj_tensor(udata, dx=1., dy=1., dz=1., xyz_orientations=np.asarray([1
 
     if xx is not None and yy is not None:
         xyz_orientations = get_jacobian_xyz_ijk(xx, yy, zz)
-
+        if zz is None:
+            dx, dy = get_grid_spacing(xx, yy)
+        else:
+            dx, dy, dz = get_grid_spacing(xx, yy, zz)
     shape = udata.shape  # shape=(dim, nrows, ncols, nstacks) if nstacks=0, shape=(dim, nrows, ncols)
     dim = shape[0]
-
 
     if dim == 2:
         ux, uy = udata[0, ...], udata[1, ...]
@@ -191,7 +198,7 @@ def decompose_duidxj(sij):
     -------
     eij: 5d or 6d numpy array, symmetric part of rate-of-strain tensor.
          5d if spatial dimensions are x and y. 6d if spatial dimensions are x, y, and z.
-    gij: 5d or 6d numpy array, anti-symmetric part of rate-of-strain tensor.
+    gij: 5d or 6d numpy array, anti-symmetric part of rate-of-stxxain tensor.
          5d if spatial dimensions are x and y. 6d if spatial dimensions are x, y, and z.
 
     """
@@ -251,7 +258,7 @@ def reynolds_decomposition(udata):
 
 
 ########## vector operations ##########
-def div(udata):
+def div(udata, dx=1., dy=1., dz=1., xyz_orientations=np.asarray([1, -1, 1]), xx=None, yy=None, zz=None):
     """
     Computes divergence of a velocity field
 
@@ -267,15 +274,18 @@ def div(udata):
     div_u: numpy array
           ... div_u has a shape (height, width, depth, duration) (3D) or (height, width, duration) (2D)
     """
-    sij = get_duidxj_tensor(udata)  # shape (nrows, ncols, duration, 2, 2) (dim=2) or (nrows, ncols, nstacks, duration, 3, 3) (dim=3)
+    sij = get_duidxj_tensor(udata, dx=dx, dy=dy, dz=dz, xyz_orientations=xyz_orientations, xx=xx, yy=yy,
+                            zz=zz)  # shape (nrows, ncols, duration, 2, 2) (dim=2) or (nrows, ncols, nstacks, duration, 3, 3) (dim=3)
     dim = len(sij.shape) - 3  # spatial dim
     div_u = np.zeros(sij.shape[:-2])
     for d in range(dim):
         div_u += sij[..., d, d]
+
     return div_u
 
 
-def curl(udata, dx=1., dy=1., dz=1., xyz_orientations=np.asarray([1, -1, 1]), xx=None, yy=None, zz=None):
+def curl(udata, dx=1., dy=1., dz=1., xyz_orientations=np.asarray([1, -1, 1]),
+         xx=None, yy=None, zz=None, verbose=False):
     """
     Computes curl of a velocity field using a rate of strain tensor
     ... if you already have velocity data as ux = array with shape (m, n) and uy = array with shape (m, n),
@@ -285,6 +295,27 @@ def curl(udata, dx=1., dy=1., dz=1., xyz_orientations=np.asarray([1, -1, 1]), xx
     ----------
     udata: (ux, uy, uz) or (ux, uy)
     dx, dy, dz: float, spatial spating of a 2D/3D grid
+    xyz_orientations: 1d array
+        ... differentiation in the index space and the physical space must be conducted properly.
+        tflow convention is to treat the row, column, and the depth (i,j,k) are parallel to x, y, z in the physical space;
+        however, this does not specify the direction of the axes. (+i direction is only equal to EITHER +x or -x).
+        This ambiguity causes a problem during differentiation, and the choice is somewhat arbitrary to the users.
+        This function offers a solution by two ways. One way is to give a 2d/3d array of the positional grids.
+        If xx, yy, zz are given, it would automatically figures out how +i,+j,+k are aligned with +x,+y,+z.
+        The second way is give delta x/ delta_i, dy/delta_j, dz/delta_k. This argument is related to this method.
+        ... e.g.
+        xyz_orientations = [1, 1, 1]... means +x // +i, +y//+j, +z//+k
+        xyz_orientations = [-1, -1, -1]... means +x // -i, +y//-j, +z//-k
+        xyz_orientations = [1, -1, 1]... means +x // +i, +y//-j, +z//+k
+    xx: 2d/3d array, positional grid
+        ... If given, it would automatically figure out whether +x and +i point at the same direction,
+         and the curl is computed based on that
+    yy: 2d/3d array, positional grid
+        ... If given, it would automatically figure out whether +y and +j point at the same direction,
+         and the curl is computed based on that
+    zz: 2d/3d array, positional grid
+        ... If given, it would automatically figure out whether +z and +k point at the same direction,
+         and the curl is computed based on that
 
     Returns
     -------
@@ -292,20 +323,21 @@ def curl(udata, dx=1., dy=1., dz=1., xyz_orientations=np.asarray([1, -1, 1]), xx
         shape: (height, width, duration) (2D) or (height, width, duration) (2D)
 
     """
+    if verbose:
+        print('... curl(): If the result is not sensible, consult altering xyz_orientations.\n'
+              'A common mistake is that udata is not origanized properly such that '
+              '+x direction is not equal to +direction along the row of an array'
+              'or +y direction is not equal to +direction along the column of an array')
     sij = get_duidxj_tensor(udata, dx=dx, dy=dy, dz=dz, xyz_orientations=xyz_orientations, xx=xx, yy=yy, zz=zz)
     dim = len(sij.shape) - 3  # spatial dim
     eij, gij = decompose_duidxj(sij)
     if dim == 2:
         omega = 2 * gij[..., 1, 0]  # checked. this is correct.
     elif dim == 3:
-        # sign might be wrong
+        # sign issue was checked. this is correct.
         omega1, omega2, omega3 = 2. * gij[..., 2, 1], 2. * gij[..., 0, 2], 2. * gij[..., 1, 0]
         # omega1, omega2, omega3 = -2. * gij[..., 2, 1], 2. * gij[..., 0, 2], -2. * gij[..., 1, 0]
         omega = np.stack((omega1, omega2, omega3))
-        # print(gij.shape, omega1.shape)
-        # a = omega3[..., 17, 0] != 0
-        # print(omega3[..., 17, 0], a.any())
-
     else:
         print('Not implemented yet!')
         return None
@@ -369,7 +401,7 @@ def get_energy(udata):
     return energy
 
 
-def get_enstrophy(udata, dx=1., dy=1., dz=1.):
+def get_enstrophy(udata, dx=1., dy=1., dz=1., xx=None, yy=None, zz=None):
     """
     Returns enstrophy(\vec{x}, t) of udata
     ... Assumes udata is equally spaced data.
@@ -390,7 +422,7 @@ def get_enstrophy(udata, dx=1., dy=1., dz=1.):
         enstrophy
     """
     dim = udata.shape[0]
-    omega = curl(udata, dx=dx, dy=dy, dz=dz)
+    omega = curl(udata, dx=dx, dy=dy, dz=dz, xx=xx, yy=yy, zz=zz)
     shape = omega.shape  # shape=(dim, nrows, ncols, nstacks, duration) if nstacks=0, shape=(dim, nrows, ncols, duration)
     if dim == 2:
         enstrophy = omega ** 2
@@ -421,7 +453,7 @@ def get_time_avg_energy(udata):
     return energy_avg
 
 
-def get_time_avg_enstrophy(udata, dx=1., dy=1., dz=1.):
+def get_time_avg_enstrophy(udata, dx=1., dy=1., dz=1., xx=None, yy=None, zz=None):
     """
     Returns a time-averaged-enstrophy field
     ... NOT MEAN FLOW ENSTROPHY
@@ -436,7 +468,7 @@ fsl
         time-averaged enstrophy field
     """
     dim = udata.shape[0]
-    enstrophy = get_enstrophy(udata, dx=dx, dy=dy, dz=dz)
+    enstrophy = get_enstrophy(udata, dx=dx, dy=dy, dz=dz, xx=xx, yy=yy, zz=zz)
     enstrophy_avg = np.nanmean(enstrophy, axis=-1)
     return enstrophy_avg
 
@@ -477,7 +509,7 @@ def get_spatial_avg_energy(udata, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None):
 
 
 def get_spatial_avg_enstrophy(udata, x0=0, x1=None, y0=0, y1=None,
-                              z0=0, z1=None, dx=1., dy=1., dz=1.):
+                              z0=0, z1=None, dx=1., dy=1., dz=1., xx=None, yy=None, zz=None):
     """
     Return enstrophy averaged over space
 
@@ -507,7 +539,7 @@ def get_spatial_avg_enstrophy(udata, x0=0, x1=None, y0=0, y1=None,
             z1 = udata[0].shape[2]
         udata = udata[:, y0:y1, x0:x1, z0:z1, :]
 
-    enstrophy = get_enstrophy(udata, dx=dx, dy=dy, dz=dz)
+    enstrophy = get_enstrophy(udata, dx=dx, dy=dy, dz=dz, xx=xx, yy=yy, zz=zz)
     enstrophy_vs_t = np.nanmean(enstrophy, axis=tuple(range(dim)))
     enstrophy_vs_t_err = np.nanstd(enstrophy, axis=tuple(range(dim)))
     return enstrophy_vs_t, enstrophy_vs_t_err
@@ -546,8 +578,8 @@ def get_turbulence_intensity_local(udata):
         ti_local[..., t] = u_t_rms[..., t] / u_rms
     return ti_local
 
-# Circulation computation (Use of spatially 2D udata is recommended)
 
+# Circulation computation (Use of spatially 2D udata is recommended)
 def compute_circulation(udata, xx, yy, zz=None, contour=None, rs=[10.], xc=0, yc=0, zc=0,
                         n=100, return_contours=False):
     """
@@ -612,9 +644,7 @@ def compute_circulation(udata, xx, yy, zz=None, contour=None, rs=[10.], xc=0, yc
         if return_contours:
             contours = np.empty((len(rs), n, 2))
             contours[:] = np.nan
-            return gammas, contours
-        else:
-            gammas
+
 
     if dim == 3 and zz is None:
         raise ValueError(
@@ -646,12 +676,12 @@ def compute_circulation(udata, xx, yy, zz=None, contour=None, rs=[10.], xc=0, yc
 
             if dim == 2:
                 dl = np.stack((dx, dy)).T
-                contour = np.stack((xs, ys)).T # x, y
-                contour4int_func = contour[:, [1, 0]] # y, x
+                contour = np.stack((xs, ys)).T  # x, y
+                contour4int_func = contour[:, [1, 0]]  # y, x
             else:
                 dl = np.stack((dx, dy, dz)).T
-                contour = np.stack((xs, ys, zs)).T # x, y
-                contour4int_func = contour[:, [1, 0, 2]] # y, x, z
+                contour = np.stack((xs, ys, zs)).T  # x, y
+                contour4int_func = contour[:, [1, 0, 2]]  # y, x, z
             contours.append(contour)
 
             # Interpolating function, output of interpolate_udata_at_instant_of_time(), requires arguments y, x, z
@@ -663,7 +693,6 @@ def compute_circulation(udata, xx, yy, zz=None, contour=None, rs=[10.], xc=0, yc
                 for i in range(dim):
                     uxi_along_cntr = fs[i](contour4int_func)  # fs[i]( (y, x, z) ): ui at (x, y, z)
                     gamma += uxi_along_cntr * dl[:, i]
-
                 gammas[m, t] = np.nanmean(gamma) * len(uxi_along_cntr)
     else:
         contours.append(contour)
@@ -671,7 +700,6 @@ def compute_circulation(udata, xx, yy, zz=None, contour=None, rs=[10.], xc=0, yc
             contour4int_func = contour[:, [1, 0]]
         elif contour.shape[-1] == 3:
             contour4int_func = contour[:, [1, 0, 2]]
-
 
         if dim != contour.shape[-1]:
             print('... udata dimension and contour dimension does not match!')
@@ -691,7 +719,6 @@ def compute_circulation(udata, xx, yy, zz=None, contour=None, rs=[10.], xc=0, yc
                 for i in range(dim):
                     uxi_along_cntr = fs[i](contour4int_func)
                     gamma += uxi_along_cntr * dl[:, i]
-
                 gammas[t] = np.nanmean(gamma) * len(uxi_along_cntr)
     if return_contours:
         contours = np.asarray(contours)
@@ -699,7 +726,118 @@ def compute_circulation(udata, xx, yy, zz=None, contour=None, rs=[10.], xc=0, yc
     else:
         return gammas
 
+def compute_line_integral(*args, **kwargs):
+    """
+    Returns the result of line integral of a field psi along a contour (2d/3d field)
+        ... this is same as compute_circulation()
 
+    Parameters
+    -------
+    vfield: vector field (2d/3d spatially)
+    xx: 2d/3d array, positional grid (x)
+    yy: 2d/3d array, positional grid (y)
+    zz: 2d/3d array, positional grid (z)
+    contour: 2d array with shape (n, dim), default: None
+        ... contour must be closed but it is not necessary to pass a closed contour.
+            The contour will be closed by connecting the first and last pts in this array.
+            (It is also okay to pass a contour with an array of a closed contour to this function)
+        ... default contour is circular with a radius (or radii) of 10 around the center (xc, yc, zc)
+        ... contour[:, 0]- x-coords of pts on the contour
+            contour[:, 1]- y-coords of pts on the contour
+            contour[:, 2]- z-coords of pts on the contour
+    rs: list, radii in the same units as xx/yy/zz
+        ... only relevant if "contours" is None
+    xc: float, x-coordinate of the center of a circular contour(s), default:0.
+        ... only relevant if "contours" is None
+    yc: float, y-coordinate of the center of a circular contour(s), default:0.
+        ... only relevant if "contours" is None
+    zc: float, z-coordinate of the center of a circular contour(s), default:0.
+        ... only relevant if "contours" is None
+    n: number of sampled pts on the circular contour
+        ... only relevant if "contours" is None
+    return_contours: bool, default: False
+        ... If True, it returns pts on the contour(s)
+        ... This feature could be handy if you'd like to plot the contour(s) later
+
+    Returns
+    -------
+    gammas: nd array with shape (duration, ) or (len(rs), duration), circulation values
+    contours: nd array (optional)
+    """
+    results = compute_circulation(*args, **kwargs)
+    return results
+
+
+def compute_streamfunction_values(udata, xx, yy, x, y,
+                                  contour=None, rs=[10.],
+                                  n=100, return_contours=False):
+    contours = []
+    udata = fix_udata_shape(udata)
+    dim, duration = udata.shape[0], udata.shape[-1]
+
+
+    if dim == 3:
+        raise ValueError(
+            '... Spatially 3D udata is provided. \n'
+            'Potential formation of 3D flows is possible but is out of the scope of this function')
+
+    if contour is None:
+        thetas = np.linspace(0, 2 * np.pi, n)
+        gammas = np.empty((len(rs), duration))
+        for m, r in enumerate(rs):
+            xs = x + r * (np.cos(thetas) - 1)
+            ys = y + r * (np.sin(thetas) - 1)
+
+            dx = np.diff(xs, append=xs[0])
+            dy = np.diff(ys, append=ys[0])
+
+            dl = np.stack((dx, dy)).T
+            contour = np.stack((xs, ys)).T  # x, y
+            contour4int_func = contour[:, [1, 0]]  # y, x
+
+            contours.append(contour)
+
+            # Interpolating function, output of interpolate_udata_at_instant_of_time(), requires arguments y, x, z
+            # in that order (... this is just a convention)
+            # To accomodate this, change the order of the contour array
+            for t in range(duration):
+                fs = interpolate_udata_at_instant_of_time(udata, xx, yy, zz=zz, t=t)
+                gamma = 0  # initialization
+                for i in range(dim):
+                    uxi_along_cntr = fs[i](contour4int_func)  # fs[i]( (y, x, z) ): ui at (x, y, z)
+                    gamma += uxi_along_cntr * dl[:, i]
+                gammas[m, t] = np.nanmean(gamma) * len(uxi_along_cntr)
+    else:
+        contours.append(contour)
+        if contour.shape[-1] == 2:
+            contour4int_func = contour[:, [1, 0]]
+        elif contour.shape[-1] == 3:
+            contour4int_func = contour[:, [1, 0, 2]]
+
+        if dim != contour.shape[-1]:
+            print('... udata dimension and contour dimension does not match!')
+            print('... This makes ambiguious how to compute a line integral. Aborting... ')
+            sys.exit(1)
+        else:
+            dxis = []
+            for i in range(dim):
+                dxi = np.diff(contour[:, i], append=contour[0, i])
+                dxis.append(dxi)
+            dl = np.stack([dxi for dxi in dxis]).T
+
+            gammas = np.empty(duration)
+            for t in range(duration):
+                fs = interpolate_udata_at_instant_of_time(udata, xx, yy, zz=zz, t=t)
+                gamma = 0  # initialization
+                for i in range(dim):
+                    uxi_along_cntr = fs[i](contour4int_func)
+                    gamma += uxi_along_cntr * dl[:, i]
+                gammas[t] = np.nanmean(gamma) * len(uxi_along_cntr)
+    if return_contours:
+        contours = np.asarray(contours)
+        return gammas, contours
+    else:
+        return gammas
 
 
 ########## Energy spectrum, Dissipation spectrum ##########
@@ -946,11 +1084,9 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
         ukdata = np.fft.fftshift(ukdata, axes=list(range(1, dim + 1)))
 
         energy, energy_tapered = get_energy(udata), get_energy(udata_tapered)
-        signal_intensity_losses = np.nanmean(energy_tapered, axis=tuple(range(dim))) / np.nanmean(energy, axis=tuple(
-            range(dim)))
+        signal_intensity_losses = np.nanmean(energy_tapered, axis=tuple(range(dim))) / np.nanmean(energy, axis=tuple(range(dim)))
 
     else:
-
         ukdata = np.fft.fftn(udata, axes=list(range(1, dim + 1)))
         ukdata = np.fft.fftshift(ukdata, axes=list(range(1, dim + 1)))
         signal_intensity_losses = np.ones(duration)
@@ -1003,7 +1139,6 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
         ky = np.fft.fftshift(ky)
         kz = np.fft.fftshift(kz)
         kxx, kyy, kzz = np.meshgrid(ky, kx, kz)
-        kxx, kyy, kzz = kxx, kyy, kzz
 
         # Output the SPECTRAL DENSITY
         # ... DFT outputs the integrated density (which is referred as POWER) in a pixel(delta_kx * delta_ky)
@@ -1144,12 +1279,14 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
         dim = ks.shape[0]
         duration = e_ks.shape[-1]
         if dim == 2:
-            deltakx, deltaky = ks[0, 0, 1] - ks[0, 0, 0], ks[1, 1, 0] - ks[1, 0, 0]
+            deltakx, deltaky = ks[0, 0, 1] - ks[0, 0, 0], \
+                               ks[1, 1, 0] - ks[1, 0, 0]
             e_ks *= deltakx * deltaky  # use the raw DFT outputs (power=integrated density over a px)
             deltakr = np.sqrt(deltakx ** 2 + deltaky ** 2)  # radial k spacing of the velocity field
         if dim == 3:
-            deltakx, deltaky, deltakz = ks[0, 0, 1, 0] - ks[0, 0, 0, 0], ks[1, 1, 0, 0] - ks[1, 0, 0, 0], ks[
-                2, 0, 0, 1] - ks[2, 0, 0, 0]
+            deltakx, deltaky, deltakz = ks[0, 0, 1, 0] - ks[0, 0, 0, 0], \
+                                        ks[1, 1, 0, 0] - ks[1, 0, 0, 0], \
+                                        ks[2, 0, 0, 1] - ks[2, 0, 0, 0]
             e_ks *= deltakx * deltaky * deltakz  # use the raw DFT outputs (power=integrated density over a px)
             deltakr = np.sqrt(deltakx ** 2 + deltaky ** 2 + deltakz ** 2)  # radial k spacing of the velocity field
         kk = np.zeros((ks.shape[1:]))
@@ -1178,9 +1315,9 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
 
             if remove_undersampled_region:
                 mask = np.abs(kk_flatten) > k_max
-                # print len(kk_flatten)
                 kk_flatten = delete_masked_elements(kk_flatten, mask)
                 e_knd_flatten = delete_masked_elements(e_knd_flatten, mask)
+
             # get a histogram
             k_means, k_edges, binnumber = binned_statistic(kk_flatten, kk_flatten, statistic='mean', bins=nkout)
             k_binwidth = (k_edges[1] - k_edges[0])
@@ -1210,14 +1347,12 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
             # e_k1ds[..., t] = e_k1d * jacobian / (n_samples * deltak)
             # e_k1d_errs[..., t] = e_k1d_err * jacobian / (n_samples * deltak)
             # print deltak
-            # Old stuff 2: scaling that works
+            # Old stuff 2: scaling that works?
             # e_k1ds[..., t] = e_k1d * jacobian / (n_samples * deltak) * (deltak / deltakr) ** dim / deltak
             # e_k1d_errs[..., t] = e_k1d_err * jacobian / (n_samples * deltak) * (deltak / deltakr) ** dim / deltak
-            # print deltak,  deltakr, (deltak / deltakr)
-            e_k1ds[..., t] = e_k1d * jacobian / (n_samples * deltak) * (deltak / deltakr) ** dim / deltak * cc
-            e_k1d_errs[..., t] = e_k1d_err * jacobian / (n_samples * deltak) * (deltak / deltakr) ** dim / deltak * cc
 
-            # print deltak / deltakr
+            e_k1ds[..., t] = e_k1d * jacobian / (n_samples * deltakr **2) * cc
+            e_k1d_errs[..., t] = e_k1d_err * jacobian / (n_samples * deltakr **2) * cc
 
         return e_k1ds, e_k1d_errs, k1ds
 
@@ -1313,16 +1448,13 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
         height, width, duration = ux.shape
         udata_tmp = udata[:, y0:y1, x0:x1, :]
     elif dim == 3:
-        ux, uy, uz = udata[0, y0:y1, x0:x1, z0:z1, :], udata[1, y0:y1, x0:x1, z0:z1, :], udata[2, y0:y1, x0:x1, z0:z1,
-                                                                                         :]
+        ux, uy, uz = udata[0, y0:y1, x0:x1, z0:z1, :], udata[1, y0:y1, x0:x1, z0:z1, :], udata[2, y0:y1, x0:x1, z0:z1,:]
         height, width, depth, duration = ux.shape
         udata_tmp = udata[:, y0:y1, x0:x1, z0:z1, :]
     else:
         raise ValueError('... Error: Invalid dimension is given. Use 2 or 3 for the number of spatial dimensions. ')
 
-    n_samples = 1
-    for i in range(dim):
-        n_samples *= ux.shape[i]
+
     if k == 'kx':
         ax_ind = 1  # axis number to take 1D DFT
         n = width
@@ -1343,7 +1475,8 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
         ax_ind = 2  # axis number to take 1D DFT
         n = depth
         d = dz
-        ax_ind_for_avg = (0, 1)  # axis number(s) to take statistics  (along x and y)
+        ax_ind_for_avg = (0, 1)  # axis number(s) along which statistics is computed  (along x and y)
+    n_samples = ux.shape[ax_ind]
 
     # Apply a hamming window to get lean FFT spectrum for aperiodic signals
     if window is not None:
@@ -1376,27 +1509,35 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
                 signal_intensity_loss = np.nanmean(window_arr)
         else:
             signal_intensity_loss = 1.
-
     # E11
-    ux_k = np.fft.fft(ux, axis=ax_ind) / np.sqrt(n_samples)
-    e11_nd = np.abs(ux_k * np.conj(ux_k))
-    e11 = np.nanmean(e11_nd, axis=ax_ind_for_avg)[:n // 2, :]
-    e11_err = np.nanstd(e11_nd, axis=ax_ind_for_avg)[:n // 2, :]
+    ux_k = np.fft.fft(ux, axis=ax_ind)
+    ux_k = np.fft.fftshift(ux_k)
+    e11_nd = np.abs(ux_k * np.conj(ux_k)) / n_samples  # \sum(ux**2) = \sum(e11_nd)- Parseval's theorem
+    e11_nd /= n_samples # Power (integrated spectral density) -> spectral density
+    e11 = np.nanmean(e11_nd, axis=ax_ind_for_avg)
+    e11_err = np.nanstd(e11_nd, axis=ax_ind_for_avg)
+
     # E22
-    uy_k = np.fft.fft(uy, axis=ax_ind) / np.sqrt(n_samples)
-    e22_nd = np.abs(uy_k * np.conj(uy_k))
-    e22 = np.nanmean(e22_nd, axis=ax_ind_for_avg)[:n // 2, :]
-    e22_err = np.nanstd(e22_nd, axis=ax_ind_for_avg)[:n // 2, :]
+    uy_k = np.fft.fft(uy, axis=ax_ind)
+    uy_k = np.fft.fftshift(uy_k)
+    e22_nd = np.abs(uy_k * np.conj(uy_k)) / n_samples  # \sum(uy**2) = \sum(e22_nd)- Parseval's theorem
+    e22_nd /= n_samples # Power (integrated spectral density) -> spectral density
+    e22 = np.nanmean(e22_nd, axis=ax_ind_for_avg)
+    e22_err = np.nanstd(e22_nd, axis=ax_ind_for_avg)
+
 
     # Get an array for wavenumber
-    k = np.fft.fftfreq(n, d=d)[:n // 2] * 2 * np.pi  # shape=(n, duration)
+    k = np.fft.fftfreq(n, d=d) * 2 * np.pi  # shape=(n, duration)
+    k = np.fft.fftshift(k)
     deltak = k[1] - k[0]
     if dim == 3:
         # E33
-        uz_k = np.fft.fft(uz, axis=ax_ind) / np.sqrt(n_samples)
-        e33_nd = np.abs(uz_k * np.conj(uz_k))
-        e33 = np.nanmean(e33_nd, axis=ax_ind_for_avg)[:n // 2, :]
-        e33_err = np.nanstd(e33_nd, axis=ax_ind_for_avg)[:n // 2, :]
+        uz_k = np.fft.fft(uz, axis=ax_ind)
+        uz_k = np.fft.fftshift(uz_k)
+        e33_nd = np.abs(uz_k * np.conj(uz_k)) / n_samples # \sum(uzy*2) = \sum(e33_nd)- Parseval's theorem
+        e33_nd /= n_samples # Power (integrated spectral density) -> spectral density
+        e33 = np.nanmean(e33_nd, axis=ax_ind_for_avg)
+        e33_err = np.nanstd(e33_nd, axis=ax_ind_for_avg)
 
         eiis, eii_errs = np.array([e11, e22, e33]), np.array([e11_err, e22_err, e33_err])
     elif dim == 2:
@@ -1404,12 +1545,12 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
     else:
         raise ValueError('... 1d spectrum: Check the dimension of udata! It must be 2 or 3!')
 
-    # Convert power to spectral density
+    # 1. Convert power to spectral density
     # ... DFT outputs the integrated power between k and k + deltak
     # ... One must divide the integrated power by deltak to account for this.
     for i in range(dim):
-        eiis[i] /= deltak
-        eii_errs[i] /= deltak
+        eiis[i] *= 1 / deltak
+        eii_errs[i] *= 1 / deltak
 
     # Windowing causes the loss of the signal (energy.)
     # ... This compensates for the loss.
@@ -1417,7 +1558,6 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
         for i in range(dim):
             eiis[i] /= signal_intensity_loss
             eii_errs[i] /= signal_intensity_loss
-
     return eiis, eii_errs, k
 
 
@@ -2166,7 +2306,7 @@ def get_epsilon_using_struc_func(rrs, Dxxs, epsilon_guess=100000, r0=1.0, r1=10.
 def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=0, x1=None, y0=0, y1=None,
                              t0=None, t1=None, coarse=1.0, coarse2=0.2, notebook=True):
     """
-    Compute spatial autocorrelation function of 2+1 velocity field
+    Compute spatial autocorrelation function of 2+1 velocity field using np.roll
     Spatial autocorrelation function:
         f = <u_j(\vec{x}) u_j(\vec{x}+r\hat{x_i})> / <u_j(\vec{x})^2>
     where velocity vector u = (u1, u2).
@@ -2370,9 +2510,11 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None,
                                x0=None, x1=None, y0=None, y1=None,
                                z0=None, z1=None,
                                t0=None, t1=None,
-                               coarse=1.0, coarse2=0.2, notebook=True):
+                               coarse=1.0, coarse2=0.2,
+                               periodic=False, Lx=None, Ly=None, Lz=None,
+                               notebook=True):
     """
-    Compute spatial autocorrelation function of 2+1 velocity field
+    Compute spatial autocorrelation function of 2+1 velocity field using np.roll()
     Spatial autocorrelation function:
         f = <u_j(\vec{x}) u_j(\vec{x}+r\hat{x_i})> / <u_j(\vec{x})^2>
     where velocity vector u = (u1, u2).
@@ -2455,12 +2597,26 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None,
     else:
         n_bins = n_bins - 1
 
+    if Lx is None:
+        xmin, xmax = np.nanmin(x), np.nanmax(x)
+        Lx = xmax-xmin
+    if Ly is None:
+        ymin, ymax = np.nanmin(y), np.nanmax(y)
+        Ly = ymax-ymin
+    if Lz is None:
+        zmin, zmax = np.nanmin(z), np.nanmax(z)
+        Lz = zmax - zmin
+
     # Use a portion of data
     z_grid, y_grid, x_grid = z[y0:y1, x0:x1, z0:z1], y[y0:y1, x0:x1, z0:z1], x[y0:y1, x0:x1, z0:z1]
 
     # Initialization
     rrs, corrs, corr_errs = np.zeros((n_bins, t1 - t0)), np.ones((n_bins, t1 - t0)), np.zeros((n_bins, t1 - t0))
 
+    roll_indices = list(range(0, limits[roll_axis], int(1. / coarse)))
+    m = len(roll_indices)
+    n = int(np.ceil(x_grid.size / int(1 / coarse2)))
+    print('(No of r at which correlation is computed, No of samples used to compute stats) = (%d, %d)' %(m, n))
     for t in tqdm(list(range(t0, t1)), desc='autocorr. 3d time'):
         # Call velocity field at time t as uu
         uu = ui[y0:y1, x0:x1, z0:z1, t]
@@ -2471,10 +2627,6 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None,
         # rr = np.empty((x_grid.size, int(coarse * limits[roll_axis]) * 2 - 1))
         # corr = np.empty((x_grid.size, int(coarse * limits[roll_axis]) * 2 - 1))
 
-        roll_indices = list(range(0, limits[roll_axis], int(1. / coarse)))
-        m = len(roll_indices)
-        n = int(x_grid.size * coarse2)
-
         rr = np.empty((n, m))
         corr = np.empty((n, m))
 
@@ -2483,11 +2635,21 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None,
             x_grid_rolled, y_grid_rolled, z_grid_rolled = np.roll(x_grid, i, axis=roll_axis), \
                                                           np.roll(y_grid, i, axis=roll_axis), \
                                                           np.roll(z_grid, i, axis=roll_axis)
-            r_grid = np.sqrt(
-                (x_grid_rolled - x_grid) ** 2 + (y_grid_rolled - y_grid) ** 2 + (z_grid_rolled - z_grid) ** 2)
-            corr_uu = uu * uu_rolled / uu2_norm[t]  # correlation values
-            rr[:, j] = r_grid.flatten()[:n]
-            corr[:, j] = corr_uu.flatten()[:n]
+            rx = x_grid_rolled - x_grid
+            ry = y_grid_rolled - y_grid
+            rz = z_grid_rolled - z_grid
+            if periodic:
+                rx[rx > Lx/2] = Lx - rx[rx > Lx/2]
+                rx[rx < -Lx/2] = Lx + rx[rx < -Lx/2]
+                ry[ry > Ly/2] = Ly - ry[ry > Ly/2]
+                ry[ry < -Ly/2] = Ly + ry[ry < -Ly/2]
+                rz[rz > Lz/2] = Lz - rz[rz > Lz/2]
+                rz[rz < -Lz/2] = Lz + rz[rz < -Lz/2]
+            r_grid = np.sqrt(rx ** 2 + ry ** 2 + rz ** 2) # use unsigned distance to take statistics
+            corr_uu = uu * uu_rolled / uu2_norm[t]  # two-pt correlation
+            # indices = list(range(n))
+            rr[:, j] = r_grid.flatten()[::int(1/coarse2)]
+            corr[:, j] = corr_uu.flatten()[::int(1/coarse2)]
 
         # flatten arrays to feed to binned_statistic
         rr, corr = rr.flatten(), corr.flatten()
@@ -2509,19 +2671,138 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None,
         # corrs[:, t] = corr
         # corr_errs[:, t] = corr_err
 
-        rrs[0:, t], corr_errs[0:, t] = 0, 1.
-        corrs[0, t] = 1.
+        rrs[0, t], corrs[0, t], corr_errs[0, t] = 0, 1., 0
         _, corrs[1:, t] = sort2arr(rr_, corr_)
         rrs[1:, t], corr_errs[1:, t] = sort2arr(rr_, corr_err)
+
 
     if notebook:
         from tqdm import tqdm as tqdm
     return rrs, corrs, corr_errs
 
+def get_two_point_vel_corr_roll(ui, x, y, z=None, roll_axis=1, n_bins=None,
+                               x0=None, x1=None, y0=None, y1=None,
+                               z0=None, z1=None,
+                               t0=None, t1=None,
+                               coarse=1.0, coarse2=0.2,
+                               periodic=False, Lx=None, Ly=None, Lz=None,
+                               notebook=True):
+    """
+    Returns normalized two-point velocity statistics <ui(x) ui(x+r)> / < |ui(x)|^2 >\
+    ... Redirects to compute_spatial_autocorr2d OR compute_spatial_autocorr3d!
+        ... Spatial autocorrelation function and two-pt vel corr function are the same things.
+    ... This function is primarily used to compute the longitudnal/transverse two-pt vel correlation functions
+        ... f(r) =  <u1(x) u1(x+r \hat{x_1})> / < |u1(x)|^2 >\
+            ... ui = udata[0, ...], roll_axis=1
+        ... g(r) =  <u1(x) u1(x+r \hat{x_2})> / < |u1(x)|^2 >\
+            ... ui = udata[1, ...], roll_axis=1
+    ... One can deduce Taylor microscale, energy spectrum from f(r) and g(r)
+    ... One can compute Rii with the outputs of this function.
+        (1) R11 = f(r) * < ux^2 >
+        (2) R22 = g(r) * < uy^2 >
+            ... This g(r) can be obtained by (ui = udata[1, ...], roll_axis=1)
+        (3) R33 = g(r) * < uy^2 >
+            ... This g(r) can be obtained by (ui = udata[2, ...], roll_axis=1)
+        ... Important quantities to check are one-dimensional spectra Eii.
+            ... Eii = 2 x Fourier Transform of(Rii)
+            ... This may not yield the cleanest spectra; however, one should always check
+                the following equality
+                ... < ux^2 > = \int_0^\infty E11(\kappa1) d\kappa1
+                ... < uy^2 > = \int_0^\infty E22(\kappa1) d\kappa1
+                ... < uz^2 > = \int_0^\infty E33(\kappa1) d\kappa1
+                i.e. (Turbulent) Energy = 0.5  \int_0^\infty Eii(\kappa1) d\kappa1
 
-def get_two_point_vel_corr(udata, x, y, z=None, time=None, n_bins=None,
+    Parameters
+    ----------
+    ui
+    x
+    y
+    z
+    roll_axis
+    n_bins
+    x0
+    x1
+    y0
+    y1
+    z0
+    z1
+    t0
+    t1
+    coarse
+    coarse2
+    periodic
+    Lx
+    Ly
+    Lz
+    notebook
+
+    Returns
+    -------
+
+    """
+    if z is None:
+        rrs, corrs, corr_errs = compute_spatial_autocorr(ui, x, y, roll_axis=roll_axis, n_bins=n_bins,
+                               x0=x0, x1=x1, y0=y0, y1=y1,
+                               z0=z0, z1=z1,
+                               t0=t0, t1=t1,
+                               coarse=coarse, coarse2=coarse2,
+                               periodic=periodic, Lx=Lx, Ly=Ly, Lz=Lz,
+                               notebook=notebook)
+    else:
+        rrs, corrs, corr_errs = compute_spatial_autocorr3d(*args, **kwargs)
+
+    return rrs, corrs, corr_errs
+
+
+
+def get_two_point_vel_corr(udata, x, y, z=None,
                            x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None,
-                           nd=10 ** 3, nr=70, nt=10, notebook=True, return_rij=False, **kwargs):
+                           nd=10 ** 3, nr=70, notebook=True,
+                           periodic=False, **kwargs):
+    """
+    Returns the normalized two-point velocity tatistics (rrs, fs, f_errs, rrs, gs, g_errs)
+    ... f(r): longitudinal two-pt vel. stat
+    ... g(r): transverse two-pt vel. stat
+    ... In order for f(r) and g(r) to have a meaning, the flow MUST be isotropic
+    ... Algorithm:
+        1. Choose two points A and B. Let r be the displacement vector (x_A - x_B)
+        2. Create a right-handed orthogonal basis (\hat{r}, n) or (\hat{r}, n1, n2)
+        3. f(r) = < (u(A) \cdot r) u(B) \cdot r)> /   < |u(A) \cdot r|^2>
+           g(r) = < (u(A) \cdot n) u(B) \cdot n)> /   < |u(A) \cdot r|^2>
+
+
+    Parameters
+    ----------
+    udata
+    x
+    y
+    z
+    time
+    n_bins
+    x0
+    x1
+    y0
+    y1
+    z0
+    z1
+    t0
+    t1
+    nd
+    nr
+    nt
+    notebook
+    return_rij
+    kwargs
+
+    Returns
+    -------
+    rrs, fs, f_errs, rrs, gs, g_errs:
+    ... f(r): longitudinal two-point velocity correlation
+    ... g(r): transverse two-point velocity correlation
+    """
+
+
+
     if notebook:
         from tqdm import tqdm_notebook as tqdm
     else:
@@ -2568,9 +2849,11 @@ def get_two_point_vel_corr(udata, x, y, z=None, time=None, n_bins=None,
     if t1 is None:
         t1 = udata.shape[-1]
 
-    # Number of bins- if this is too small, correlation length would be overestimated. Keep it around ncolumns
+    # Number of bins- if this is too small, correlation length would be overestimated.
+    # Keep it around ncolumns
     if nr is None:
         nr = max(limits)
+
 
     # Use a portion of data
     if dim == 3:
@@ -2589,15 +2872,21 @@ def get_two_point_vel_corr(udata, x, y, z=None, time=None, n_bins=None,
     rrs, gs, g_errs = np.zeros((nr, t1 - t0)), np.ones((nr, t1 - t0)), np.zeros((nr, t1 - t0))
     is_R1_reasonable = False
 
+    if periodic:
+        prefactor = 0.5
+    else:
+        prefactor = 1.
+
     if dim == 2:
         xmin, xmax, ymin, ymax = np.min(x_grid), np.max(x_grid), np.min(y_grid), np.max(y_grid)
         width, height = xmax - xmin, ymax - ymin
-        rs_ = np.linspace(dx * 2, min([width, height]) * 1, nr)
+        rs_ = np.linspace(dx * 2, min([width, height]) * prefactor, nr)
     elif dim == 3:
-        xmin, xmax, ymin, ymax, zmin, zmax = np.min(x_grid), np.max(x_grid), np.min(y_grid), np.max(y_grid), np.min(
-            z_grid), np.max(z_grid)
+        xmin, xmax, ymin, ymax, zmin, zmax = np.min(x_grid), np.max(x_grid), \
+                                             np.min(y_grid), np.max(y_grid), \
+                                             np.min(z_grid), np.max(z_grid)
         width, height, depth = xmax - xmin, ymax - ymin, zmax - zmin
-        rs_ = np.linspace(dx, min([width, height, depth]), nr)
+        rs_ = np.linspace(dx, min([width, height, depth]) * prefactor, nr)
     rs = np.empty(nd)
     fs_ = np.empty(nd)
     gs_ = np.empty(nd)
@@ -2618,7 +2907,18 @@ def get_two_point_vel_corr(udata, x, y, z=None, time=None, n_bins=None,
                         # Randomly pick another point in space, call it R1
                         theta = 2 * np.pi * np.random.random()
                         X1, Y1 = X0 + r * np.cos(theta), Y0 + r * np.sin(theta)
-                        is_R1_reasonable = X1 < xmax and X1 > xmin and Y1 < ymax and Y1 > ymin
+                        if periodic:
+                            if X1 > xmax:
+                                X1 =- width
+                            elif X1 < xmin:
+                                X1 += width
+                            if Y1 > ymax:
+                                Y1 =- height
+                            elif Y1 < ymin:
+                                Y1 += height
+                            break
+                        else:
+                            is_R1_reasonable = X1 < xmax and X1 > xmin and Y1 < ymax and Y1 > ymin
                     X1_ind, _ = find_nearest(x_grid[0, :], X1)
                     Y1_ind, _ = find_nearest(y_grid[:, 0], Y1)
                     R1 = np.asarray([x_grid[0, X1_ind], y_grid[Y1_ind, 0]])
@@ -2633,8 +2933,9 @@ def get_two_point_vel_corr(udata, x, y, z=None, time=None, n_bins=None,
                         # Randomly pick another point in space, call it R1
                         theta = 2 * np.pi * np.random.random()
                         phi = 2 * np.pi * np.random.random()
-                        X1, Y1, Z1 = X0 + r * np.sin(theta) * np.cos(phi), Y0 + r * np.sin(theta) * np.sin(
-                            phi), Z0 + r * np.cos(theta)
+                        X1, Y1, Z1 = X0 + r * np.sin(theta) * np.cos(phi), \
+                                     Y0 + r * np.sin(theta) * np.sin(phi), \
+                                     Z0 + r * np.cos(theta)
                         is_R1_reasonable = X1 < xmax and X1 > xmin and Y1 < ymax and Y1 > ymin and Z1 < zmax and Z1 > zmin
                     X1_ind, _ = find_nearest(x_grid[0, :, 0], X1)
                     Y1_ind, _ = find_nearest(y_grid[:, 0, 0], Y1)
@@ -2642,6 +2943,21 @@ def get_two_point_vel_corr(udata, x, y, z=None, time=None, n_bins=None,
                     R1 = np.asarray([x_grid[0, X1_ind, 0], y_grid[Y1_ind, 0, 0], z_grid[0, 0, Z1_ind]])
 
                 R01 = R1 - R0
+                if periodic:
+                    if R01[0] > width/2:
+                        R01[0] -= width
+                    elif R01[0] < -width/2:
+                        R01[0] += width
+                    if R01[1] > height/2:
+                        R01[1] -= height
+                    elif R01[1] < -height/2:
+                        R01[1] += height
+                    if dim == 3:
+                        if R01[2] > depth / 2:
+                            R01[2] -= depth
+                        elif R01[2] < -depth / 2:
+                            R01[2] += depth
+
                 basis = vec.get_an_orthonormal_basis(dim, v1=R01)
                 # CRUCIAL: make sure to use the same convention to define the direction of the transverse vector
                 basis = vec.apply_right_handedness(basis)
@@ -2766,7 +3082,7 @@ def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None,
         # Define Rij(r, t) as a function.
         def two_pt_velocity_autocorrelation_tensor(i, j, r, t, udata):
             dim = len(r)
-            u2_avg = np.nanmean(udata ** 2, axis=tuple(range(dim + 1)))  # spatial average
+            u2_avg = np.nanmean(udata ** 2, axis=tuple(range(dim + 1)))  # ui_rms(t)
             if dim == 2:
                 x, y = r[0], r[1]
             elif dim == 3:
@@ -2776,8 +3092,8 @@ def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None,
                 r2_norm += r[k] ** 2
             r_norm = np.sqrt(r2_norm)
             Rij_value = u2_avg[t] * (
-                        g(r_norm, t) * kronecker_delta_delta(i, j) + (f(r_norm, t) - g(r_norm, t)) * r[i] * r[j] / (
-                            r_norm ** 2))
+                    g(r_norm, t) * kronecker_delta(i, j) + (f(r_norm, t) - g(r_norm, t)) * r[i] * r[j] / (
+                    r_norm ** 2))
             return Rij_value
 
         print(
@@ -2917,8 +3233,8 @@ def get_autocorrelation_tensor_iso(r_long, f_long, r_tran, g_tran, time):
             r2_norm += r[k] ** 2
         r_norm = np.sqrt(r2_norm)
         rij_value = u2_avg[t] * (
-                    g(r_norm, t) * kronecker_delta_delta(i, j) + (f(r_norm, t) - g(r_norm, t)) * r[i] * r[j] / (
-                        r_norm ** 2))
+                g(r_norm, t) * kronecker_delta(i, j) + (f(r_norm, t) - g(r_norm, t)) * r[i] * r[j] / (
+                r_norm ** 2))
         return rij_value
 
     rij = two_pt_velocity_autocorrelation_tensor
@@ -2934,6 +3250,8 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
                                 x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None,
                                 coarse=1.0, coarse2=0.2, notebook=True):
     """
+    DEPRECIATED! Use get_structure_function()
+
     Structure tensor Dij is essentially the covariance of the two-point velocity difference
     There is one-to-one correspondence between Dij and Rij. (Pope 6.36)
     This method returns the LONGITUDINAL STRUCTURE FUNCTION.
@@ -3147,6 +3465,7 @@ def get_structure_function_roll(udata, x, y, z=None, indices=('x', 'x'), roll_ax
                                 x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None,
                                 coarse=1.0, coarse2=0.2, notebook=True):
     """
+    DEPRECIATED! Use get_structure_function()
     A method to compute a generalized structure function
 
     Structure tensor Dij...k is essentially the generalized variance of the two-point velocity difference
@@ -3423,8 +3742,10 @@ def get_structure_function_roll(udata, x, y, z=None, indices=('x', 'x'), roll_ax
 # NEW CODE with improved performance for the higher-order structure functions
 ## Instead of np.roll, the code below computes the statistics of the velocity difference at two arbitrary chosen points
 def get_structure_function(udata, x, y, z=None, nu=1.004,
-                           x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None,
+                           x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
+                           t0=0, t1=None,
                            p=2, nr=None, nd=10000, mode='long',
+                           time_thd=10.,
                            notebook=True):
     if notebook:
         from tqdm import tqdm_notebook as tqdm
@@ -3572,7 +3893,15 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
     Dijks_ = np.empty(nd)
     for t in tqdm(list(range(t0, t1)), desc='struc. func. time'):
         for i, r in enumerate(tqdm(rs_, desc='struc. func. r-loop')):
+            time0 = time_mod.time()
             for j in range(nd):
+                time1 = time_mod.time()
+                if (time1 - time0) > time_thd:
+                    print('... Terminating for long computation time \n'
+                          '(r, number of iterations performed before termination / target) = (%f, %d / %d)' % (
+                          r, j, nd))
+                    break
+
                 if dim == 2:
                     while not is_R1_reasonable:
                         # Randomly pick a point in space, call it R0
@@ -3643,6 +3972,7 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
     Dijks_scaled = Dijks / ((epsilon * rrs) ** (float(p) / 3.))
     Dijk_errs_scaled = Dijk_errs / ((epsilon * rrs) ** (float(p) / 3.))
 
+    print('mean epsilon, mean eta: ', np.nanmean(epsilon), np.nanmean(eta))
     if notebook:
         from tqdm import tqdm as tqdm
     return rrs, Dijks, Dijk_errs, rrs_scaled, Dijks_scaled, Dijk_errs_scaled
@@ -4435,7 +4765,9 @@ def rankine_vortex_2d(xx, yy, x0=0, y0=0, gamma=1., a=1.):
     return udata
 
 
-def rankine_vortex_line_3d_gen(xx, yy, zz, x0=0, y0=0, z0=0, gamma=1., a=1.,
+def rankine_vortex_line_3d(xx, yy, zz,
+                               x0=0, y0=0, z0=0,
+                               gamma=1., a=1.,
                                ux0=0, uy0=0, uz0=0, axis=2):
     """
     Reutrns a 3D velocity field with a Rankine vortex filament at (x0, y0, z)
@@ -4500,6 +4832,89 @@ def rankine_vortex_line_3d_gen(xx, yy, zz, x0=0, y0=0, z0=0, gamma=1., a=1.,
 
     return udata
 
+
+def lamb_oseen_vortex_2d(xx, yy, x0=0, y0=0, gamma=1., a0=1., nu= 1., t=0):
+    """
+    Reutrns a 2D velocity field with a single Rankine vortex at (x0, y0)
+
+    Parameters
+    ----------
+    xx: numpy array
+        x-coordinate, 2d grid
+    yy: numpy array
+        y-coordinate, 2d grid
+    x0: float
+        x-coordinate of the position of the rankine vortex
+    y0: float
+        y-coordinate of the position of the rankine vortex
+    gamma: float
+        circulation of the rankine vortex
+    a: float
+        core radius of the rankine vortex
+
+    Returns
+    -------
+    udata: (ux, uy)
+
+    """
+    rr, phi = cart2pol(xx - x0, yy - y0)
+
+    a = np.sqrt(a0**2 + 4 * nu * t)
+
+    utheta = gamma / (2 * np.pi * rr) * (1 - np.exp(- rr**2 / a**2))
+    ux, uy = - utheta * np.sin(phi), utheta * np.cos(phi)
+
+    udata = np.stack((ux, uy))
+
+    return udata
+
+
+def lamb_oseen_vortex_line_3d(xx, yy, zz, x0=0, y0=0, z0=0, gamma=1., a0=1., nu= 1., t=0,
+                                     ux0=0, uy0=0, uz0=0, axis=2):
+    """
+
+    Parameters
+    ----------
+    xx
+    yy
+    zz
+    x0
+    y0
+    z0
+    gamma
+    a0
+    nu
+    t
+    ux0
+    uy0
+    uz0
+    axis
+
+    Returns
+    -------
+
+    """
+    a = np.sqrt(a0 ** 2 + 4 * nu * t)
+    if axis == 2:  # vortex filament is along the z-axis: (x, y, z) = (x0, y0, z)
+        rr, phi = cart2pol(xx - x0, yy - y0)
+        utheta = gamma / (2 * np.pi * rr) * (1 - np.exp(- rr ** 2 / a ** 2))
+        ux, uy = - utheta * np.sin(phi), utheta * np.cos(phi)
+        uz = np.ones_like(ux) * uz0
+
+    elif axis == 0:  # vortex filament is along the y-axis: (x, y, z) = (x0, y, z0)
+        rr, phi = cart2pol(zz - z0, xx - x0)
+        utheta = gamma / (2 * np.pi * rr) * (1 - np.exp(- rr ** 2 / a ** 2))
+        uz, ux = - utheta * np.sin(phi), utheta * np.cos(phi)
+        uy = np.ones_like(ux) * uy0
+    elif axis == 1:  # vortex filament is along the x-axis: (x, y, z) = (x, y0, z0)
+        rr, phi = cart2pol(yy - y0, zz - z0)
+        utheta = gamma / (2 * np.pi * rr) * (1 - np.exp(- rr ** 2 / a ** 2))
+        uy, uz = - utheta * np.sin(phi), utheta * np.cos(phi)
+        ux = np.ones_like(uy) * ux0
+    udata = np.stack((ux, uy, uz))
+
+    return udata
+
 def get_unidirectional_flow(xx, yy, t=np.asarray([0, 1]), U=10, c=0,
                             decay=None, decay_scale=1):
     theta = np.arctan2(t[0], t[1])
@@ -4507,7 +4922,7 @@ def get_unidirectional_flow(xx, yy, t=np.asarray([0, 1]), U=10, c=0,
     uy = np.ones_like(xx) * U * np.sin(theta)
     udata = np.stack((ux, uy))
 
-    dd = np.abs( ( xx + np.tan(theta) * yy + c) ) / np.sqrt(1 + np.tan(theta) ** 2)
+    dd = np.abs((xx + np.tan(theta) * yy + c)) / np.sqrt(1 + np.tan(theta) ** 2)
 
     if decay == 'linear':
         udata = udata * (1 - dd / np.max(dd))
@@ -4516,8 +4931,6 @@ def get_unidirectional_flow(xx, yy, t=np.asarray([0, 1]), U=10, c=0,
     else:
         pass
     return udata
-
-
 
 
 def get_sample_turb_field_3d(return_coord=True):
@@ -4542,7 +4955,7 @@ def get_sample_turb_field_3d(return_coord=True):
     # get module location
     mod_loc = os.path.abspath(__file__)
     pdir, filename = os.path.split(mod_loc)
-    datapath = os.path.join(pdir, 'velocity_ref/isoturb_slice2.h5')
+    datapath = os.path.join(pdir, 'reference_data/isoturb_slice2.h5')
     data = h5py.File(datapath, 'r')
 
     keys = list(data.keys())
@@ -4600,7 +5013,7 @@ def get_energy_spectra_jhtd():
         data stored in jhtd_e_specs.h5 is stored: k, ek
     """
     faqm_dir = os.path.split(os.path.realpath(__file__))[0]
-    datapath = faqm_dir + '/velocity_ref/jhtd_e_specs.h5'
+    datapath = faqm_dir + '/reference_data/jhtd_e_specs.h5'
 
     datadict = {}
     with h5py.File(datapath, 'r') as data:
@@ -4623,7 +5036,7 @@ def get_rescaled_energy_spectra_jhtd():
         data stored in jhtd_e_specs.h5 is stored: Scaled k, Scaled ek
     """
     faqm_dir = os.path.split(os.path.realpath(__file__))[0]
-    datapath = faqm_dir + '/velocity_ref/jhtd_e_specs.h5'
+    datapath = faqm_dir + '/reference_data/jhtd_e_specs.h5'
 
     datadict = {}
     with h5py.File(datapath, 'r') as data:
@@ -4651,7 +5064,7 @@ def get_rescaled_structure_function_saddoughi(p=2):
     """
     tflow_dir = os.path.split(os.path.realpath(__file__))[0]
     if p == 2:
-        datapath = tflow_dir + '/velocity_ref/sv_struc_func.h5'
+        datapath = tflow_dir + '/reference_data/sv_struc_func.h5'
         # datapath = tflow_dir + '/velocity_ref/sv_struc_func.txt'
         # data = np.loadtxt(datapath, skiprows=1, delimiter=',')
         # r_scaled, dll = data[:, 0], data[:, 1]
@@ -4715,6 +5128,7 @@ def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
     n = len(range(t0, t1, inc))
 
     for i, t in enumerate(tqdm(range(t0, t1, inc))):
+        # load a dummy data
         udata, xx, yy, zz = get_udata_from_path(udatapath, return_xy=True, t0=t, t1=t + 1,
                                                 x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, verbose=False)
         if i == 0:
@@ -4726,19 +5140,23 @@ def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
                     shape = list(result[j].shape)
                     if shape[-1] == 1:
                         shape[-1] *= n
+                    # initialize a list which will be returned
                     datalist.append(np.empty(shape))
             else:
                 n_output = 1
                 for j in range(n_output):
+                    # initialize a list which will be returned
                     datalist.append(np.empty(result.shape))
         else:
-            result = func(udata, **kwargs)
+            result = func(udata, **kwargs)  # compute stuff at t=t
+
+        # insert the result to the datalist
         for j in range(n_output):
             if datalist[j].shape[-1] == n:
                 datalist[j][..., i] = result[j][..., 0]
             else:
-                if i == 0:
-                    datalist[j] = result[j]
+                # if i == 0: # this seems unnecessary- why did i do this? 2020/07/01
+                datalist[j] = result[j]
     if notebook:
         from tqdm import tqdm as tqdm
     return datalist
@@ -4844,7 +5262,6 @@ def get_time_avg_energy_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None, 
     return eavg
 
 
-
 def count_nans_along_axis(udatapath, axis='z',
                           x0=0, x1=None,
                           y0=0, y1=None,
@@ -4885,7 +5302,8 @@ def count_nans_along_axis(udatapath, axis='z',
         print('... 2D udata. Returns the ratio of the no. of nans to the column length along x')
         axis = 'x'
     else:
-        print('... 3D udata. Returns the ratio of the no. of nans to the number of elements on the plane along %s' % axis)
+        print(
+                    '... 3D udata. Returns the ratio of the no. of nans to the number of elements on the plane along %s' % axis)
 
     if axis == 'z':
         for z0_ in range(z0, z1):
@@ -4923,6 +5341,7 @@ def count_nans_along_axis(udatapath, axis='z',
 
 def get_time_avg_enstrophy_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                                           t0=0, t1=None, slicez=None, inc=1, thd=np.inf, fill_value=np.nan,
+                                          xx=None, yy=None, zz=None,
                                           notebook=True):
     """
     Returns time-averaged energy when a path to udata is provided
@@ -4989,7 +5408,7 @@ def get_time_avg_enstrophy_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=Non
                     udata, xx, yy, zz = get_udata_from_path(udatapath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1,
                                                             t0=t, t1=t + 1, return_xy=True, verbose=False)
                     dx, dy, dz = get_grid_spacing(xx, yy, zz)
-                    enst_inst = get_enstrophy(udata, dx, dy, dz)[..., 0]
+                    enst_inst = get_enstrophy(udata, dx, dy, dz, xx=xx, yy=yy, zz=zz)[..., 0]
                     enst_inst[enst_inst > thd] = fill_value
                     enstavg = np.nansum(np.stack((enstavg, enst_inst)), 0)
                     counters += ~np.isnan(enst_inst)
@@ -5002,7 +5421,7 @@ def get_time_avg_enstrophy_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=Non
                                                             z1=slicez + 2,
                                                             t0=t, t1=t + 1, return_xy=True, verbose=False)
                     dx, dy, dz = get_grid_spacing(xx, yy, zz)
-                    enst_inst = get_enstrophy(udata, dx, dy, dz)[:, :, 1, 0]
+                    enst_inst = get_enstrophy(udata, dx, dy, dz, xx=xx, yy=yy, zz=z)[:, :, 1, 0]
                     enst_inst[enst_inst > thd] = fill_value
                     enstavg = np.nansum(np.stack((enstavg, enst_inst)), 0)
                     counters += ~np.isnan(enst_inst)
@@ -5014,7 +5433,7 @@ def get_time_avg_enstrophy_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=Non
                 udata, xx, yy = get_udata_from_path(udatapath, x0=x0, x1=x1, y0=y0, y1=y1, t0=t, t1=t + 1,
                                                     return_xy=True, verbose=False)
                 dx, dy = get_grid_spacing(xx, yy)
-                enst_inst = get_enstrophy(udata, dx, dy)[:, :, 0]
+                enst_inst = get_enstrophy(udata, dx, dy, xx=xx, yy=yy)[:, :, 0]
                 enst_inst[enst_inst > thd] = fill_value
                 enstavg = np.nansum(np.stack((enstavg, enst_inst)), 0)
                 counters += ~np.isnan(enst_inst)
@@ -5201,9 +5620,9 @@ def export_raw_file_from_dpath(udatapath, func=get_energy, x0=0, x1=None, y0=0, 
         savedir = os.path.join(os.path.join(savedir, udaname[:-3]), func.__name__)
 
     dummy = get_udata_from_path(udatapath, return_xy=False,
-                                                x0=x0, x1=x1, y0=y0, y1=y1,
-                                                z0=z0, z1=z1,
-                                                t0=0, t1=1, verbose=False)
+                                x0=x0, x1=x1, y0=y0, y1=y1,
+                                z0=z0, z1=z1,
+                                t0=0, t1=1, verbose=False)
     shape = dummy.shape[1:]
     duration = get_udata_dim(udatapath)[-1]
     savedir += '_%03dx%03dx%03dx%05dx_inc%d' % (shape[0], shape[1], shape[2], shape[3], inc)
@@ -5245,6 +5664,7 @@ def export_raw_file_from_dpath(udatapath, func=get_energy, x0=0, x1=None, y0=0, 
 
     if notebook:
         from tqdm import tqdm
+
 
 def export_raw_file(data2save, savepath, dtype='uint32', thd=np.inf, interpolate=None, fill_value=np.nan,
                     contrast=True, log10=False, **kwargs):
@@ -5304,6 +5724,7 @@ def export_raw_file(data2save, savepath, dtype='uint32', thd=np.inf, interpolate
     if not os.path.exists(savedir):
         os.makedirs(savedir)
     data2save.astype(dtype).tofile(savepath)
+
 
 ######### Helper for volumetric data ########
 ## Generate a 2D slice from a 3D data
@@ -5448,7 +5869,7 @@ def slicer(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, s
             theta = np.pi / 2 - theta1
             #             p = vec.norm(np.asarray([0, 1, popt1[0] ]))#in new basis (basisB)- n, u, v
             #             q = vec.norm(np.asarray([0, 1, popt2[0] ]))
-            if ind1 > (len(vs[:-1][keep])-len(inds)) / 2:
+            if ind1 > (len(vs[:-1][keep]) - len(inds)) / 2:
                 p = vec.norm(np.asarray([0, 1, popt1[0]]))  # in new basis (basisB)- n, u, v
                 q = vec.norm(np.asarray([0, 1, -1 / popt1[0]]))
             else:
@@ -5479,13 +5900,11 @@ def slicer(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, s
 
         return theta, npq_basis
 
-
     if notebook:
         from tqdm import tqdm_notebook as tqdm
         # print('Using tqdm_notebook. If this is a mistake, set notebook=False')
     else:
         from tqdm import tqdm
-
 
     if spacing is None:
         dx, dy, dz = get_grid_spacing(xx, yy, zz)
@@ -5578,11 +5997,11 @@ def slicer(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, s
                     color='b', fignum=2, width=1)
         graph.arrow(0, 0, np.matmul(Mab, basisC[:, 2])[1] * 20, np.matmul(Mab, basisC[:, 2])[2] * 20,
                     color='g', fignum=2, width=1)
-        graph.title(ax, 'find_rotation_angle_for_new_basis')
+        graph.title(ax, 'find_rotation_angle_for_a_new_basis')
         graph.labelaxes(ax, 'u', 'v')
 
     Mbc = vec.get_change_of_basis_matrix(basisB, basisC)
-    Mac = vec.get_change_of_basis_matrix(basis_std, basisC) # this will be updated later due to the convention
+    Mac = vec.get_change_of_basis_matrix(basis_std, basisC)  # this will be updated later due to the convention
     Mca = np.linalg.inv(Mac)
 
     xyz_coords = np.stack((xs, ys, zs))
@@ -5728,7 +6147,6 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
     else:
         from tqdm import tqdm
 
-
     if spacing is None:
         dx, dy, dz = get_grid_spacing(xx, yy, zz)
         spacing = min([dx, dy, dz])
@@ -5753,12 +6171,12 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
         p = np.arange(pmin, pmax, spacing)
         q = np.arange(qmin, qmax, spacing)
         n = [0]
-        pp, qq, nn = np.meshgrid(p, q, n) # THIS WORKS! DO not touch this
+        pp, qq, nn = np.meshgrid(p, q, n)  # THIS WORKS! DO not touch this
         shape = pp.shape
-        pts_b = np.stack((nn.flatten(), pp.flatten(), qq.flatten())) # npq
+        pts_b = np.stack((nn.flatten(), pp.flatten(), qq.flatten()))  # npq
 
         pts_a = np.matmul(Mba, pts_b)  # x, y, z
-        pts_a[[0, 1], :] = pts_a[[1, 0], :] # interpolating function takes (y, x, z) not (x, y, z). Swap axes.
+        pts_a[[0, 1], :] = pts_a[[1, 0], :]  # interpolating function takes (y, x, z) not (x, y, z). Swap axes.
 
         ux_si = fs[0](pts_a.T).reshape(shape)
         uy_si = fs[1](pts_a.T).reshape(shape)
@@ -5766,19 +6184,21 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
 
         uis_si = np.stack((ux_si.flatten(), uy_si.flatten(), uz_si.flatten()))
         uis_si_npq = np.matmul(Mab, uis_si)
-        un_si, up_si, uq_si = uis_si_npq[0, ...].reshape(shape), uis_si_npq[1, ...].reshape(shape), uis_si_npq[2, ...].reshape(shape)
+        un_si, up_si, uq_si = uis_si_npq[0, ...].reshape(shape), uis_si_npq[1, ...].reshape(shape), uis_si_npq[
+            2, ...].reshape(shape)
         if i == 0:
-            master_shape = (3, ) + shape + (duration, )
+            master_shape = (3,) + shape + (duration,)
             udata_si_xyz_basis = np.empty(master_shape)
             udata_si_npq_basis = np.empty(master_shape)
 
         udata_si_xyz_basis[..., t] = np.stack((ux_si, uy_si, uz_si))
-        udata_si_npq_basis[..., t] = np.stack((un_si, up_si, uq_si))  # un, up, uq- velocity also obeys the transformation rule as position
+        udata_si_npq_basis[..., t] = np.stack(
+            (un_si, up_si, uq_si))  # un, up, uq- velocity also obeys the transformation rule as position
 
     udata_si_xyz_basis = np.squeeze(udata_si_xyz_basis)  # ux, uy, uz
     udata_si_npq_basis = np.squeeze(udata_si_npq_basis)  # un, up, uq
 
-    pp, qq = np.squeeze(pp), np.squeeze(qq) #2D grid
+    pp, qq = np.squeeze(pp), np.squeeze(qq)  # 2D grid
 
     if notebook:
         from tqdm import tqdm as tqdm
@@ -5796,10 +6216,10 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
         return None
 
 
-
 def interpolate_udata_at_instant_of_time(udata, xx, yy, zz=None, t=0, bounds_error=False, **kwargs):
     """
     Returns interpolating functions of each spatial component of a velocity field at instant of time
+    using scipy.interpolate.RegularGridInterpolator
     ... Returns a tuple (f_ux, f_uy, f_uz)
     ... f_ux( (y, x, z) ): ux at (x, y, z)
 
@@ -5837,15 +6257,21 @@ def interpolate_udata_at_instant_of_time(udata, xx, yy, zz=None, t=0, bounds_err
         udata = np.flip(udata, axis=1)
 
     if zz is None:
-        f_ux = RegularGridInterpolator((y, x), udata[0, ..., t], bounds_error=bounds_error, **kwargs)  # ux interpolating function
-        f_uy = RegularGridInterpolator((y, x), udata[1, ..., t], bounds_error=bounds_error, **kwargs)  # uy interpolating function
+        f_ux = RegularGridInterpolator((y, x), udata[0, ..., t], bounds_error=bounds_error,
+                                       **kwargs)  # ux interpolating function
+        f_uy = RegularGridInterpolator((y, x), udata[1, ..., t], bounds_error=bounds_error,
+                                       **kwargs)  # uy interpolating function
         if dim == 3:
-            f_uz = RegularGridInterpolator((y, x), udata[2, ..., t], bounds_error=bounds_error, **kwargs)  # uz interpolating function
+            f_uz = RegularGridInterpolator((y, x), udata[2, ..., t], bounds_error=bounds_error,
+                                           **kwargs)  # uz interpolating function
     else:
-        f_ux = RegularGridInterpolator((y, x, z), udata[0, ..., t], bounds_error=bounds_error, **kwargs)  # ux interpolating function
-        f_uy = RegularGridInterpolator((y, x, z), udata[1, ..., t], bounds_error=bounds_error, **kwargs)  # uy interpolating function
+        f_ux = RegularGridInterpolator((y, x, z), udata[0, ..., t], bounds_error=bounds_error,
+                                       **kwargs)  # ux interpolating function
+        f_uy = RegularGridInterpolator((y, x, z), udata[1, ..., t], bounds_error=bounds_error,
+                                       **kwargs)  # uy interpolating function
         if dim == 3:
-            f_uz = RegularGridInterpolator((y, x, z), udata[2, ..., t], bounds_error=bounds_error, **kwargs)  # uz interpolating function
+            f_uz = RegularGridInterpolator((y, x, z), udata[2, ..., t], bounds_error=bounds_error,
+                                           **kwargs)  # uz interpolating function
 
     if dim == 3:
         return f_ux, f_uy, f_uz
@@ -5855,8 +6281,10 @@ def interpolate_udata_at_instant_of_time(udata, xx, yy, zz=None, t=0, bounds_err
 
 def interpolate_scalar_field_at_instant_of_time(field, xx, yy, zz=None, t=0, bounds_error=False, **kwargs):
     """
-    Returns  an interpolating function a scalar field (energy, enstrophy etc.) at instant of time
+    Returns an interpolating function a scalar field (energy, enstrophy etc.) at instant of time
+    using scipy.interpolate.RegularGridInterpolator
     ... field_i( (y, x, z) ): the field at (x, y, z)
+
     Parameters
     ----------
     field
@@ -5901,15 +6329,17 @@ def interpolate_scalar_field_at_instant_of_time(field, xx, yy, zz=None, t=0, bou
 
     if zz is None:
         field_i = RegularGridInterpolator((y, x), field[..., t], bounds_error=bounds_error,
-                                       **kwargs)  # interpolating function
+                                          **kwargs)  # interpolating function
     else:
         field_i = RegularGridInterpolator((y, x, z), field[..., t], bounds_error=bounds_error,
                                           **kwargs)
     return field_i
 
+
 def interpolate_vector_field_at_instant_of_time(vfield, xx, yy, zz=None, t=0, bounds_error=False, **kwargs):
     """
     Returns interpolating functions of a vector field (e.g. vorticity field: omega)
+    using scipy.interpolate.RegularGridInterpolator
     ... e.g.
         Input: vorticity field (omega) with shape (3, height, width, depth, duration)
         Output: a list of interpolating functions for each spatial direction- [omega_x, omega_y, omega_z]
@@ -5931,10 +6361,186 @@ def interpolate_vector_field_at_instant_of_time(vfield, xx, yy, zz=None, t=0, bo
     dim = vfield.shape[0]
     funcs = []
     for d in range(dim):
-        func = interpolate_scalar_field_at_instant_of_time(vfield[d, ...], xx, yy, zz=zz, t=t, bounds_error=bounds_error, **kwargs)
+        func = interpolate_scalar_field_at_instant_of_time(vfield[d, ...], xx, yy, zz=zz, t=t,
+                                                           bounds_error=bounds_error, **kwargs)
         funcs.append(func)
     return funcs
 
+
+def griddata_easy(xx, yy, data, xi=None, yi=None, dx=None, dy=None, nx=10, ny=10, method='nearest',
+                  return_intfunc=False):
+    """
+    Generate a girdded data from scattered data z=f(x, y)
+    ... Wrapper of scipy.interplate.riddata
+
+    Parameters
+    ----------
+    xx: nd array-like
+        x-coordinate of scattered data
+    yy: nd array-like
+        y-coordinate of scattered data
+    data: nd array-like
+        values of scattered data
+    xi: 1d array
+        x-coordinate of the interpolated grid
+        ... The array must be monotonically increasing.
+        ... If None, xi = np.arange(xmin, xmax, dx)
+    yi: 1d array
+        y-coordinate of the interpolated grid
+        ... The array must be monotonically increasing.
+        ... If None, yi = np.arange(ymin, ymax, dy)
+    dx: float
+        spacing of 'xi' if 'xi' is not given
+    dy: float
+        spacing of 'xi' if 'xi' is not given
+    nx: int
+        if 'dx' were not given, dx is set as (xmax-xmin)/nx
+    ny: int
+        if 'dy' were not given, dx is set as (ymax-ymin)/ny
+    method: method of 2D interpolation
+        ... Options: 'nearest', 'linear', 'cubic'
+
+    Returns
+    -------
+    xxi: 2d array
+        x-coordinate of the grid
+    yyi: 2d array
+        x-coordinate of the grid
+    data_i: 2d array
+        values on the grid
+
+    """
+    xx, yy, data = np.asarray(xx), np.asarray(yy), np.asarray(data)
+    if not xx.shape == yy.shape == data.shape:
+        print('x.shape, y.shape, and data.shape must match. ', xx.shape, yy.shape, data.shape)
+        raise ValueError('shapes of x, y, and data do not match.')
+    x, y, data1d = xx.flatten(), yy.flatten(), data.flatten()
+
+    if xi is None:
+        xmin, xmax = np.nanmin(x), np.nanmax(x)
+        if dx is None:
+            dx = (xmax - xmin) / nx
+        xi = np.arange(xmin, xmax, dx)
+    if yi is None:
+        ymin, ymax = np.nanmin(y), np.nanmax(y)
+        if dy is None:
+            dy = (ymax - ymin) / ny
+        yi = np.arange(ymin, ymax, dy)
+
+    xxi, yyi = np.meshgrid(xi, yi)
+
+    # interpolate
+    data_i = griddata((x, y), data1d, (xxi, yyi), method=method)
+    return xxi, yyi, data_i
+
+
+def gaussian_blur_scalar_field(field, sigma=7, mode='nearest', **kwargs):
+    """
+    Gaussian blur a scalar field with shape=(..., duration) such as udata
+
+    Parameters
+    ----------
+    field: nd array with shape (dim, ..., duration)
+    sigma: int, size of the gaussian kernel
+
+    Returns
+    -------
+    blurred: gaussian blurred field with the same shape as the field
+
+    """
+    print('gaussian_blur_scalar_field():\n'
+          '... this assumes the input array has a shape (..., duration)\n'
+          '... A Gaussian kernel is applied between axis=0 and axis=-2')
+    shape = field.shape
+    duration = shape[-1]
+
+    blurred = np.empty_like(field)
+    for t in range(duration):
+        blurred[..., t] = ndimage.filters.gaussian_filter(field[..., t], sigma=sigma, mode=mode, **kwargs)
+
+    return blurred
+
+
+def gaussian_blur_vector_field(field, sigma=7, mode='nearest', **kwargs):
+    """
+    Gaussian blur a scalar/vector field with shape=(dim, ..., duration) such as udata
+    ... e.g. udata
+        udata = fix_udata_shape(udata)
+        gaussian_blur(udata, sigma=5)
+
+    Parameters
+    ----------
+    field: nd array with shape (dim, ..., duration)
+    sigma: int, size of the gaussian kernel
+
+    Returns
+    -------
+    blurred: gaussian blurred field with the same shape as the field
+
+    """
+    print('gaussian_blur_vector_field():\n'
+          '... this assumes the input array has a shape (dim, ..., duration)\n'
+          '... A Gaussian kernel is applied to the middle stacks')
+    shape = field.shape
+    dim, duration = shape[0], shape[-1]
+
+    blurred = np.empty_like(field)
+    for t in range(duration):
+        for d in range(dim):
+            blurred[d, ..., t] = ndimage.filters.gaussian_filter(field[d, ..., t], sigma=sigma, mode=mode, **kwargs)
+
+    return blurred
+
+
+def median_filter_scaar_field(data, kernel_radius=1):
+    """
+    Filter input with a median filter using scipy.signal.medfilt()
+    ... data must have a shape of (..., duration)
+        A median filter will be applied on the stacks (span by axis=0, 1, ..., -2)
+        ... The last axis is interpreted as a temporal axis of data
+
+    Parameters
+    ----------
+    data: nd array
+    kernel_radius: int, default: 1
+        ... radius of the kernel of the median filter
+
+    Returns
+    -------
+    filtered: nd array
+        ... Filtered data
+    """
+    duration = data.shape[-1]
+    filtered = np.empty_like(data)
+    for t in range(duration):
+        filtered[..., t] = medfilt(data[..., t], 2 * kernel_radius + 1)
+    return filtered
+
+
+def median_filter_vector_field(vdata, kernel_radius=1):
+    """
+    Filter a vector field with a median filter using scipy.signal.medfilt()
+    ... data must have a shape of (dim, ..., duration)
+        A median filter will be applied on the stacks (span by axis= 1, ..., -2)
+        ... The last axis is interpreted as a temporal axis of data
+
+    Parameters
+    ----------
+    data: nd array
+    kernel_radius: int, default: 1
+        ... radius of the kernel of the median filter
+
+    Returns
+    -------
+    filtered: nd array
+        ... Filtered data
+    """
+    dim, duration = vdata.shape[0], vdata.shape[-1]
+    filtered = np.empty_like(vdata)
+    for t in range(duration):
+        for d in range(dim):
+            filtered[d, ..., t] = medfilt(vdata[d, ..., t], 2 * kernel_radius + 1)
+    return filtered
 
 
 ########## FFT tools ########
@@ -6007,7 +6613,7 @@ def get_window_radial(xx, yy, zz=None, wtype='hamming', rmax=None, duration=None
             z1 = xx.shape[2]
 
         origin = (
-        (xx[0, x1 - 1] + xx[0, x0]) / 2., (yy[y1 - 1, 0] + yy[y0, 0]) / 2., (zz[0, 0, z1 - 1] + zz[0, 0, z0]) / 2.)
+            (xx[0, x1 - 1] + xx[0, x0]) / 2., (yy[y1 - 1, 0] + yy[y0, 0]) / 2., (zz[0, 0, z1 - 1] + zz[0, 0, z0]) / 2.)
         xx, yy, zz = xx[y0:y1, x0:x1, z0:z1], yy[y0:y1, x0:x1, z0:z1], zz[y0:y1, x0:x1, z0:z1]
         rr = np.sqrt((xx - origin[0]) ** 2 + (yy - origin[1]) ** 2 + (zz - origin[2]) ** 2)
 
@@ -6275,7 +6881,9 @@ def fill_unphysical_with_sth(U, mask, fill_value=np.nan):
 
 def clean_udata(udata, mask=None,
                 method='nn', max_iter=10, tol=0.05, kernel_radius=2, kernel_sigma=2,
-                cutoff=np.inf, showtqdm=True, verbose=False, notebook=True):
+                cutoff=np.inf,
+                median_filter=True,
+                showtqdm=True, verbose=False, notebook=True):
     """
     ND interpolation using direct convolution (replac_nan(...))
 
@@ -6321,15 +6929,23 @@ def clean_udata(udata, mask=None,
         return udata
 
     # Method 1
-    if method == 'nn': # nearest neighbor filling
+    if method == 'nn':  # nearest neighbor filling
         udata_i = replace_nan_w_nn_udata(udata, notebook=notebook)
     else:
         # Initialization of an inpainted field
         udata_i = np.empty_like(udata)
-        for t in tqdm(range(duration), disable=not showtqdm):
+        for t in tqdm(range(duration), desc='replacing nans', disable=not showtqdm):
             for i in range(ncomp):
-                udata_i[i, ..., t] = replace_nans(udata[i, ..., t], max_iter=max_iter, tol=tol, kernel_radius=kernel_radius,
+                udata_i[i, ..., t] = replace_nans(udata[i, ..., t], max_iter=max_iter, tol=tol,
+                                                  kernel_radius=kernel_radius,
                                                   kernel_sigma=kernel_sigma, method=method, showtqdm=verbose)
+    if median_filter:
+        udata_i = np.empty_like(udata)
+        for t in tqdm(range(duration), desc='median filter', disable=not showtqdm):
+            for i in range(ncomp):
+                udata_i[i, ..., t] = medfilt(udata[i, ..., t], 2*kernel_radius+1)
+
+
     if notebook:
         from tqdm import tqdm as tqdm
 
@@ -6528,6 +7144,7 @@ def find_crop_no(udata, tol=0.2):
     print('No of edges to remove in indices: %d' % i, ratio, nnans, ntot)
     return i
 
+
 # Dealing with missing values in a field
 def replace_nan_w_nn(data, notebook=False, verbose=False):
     """
@@ -6592,6 +7209,7 @@ def replace_nan_w_nn(data, notebook=False, verbose=False):
             from tqdm import tqdm as tqdm
         return data
 
+
 def replace_nan_w_nn_udata(udata, notebook=False, verbose=False):
     """
     The fastest and most robust function to fill the missing values in udata
@@ -6616,7 +7234,7 @@ def replace_nan_w_nn_udata(udata, notebook=False, verbose=False):
     dim, duration = udata.shape[0], udata.shape[-1]
 
     udata_filled = np.empty_like(udata)
-    for t in tqdm(range(duration)):
+    for t in tqdm(range(duration), desc='replace_nan_w_nn_udata'):
         for i in range(dim):
             udata_filled[i, ..., t] = replace_nan_w_nn(udata[i, ..., t], verbose=verbose)
 
@@ -6624,6 +7242,7 @@ def replace_nan_w_nn_udata(udata, notebook=False, verbose=False):
         from tqdm import tqdm as tqdm
 
     return udata_filled
+
 
 def replace_nans(array, max_iter=50, tol=0.05, kernel_radius=2, kernel_sigma=2, method='nn',
                  notebook=True, verbose=False, showtqdm=True):
@@ -6712,10 +7331,10 @@ def replace_nans(array, max_iter=50, tol=0.05, kernel_radius=2, kernel_sigma=2, 
     if method == 'localmean':
         #         print('kernel_size', kernel_size)
         kernel = np.ones(kernel_shape)
-    elif method == 'idw': # inverse distance weighting (with gaussian kernel)
+    elif method == 'idw':  # inverse distance weighting (with gaussian kernel)
         kernel = makeGaussianKernel(kernel_size, kernel_sigma, dim)
     #         print(kernel.shape, 'kernel')
-    elif method == 'nn': # newarest neighbor
+    elif method == 'nn':  # newarest neighbor
         filled = replace_nan_w_nn(array, notebook=notebook)
     else:
         raise ValueError('method is not valid. Choose from idw and localmean')
@@ -6773,15 +7392,15 @@ def replace_nans(array, max_iter=50, tol=0.05, kernel_radius=2, kernel_sigma=2, 
                 print('variance: ', variance)
             replaced_old = copy.deepcopy(replaced_new)
 
-
     if notebook:
         from tqdm import tqdm as tqdm
 
     return filled
 
+
 def clean_data(data, mask=None,
-                method='idw', max_iter=10, tol=0.05, kernel_radius=2, kernel_sigma=2,
-                cutoff=np.inf, showtqdm=True, verbose=False, notebook=True):
+               method='nn', max_iter=10, tol=0.05, kernel_radius=2, kernel_sigma=2,
+               cutoff=np.inf, showtqdm=True, verbose=False, notebook=True):
     """
     Fills missing values (np.nan) in an array by nearest neighbor filling OR direct convolution (inpainting)
     ND interpolation using direct convolution (replac_nan(...))
@@ -6818,16 +7437,31 @@ def clean_data(data, mask=None,
     if nnans == 0:  # udata is already clean (No nan values and no values beyond cutoff)
         return data
 
-    if method == 'nn': # nearest neighbor filling
+    if method == 'nn':  # nearest neighbor filling
         data = replace_nan_w_nn(data, notebook=notebook)
     else:
         # Initialization of an inpainted field
         data = replace_nans(data, max_iter=max_iter, tol=tol, kernel_radius=kernel_radius,
-                                                  kernel_sigma=kernel_sigma, method=method, showtqdm=verbose)
+                            kernel_sigma=kernel_sigma, method=method, showtqdm=verbose)
     if notebook:
         from tqdm import tqdm as tqdm
 
     return data
+
+
+def get_instantaneous_center_of_energy(udata, xx, yy, zz=None,
+                         x0=0, x1=None, y0=0, y1=None, z0=0, z1=None):
+    udata = fix_udata_shape(udata)
+    dim, duration = udata.shape[0], udata.shape[-1]
+    energy = get_energy(udata)
+
+    centers = np.empty((dim, duration))
+    coords = [xx, yy, zz]
+    for t in range(duration):
+        for d in range(dim):
+            centers[d, t] = np.nansum( coords[d] * energy[..., t] ) / np.nansum(energy[..., t])
+    return centers
+
 
 # FUNCTIONS FOR STB DATA ANALYSIS
 def get_center_of_energy(dpath, inc=10, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None):
@@ -6854,12 +7488,12 @@ def get_center_of_energy(dpath, inc=10, x0=0, x1=None, y0=0, y1=None, z0=0, z1=N
     """
     # dummy
     udata = get_udata_from_path(dpath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, t0=0, t1=1,
-                                            return_xy=False, verbose=False)
+                                return_xy=False, verbose=False)
     dim = udata.shape[0]
     if dim == 3:
         # Load dummy udata
         udata, xx, yy, zz = get_udata_from_path(dpath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, t0=0, t1=1,
-                                                    return_xy=True, verbose=False)
+                                                return_xy=True, verbose=False)
         etavg = get_time_avg_energy_from_udatapath(dpath, inc=inc, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
         xc = np.nansum(etavg * xx) / np.nansum(etavg)
         yc = np.nansum(etavg * yy) / np.nansum(etavg)
@@ -6868,12 +7502,71 @@ def get_center_of_energy(dpath, inc=10, x0=0, x1=None, y0=0, y1=None, z0=0, z1=N
     else:
         # Load dummy udata
         udata, xx, yy = get_udata_from_path(dpath, x0=x0, x1=x1, y0=y0, y1=y1, t0=0, t1=1,
-                                                    return_xy=True, verbose=False)
+                                            return_xy=True, verbose=False)
         etavg = get_time_avg_energy_from_udatapath(dpath, inc=inc, x0=x0, x1=x1, y0=y0, y1=y1)
         xc = np.nansum(etavg * xx) / np.nansum(etavg)
         yc = np.nansum(etavg * yy) / np.nansum(etavg)
         center_of_energy = np.asarray([xc, yc, ])
     return center_of_energy
+
+
+def get_center_of_vorticity(udata, xx, yy, sigma=5, sign='auto',
+                            x0=0, x1=None,
+                            y0=0, y1=None,
+                            thd=0
+                            ):
+    """
+    Get the center of vorticity field
+    ... The center of field is not well-defined if values can take both positive and negative
+    ...
+
+    Parameters
+    ----------
+    udata
+    xx
+    yy
+    sigma
+    sign
+    x0
+    x1
+    y0
+    y1
+    thd
+
+    Returns
+    -------
+
+    """
+    dim = 2
+    dx, dy = get_grid_spacing(xx, yy)
+    omega = curl(udata, dx, dy, xx=xx, yy=yy)
+    duration = udata.shape[-1]
+    centers = np.empty((dim, duration))
+
+    if sign=='auto':
+        if np.nanmean(omega) < 0:
+            sign = 'negative'
+        else:
+            sign = 'positive'
+
+    for t in tqdm(range(duration)):
+        omega_blurred = ndimage.gaussian_filter(omega[..., t], sigma=sigma)
+        if sign == 'positive':
+            omega_blurred[omega_blurred < 0] = 0
+        else:
+            omega_blurred[omega_blurred >= 0] = 0
+
+        # vorticity field contains huge noise due to differentiation
+        # ... Set field values to be zero below a noise threshold
+        omega_blurred[np.abs(omega_blurred) < thd] = 0
+
+        centers[0, t] = np.nansum(xx[y0:y1, x0:x1] * omega_blurred[y0:y1, x0:x1]) / np.nansum(
+            omega_blurred[y0:y1, x0:x1])
+        centers[1, t] = np.nansum(yy[y0:y1, x0:x1] * omega_blurred[y0:y1, x0:x1]) / np.nansum(
+            omega_blurred[y0:y1, x0:x1])
+
+    return centers
+
 
     # # plotting usual stuff # REQUIRES graph module. Ask Takumi for details or check out takumi's git on immense
     # def plot_energy_spectra(udata, dx, dy, dz=None, x0=0, x1=None, y0=0, y1=None, window='flattop', epsilon_guess=10**5, nu=1.004, label='',
@@ -7318,7 +8011,7 @@ def get_center_of_energy(dpath, inc=10, x0=0, x1=None, y0=0, y1=None, z0=0, z1=N
     e_t_avg, _ = get_spatial_avg_energy(udata_t, x0=n, x1=-n, y0=n, y1=-n)
 
     energy = get_energy(udata[..., mask])
-    enstrophy = get_enstrophy(udata[..., mask], dx=dx, dy=dy)
+    enstrophy = get_enstrophy(udata[..., mask], dx=dx, dy=dy, xx=None, yy=None)
 
     e = np.nanmean(energy, axis=2)
     enst = np.nanmean(enstrophy, axis=2)
@@ -7447,7 +8140,7 @@ def plot_time_avg_enstrophy(udata, xx, yy, x0=0, x1=None, y0=0, y1=None, t0=0, t
     -------
 
     """
-    enstrophy = get_enstrophy(udata[:, y0:y1, x0:x1, t0:t1])
+    enstrophy = get_enstrophy(udata[:, y0:y1, x0:x1, t0:t1], xx=xx, yy=yy)
     en = np.nanmean(enstrophy, axis=-1)
     fig, ax, cc = graph.color_plot(xx[y0:y1, x0:x1], yy[y0:y1, x0:x1], en, label=label, vmin=vmin, vmax=vmax, **kwargs)
     graph.labelaxes(ax, xlabel, ylabel)
@@ -7838,6 +8531,144 @@ def get_binned_stats(arg, var, n_bins=100, mode='linear', bin_center=True):
     return arg_bins, var_mean, var_err / np.sqrt(counts)
 
 
+def get_binned_stats2d(x, y, var, n_bins=100, nx_bins=None, ny_bins=None, bin_center=True,
+                       xmin=None, xmax=None, ymin=None, ymax=None):
+    """
+    Make a histogram out of a pair of 1d arrays.
+    ... Returns arg_bins, var_mean, var_err
+    ... The given arrays could contain nans and infs. They will be ignored.
+
+    Parameters
+    ----------
+    arg: 1d array, controlling variable
+    var: 1d array, data array to be binned
+    n_bins: int, default: 100
+    mode: str, deafult: 'linear'
+        If 'linear', var will be sorted to equally spaced bins. i.e. bin centers increase linearly.
+        If 'log', the bins will be not equally spaced. Instead, they will be equally spaced in log.
+        ... bin centers will be like... 10**0, 10**0.5, 10**1.0, 10**1.5, ..., 10**9
+
+    Returns
+    -------
+    xx_binned: 2d array, bin centers about x
+    yy_binned: 2d array, bin centers about y
+    var_mean: 2d array,  mean values of data in each bin
+    var_err: 2d array, standard error of data in each bin
+
+    """
+
+    def sort2arr(arr1, arr2):
+        """
+        Sort arr1 and arr2 using the order of arr1
+        e.g. a=[2,1,3], b=[9,1,4] -> a[1,2,3], b=[1,9,4]
+        Parameters
+        ----------
+        arr1
+        arr2
+
+        Returns
+        -------
+        Sorted arr1, and arr2
+
+        """
+        arr1, arr2 = list(zip(*sorted(zip(arr1, arr2))))
+        return np.asarray(arr1), np.asarray(arr2)
+
+    def get_mask_for_nan_and_inf(U):
+        """
+        Returns a mask for nan and inf values in a multidimensional array U
+        Parameters
+        ----------
+        U: N-d array
+
+        Returns
+        -------
+
+        """
+        U = np.array(U)
+        U_masked_invalid = ma.masked_invalid(U)
+        return U_masked_invalid.mask
+
+    x, y, var = np.asarray(x), np.asarray(y), np.asarray(var)
+
+    # make sure rr and corr do not contain nans
+    mask_x = get_mask_for_nan_and_inf(x)
+    mask_x = ~mask_x
+    mask_y = get_mask_for_nan_and_inf(y)
+    mask_y = ~mask_y
+    mask_var = get_mask_for_nan_and_inf(var)
+    mask_var = ~mask_var
+    mask = mask_x * mask_y * mask_var
+
+    if xmin is not None:
+        mask_x_less = x > xmin
+        mask *= mask_x_less
+    if xmax is not None:
+        mask_x_greater = x < xmax
+        mask *= mask_x_greater
+    if ymin is not None:
+        mask_y_less = y > ymin
+        mask *= mask_y_less
+    if ymax is not None:
+        mask_y_greater = y < ymax
+        mask *= mask_y_greater
+    # if mode == 'log':
+    #     argmin, argmax = np.nanmin(arg), np.nanmax(arg)
+    #     argmin, argmax = np.nanmin(arg), np.nanmax(arg)
+    #     mask_for_log10arg = get_mask_for_nan_and_inf(np.log10(arg))
+    #     exp_min, exp_max = np.nanmin(np.log10(arg)[~mask_for_log10arg]), np.nanmax(np.log10(arg)[~mask_for_log10arg])
+    #     exp_interval = (exp_max - exp_min) / n_bins
+    #     exp_bin_centers = np.linspace(exp_min, exp_max, n_bins)
+    #     exp_bin_edges = np.append(exp_bin_centers, exp_max + exp_interval) - exp_interval / 2.
+    #     bin_edges = 10 ** (exp_bin_edges)
+    #     bins = bin_edges
+    #     mask_for_arg = get_mask_for_nan_and_inf(bins)
+    #     bins = bins[~mask_for_arg]
+    # else:
+    #     bins = n_bins
+    if nx_bins is None and ny_bins is None:
+        bins = [n_bins, n_bins]
+    else:
+        bins = [nx_bins, ny_bins]
+
+    # get a histogram
+    var_mean, y_edge, x_edge, binnumber = binned_statistic_2d(y[mask], x[mask], var[mask], statistic='mean', bins=bins)
+    var_std, _, _, _ = binned_statistic_2d(y[mask], x[mask], var[mask], statistic='std', bins=bins)
+    counts, _, _, _ = binned_statistic_2d(y[mask], x[mask], var[mask], statistic='count', bins=bins)
+    var_err = var_std / np.sqrt(counts)
+
+    # bin centers
+    # if mode == 'log':
+    #     bin_centers = 10 ** ((exp_bin_edges[:-1] + exp_bin_edges[1:]) / 2.)
+    # else:
+    #     binwidth = (bin_edges[1] - bin_edges[0])
+    #     bin_centers = bin_edges[1:] - binwidth / 2
+
+    if bin_center:
+        binwidth_x = (x_edge[1] - x_edge[0])
+        binwidth_y = (y_edge[1] - y_edge[0])
+        bin_centers_x = x_edge[1:] - binwidth_x / 2
+        bin_centers_y = y_edge[1:] - binwidth_y / 2
+        arg_bins_x = bin_centers_x
+        arg_bins_y = bin_centers_y
+    else:
+        arg_bins_x = x_edge[:-1]
+        arg_bins_y = y_edge[:-1]
+    #
+    # # Sort arrays
+    # if bin_center:
+    #     arg_bins, var_mean = sort2arr(bin_centers, var_mean)
+    #     arg_bins, var_err = sort2arr(bin_centers, var_err)
+    # else:
+    #     arg_bins, var_mean = sort2arr(arg_means, var_mean)
+    #     arg_bins, var_err = sort2arr(arg_means, var_err)
+
+    yy_binned, xx_binned = np.meshgrid(arg_bins_y, arg_bins_x)
+    xx_binned, yy_binned = np.meshgrid(arg_bins_x, arg_bins_y)
+
+    return xx_binned, yy_binned, var_mean, var_err
+
+
 def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                         t0=0, t1=None, inc=1, frame=None, return_xy=False, verbose=True,
                         slicez=None, crop=None, mode='r',
@@ -7872,16 +8703,18 @@ def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
 
     """
     ### Dummy to determine wheteher this file is a nested udata
-    with h5py.File(udatapath, 'r') as f:
-        keys = f.keys()
+    f = h5py.File(udatapath, 'r')
+    keys = list(f.keys())
+    f.close()
     ###
     if not 'ux' in keys:
-        print('... get_udata_from_path() is not compatible with a structure in this h5.  \n Try get_udata_from_path_nested() instead.')
+        print(
+            '... get_udata_from_path() is not compatible with a data structure in this h5.  \n Try get_udata_from_path_nested() instead.')
         results = get_udata_from_path_nested(udatapath, ind=0,
-                                   x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1,
-                                   t0=t0, t1=t1, inc=inc, frame=frame, return_xy=return_xy, verbose=verbose,
-                                   slicez=slicez, crop=crop, mode=mode,
-                                   reverse_x=reverse_x, reverse_y=reverse_y, reverse_z=reverse_z)
+                                             x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1,
+                                             t0=t0, t1=t1, inc=inc, frame=frame, return_xy=return_xy, verbose=verbose,
+                                             slicez=slicez, crop=crop, mode=mode,
+                                             reverse_x=reverse_x, reverse_y=reverse_y, reverse_z=reverse_z)
         return results
     else:
         if verbose:
@@ -7936,7 +8769,8 @@ def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                 udata = np.stack((ux, uy, uz))
                 if return_xy:
                     if slicez is None:
-                        xx, yy, zz = f['x'][y0:y1, x0:x1, z0:z1], f['y'][y0:y1, x0:x1, z0:z1], f['z'][y0:y1, x0:x1, z0:z1]
+                        xx, yy, zz = f['x'][y0:y1, x0:x1, z0:z1], f['y'][y0:y1, x0:x1, z0:z1], f['z'][y0:y1, x0:x1,
+                                                                                               z0:z1]
                     else:
                         xx, yy, zz = f['x'][y0:y1, x0:x1, slicez], f['y'][y0:y1, x0:x1, slicez], f['z'][0, 0, slicez]
         tau1 = time_mod.time()
@@ -7981,9 +8815,9 @@ def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
 
 def get_udata_from_path_nested(udatapath, ind=0,
                                x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
-                        t0=0, t1=None, inc=1, frame=None, return_xy=False, verbose=True,
-                        slicez=None, crop=None, mode='r',
-                        reverse_x=False, reverse_y=False, reverse_z=False):
+                               t0=0, t1=None, inc=1, frame=None, return_xy=False, verbose=True,
+                               slicez=None, crop=None, mode='r',
+                               reverse_x=False, reverse_y=False, reverse_z=False):
     """
     A function to read udata from a hdf5 file
     ... This function is suited for a nested structure Takumi used temporaly.
@@ -8046,7 +8880,6 @@ def get_udata_from_path_nested(udatapath, ind=0,
         print('... w was passed to h5Py.File(...) which would truncate the file if it exists. \n'
               'Probably, this is not what you want. Pass r for read-only')
         raise ValueError
-
 
     with h5py.File(udatapath, mode='r') as fyle:
         if verbose:
@@ -8151,7 +8984,6 @@ def get_udata_from_path_nested(udatapath, ind=0,
         return udata
 
 
-
 # Spatial Pofile
 def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=None, n=50,
                         return_center=False,
@@ -8223,7 +9055,7 @@ def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=N
             print('spatial_profile: (xc, yc, zc)=(%.2f, %.2f, %.2f)' % (xc, yc, zc))
         elif xc is None and yc is None and zc is None:
             xc, yc, zc = 0, 0, 0
-        r, theta, phi = cart2sph(x - xc, y - yc, z-zc)
+        r, theta, phi = cart2sph(x - xc, y - yc, z - zc)
 
         shape = (n, duration)
         rs = np.empty(shape)
@@ -8285,6 +9117,22 @@ def fix_udata_shape(udata):
             return np.stack((ux, uy, uz))
 
 
+def expand_dim(arr):
+    """
+    Returns arr[..., np.newaxis]
+    ... shape of arr changes from arr.shape to (arr.shape, 1)
+
+    Parameters
+    ----------
+    arr: nd array
+
+    Returns
+    -------
+    arr[..., np.newaxis]
+    """
+
+    return arr[..., np.newaxis]
+
 
 def get_jacobian_xyz_ijk(xx, yy, zz=None):
     """
@@ -8322,11 +9170,15 @@ def get_jacobian_xyz_ijk(xx, yy, zz=None):
 
     return jacobian
 
+def compute_rms(qty):
+    rms = np.sqrt(np.nanmean(qty ** 2))
+    return rms
 
 def count_nans(arr):
     """Returns the number of nans in the given array"""
     nnans = np.count_nonzero(np.isnan(arr))
     return nnans
+
 
 def get_equally_spaced_grid(udata, spacing=1):
     """
@@ -8488,7 +9340,7 @@ def get_characteristic_velocity(udata):
     return u_irms
 
 
-def kronecker_delta_delta(i, j):
+def kronecker_delta(i, j):
     """
     kronecker_delta Delta function: \delta_{i, j}
 
@@ -8528,6 +9380,37 @@ def cart2pol(x, y):
     return r, phi
 
 
+def cart2pol_udata(x, y, udata):
+    """
+    Transformation: Cartesian coord to polar coord (x, y, (ux, uy)) -> (r, phi, (ur, uphi))
+    ... Returns polar coordiantes AND velocity field in the polar basis
+
+    Parameters
+    ----------
+    x
+    y
+    udata
+
+    Returns
+    -------
+
+    """
+    r = np.sqrt(x ** 2 + y ** 2)
+    phi = np.arctan2(y, x)
+
+    if udata.shape[1:] == x.shape:
+        ur = udata[0, ...] * np.cos(phi) + udata[1, ...] * np.sin(phi)
+        utheta = -udata[0, ...] * np.sin(phi) + udata[1, ...] * np.cos(phi)
+        udata_pol = np.stack((ur, utheta))
+    else:
+        udata = fix_udata_shape(udata)
+        udata_pol = np.empty_like(udata)
+        for t in range(udata.shape[-1]):
+            udata_pol[0, ..., t] = udata[0, ..., t] * np.cos(phi) + udata[1, ..., t] * np.sin(phi)
+            udata_pol[1, ..., t] = -udata[0, ..., t] * np.sin(phi) + udata[1, ..., t] * np.cos(phi)
+    return r, phi, udata_pol
+
+
 def cart2sph(x, y, z):
     """
     Transformation: cartesian to spherical
@@ -8557,6 +9440,7 @@ def cart2sph(x, y, z):
     phi = np.arctan2(y, x)
     return r, theta, phi
 
+
 def cart2sph_velocity(ux, uy, uz, xx, yy, zz, xc=0, yc=0, zc=0):
     """
     Returns velocity in the spherical basis
@@ -8572,15 +9456,16 @@ def cart2sph_velocity(ux, uy, uz, xx, yy, zz, xc=0, yc=0, zc=0):
     theta: polar angle [-pi/2, pi/2] (angle from the z-axis)
     phi: azimuthal angle [-pi, pi] (angle on the x-y plane)
 
-    http://www.astrosurf.com/jephem/library/li110spherCart_en.html
+    http://www.astrosurf.com/jephem/library/li110spherCart_en.htm
     """
     xx_tmp, yy_tmp, zz_tmp = xx - xc, yy - yc, zz - zc
-    R = np.sqrt(xx_tmp**2 + yy_tmp**2 + zz_tmp**2)
-    Rxy = np.sqrt(xx_tmp**2 + yy_tmp**2)
-    ur = (xx_tmp * ux + yy_tmp * uy + zz_tmp * uz ) / R
-    utheta = - (zz_tmp * (xx_tmp * ux + yy_tmp * uy) - Rxy ** 2 * uz) / (R **2 * Rxy)
+    R = np.sqrt(xx_tmp ** 2 + yy_tmp ** 2 + zz_tmp ** 2)
+    Rxy = np.sqrt(xx_tmp ** 2 + yy_tmp ** 2)
+    ur = (xx_tmp * ux + yy_tmp * uy + zz_tmp * uz) / R
+    utheta = - (zz_tmp * (xx_tmp * ux + yy_tmp * uy) - Rxy ** 2 * uz) / (R ** 2 * Rxy)
     uphi = (yy_tmp * ux - xx_tmp * uy) / (Rxy ** 2)
     return ur, utheta, uphi
+
 
 def sph2cart(r, theta, phi, xc=0, yc=0, zc=0):
     """
@@ -8604,6 +9489,215 @@ def sph2cart(r, theta, phi, xc=0, yc=0, zc=0):
     y = r * np.sin(theta) * np.sin(phi) + yc
     z = r * np.cos(theta) + zc
     return x, y, z
+
+
+def pol2cart_udata(r, theta, udata_pol, x0=0, y0=0):
+    """
+    Transformation: Polar coord to Cartesian coord (r, phi, (ur, uphi)) -> (x, y, (ux, uy))
+    ... Returns polar coordiantes AND velocity field in the standard basis
+
+    Parameters
+    ----------
+    r
+    theta
+    udata_pol
+
+    Returns
+    -------
+
+    """
+    x = r * np.cos(theta) + x0
+    y = r * np.sin(theta) + y0
+
+    if udata_pol.shape[1:] == r.shape:
+        udata = np.empty_like(udata_pol)
+        udata[0, ...] = udata_pol[0, ...] * np.cos(theta) - udata_pol[1, ...] * np.sin(theta)
+        udata[1, ...] = udata_pol[0, ...] * np.sin(theta) + udata_pol[1, ...] * np.cos(theta)
+
+    else:
+        udata_pol = fix_udata_shape(udata_pol)
+        udata = np.empty_like(udata_pol)
+        for t in range(udata_pol.shape[-1]):
+            udata[0, ..., t] = udata_pol[0, ..., t] * np.cos(theta) - udata_pol[1, ..., t] * np.sin(theta)
+            udata[1, ..., t] = udata_pol[0, ..., t] * np.sin(theta) + udata_pol[1, ..., t] * np.cos(theta)
+    return x, y, udata
+
+
+def cart2cyl(x, y, z):
+    """
+    Transformation: cartesian to cylindrical coord
+    z = z
+    y = rho sin phi
+    x = rho cos phi
+
+    Parameters
+    ----------
+    x
+    y
+    z
+
+    Returns
+    -------
+    rho, phi, z
+
+    """
+    rho = np.sqrt(x ** 2 + y ** 2)
+    phi = np.arctan2(y, x)
+    return rho, phi, z
+
+def cyl2cart(rho, phi, z, x0=0, y0=0):
+    """
+    Transformation from cylindrical to cartesian coords
+    Parameters
+    ----------
+    rho
+    phi
+    z
+    x0
+    y0
+
+    Returns
+    -------
+
+    """
+    x = rho * np.cos(phi) + x0
+    y = rho * np.sin(phi) + y0
+    return x, y, z
+
+
+def cart2cyl_2d(xx, yy, a=0, b=0, x0=None, signed=False):
+    """
+    Cartesian-to-Cylindrical coordinate transformation is a mapping between R3 and R3.
+    Axisymmetry makes a number of necessary variables to 2 from 3.
+    This function transforms (x, y) to (z, rho)
+    ... The axis of symmetry is defined by y = a*x + b
+    ... If a=b=0, z=x, rho=y
+
+    """
+
+    def get_dst_from_pt_to_line(x0, y0, a, b, c, signed=False):
+        """
+        Returns a distance between a pt and a line
+
+        Eq of a line: ax + by + c = 0
+        Point is at (x0, y0)
+        Parameters
+        ----------
+        x
+        y
+        a
+        b
+        c
+
+        Returns
+        -------
+
+        """
+        if not signed:
+            d = np.abs((a * x0 + b * y0 + c)) / np.sqrt(a ** 2 + b ** 2)
+        else:
+            d = (a * x0 + b * y0 + c) / np.sqrt(a ** 2 + b ** 2)
+        return d
+
+    def get_pt_projected_onto_line(x0, y0, a, b, c):
+        """
+        Assume a line and a point, and project the point onto the line.
+        ... In other words, draw a circle with a radius (x0, y0) with d which is a distance between the pt and the line.
+            Then, this function returns the intersection of the circle with the line.
+        ... Eq of a line: ax + by + c = 0
+            Point is at (x0, y0)
+
+        Parameters
+        ----------
+        x0
+        y0
+        a
+        b
+        c
+
+        Returns
+        -------
+
+        """
+        d = get_dst_from_pt_to_line(x0, y0, a, b, c, signed=True)
+        # theta = np.arctan2(-a, b)
+        # x1 = x0 - d * np.cos(theta)
+        # y1 = y0 + d * np.sin(theta)
+
+        x1 = x0 - a * d / np.sqrt(a ** 2 + b ** 2)
+        y1 = y0 - b * d / np.sqrt(a ** 2 + b ** 2)
+
+        return x1, y1
+
+    def dot(X, Y, axis=None):
+        '''Calculate the dot product of two arrays of vectors.
+
+        '''
+        X, Y = np.asarray(X), np.asarray(Y)
+        if axis is None:
+            return (X * Y).sum(-1)
+        elif axis is not None:
+            dimX = len(X.shape)
+            dimY = len(Y.shape)
+            if not (dimX == 1 or dimY == 1):
+                raise ValueError('At least ne of the input vectors must be 1D!')
+            elif dimX == 1 and dimY != 1:
+                tmp = X
+                X = Y
+                Y = tmp
+            else:
+                pass
+
+            dummy = X[..., np.newaxis]
+            dummy = np.swapaxes(dummy, axis, -1)
+            dp = np.dot(dummy, Y)
+            # Get rid of the axis along which dot product was computed
+            dp_sqd = np.squeeze(dp, axis=axis)
+            return dp_sqd
+
+    xmin, xmax = np.nanmin(xx), np.nanmax(xx)
+
+    if x0 is None:
+        x0 = (xmax + xmin) / 2.
+    if np.isinf(a):
+        a = 10 ** 8
+    y0 = a * x0 + b
+
+    R = np.stack((xx, yy), axis=2)
+    alpha = np.asarray([1, a]) / np.sqrt(1 + a ** 2)
+    beta = np.asarray([-a, 1]) / np.sqrt(1 + a ** 2)
+    rrho = get_dst_from_pt_to_line(xx, yy, a, -1, b, signed=signed)
+
+    if x0 is not None:
+        x1, y1 = get_pt_projected_onto_line(0, 0, a, -1, b)
+        r1 = np.asarray([x1 - x0, y1 - y0])
+        z_offset = np.sqrt((x0 - x1) ** 2 + (y0 - y1) ** 2)
+        if dot(r1, alpha) < 0:
+            z_offset *= -1
+    else:
+        z_offset = 0
+    zz = dot(R, alpha) + z_offset
+
+    return zz, rrho
+
+
+def cart2cyl_2d_udata(udata, xx, yy, a=0, b=0, x0=None, signed=False):
+    """
+    Convert udata in a cylindrical basis
+    ... the symmetrical axis is defined by y=a*x+b
+    """
+    udata_cyl = np.empty_like(udata)
+
+    R = np.stack((xx, yy), axis=2)
+    alpha = np.asarray([1, a]) / np.sqrt(1 + a ** 2)
+    beta = np.asarray([-a, 1]) / np.sqrt(1 + a ** 2)
+
+    theta = np.arctan2(a, 1)
+    udata_cyl[0, ...] = udata[0, ...] * np.cos(theta) + udata[1, ...] * np.sin(theta)
+    udata_cyl[1, ...] = udata[0, ...] * np.sin(theta) - udata[1, ...] * np.cos(theta)
+
+    return udata_cyl
+
 
 def natural_sort(arr):
     """
@@ -8669,6 +9763,30 @@ def find_nearest(array, value, option='normal'):
         idx = (np.abs(array - value)).argmin()
         return idx, array[idx]
 
+def low_pass_filter(data, fc, fs, order=5):
+    """
+    Apply low-pass filter to a 1D data (signal)
+    ... the signal must be sampled evenly
+
+    Parameters
+    ----------
+    data: 1d array-like
+    fc: float, cutoff frequency
+    fs: float, sampling frequency of data
+
+    Returns
+    -------
+    filtered: 1d array, low-pass filtered signal
+
+    """
+    if fc > fs/2:
+        print('low_pass_filter: cutoff freq must be smaller than a half of the sampling frequency')
+
+    w = fc / (fs / 2)  # Normalize the cut-offfrequency
+
+    b, a = signal.butter(order, w, 'low')
+    filtered = signal.filtfilt(b, a, data) #Butterworth digital filter
+    return filtered
 
 def get_running_avg_1d(x, t, notebook=True):
     """
@@ -8790,7 +9908,7 @@ def get_phase_average(x, period_ind=None,
 
     if freq is not None and period_ind is None:
         time, x = np.asarray(time), np.asarray(x)
-        time_mod = time % (1./freq)
+        time_mod = time % (1. / freq)
 
         period = 1. / freq
         dt = period / nbins
@@ -8858,6 +9976,33 @@ def write_hdf5_dict(filename, data_dict, overwrite=False, verbose=True):
     if verbose:
         print('Data was successfully saved as ' + filename)
 
+def read_simple_hdf5(datapath):
+    """
+    Returns a dictionary of data in a hdf5
+    ... The hdf5 file must have a simple structure.
+        ... /DataA
+        ... /DataB
+        ... /DataB
+    ... The returned dictionary has a structure like following.
+        datadit['DataA'] = contents of DataA
+        datadit['DataB'] = contents of DataB ...
+
+    Parameters
+    ----------
+    datapath
+
+    Returns
+    -------
+    datadict
+
+    """
+    datadict = {}
+    with h5py.File(datapath, 'r') as data:
+        keys = list(data.keys())
+        for key in keys:
+            datadict[key] = data[key][...]
+        print('Keys of the returning dictionary: ', keys)
+    return datadict
 
 def convert_dat2h5files(dpath, savedir=None, verbose=False, overwrite=True, start=0):
     """
@@ -8930,6 +10075,7 @@ def get_udata_dim(udatapath):
         shape = f['ux'].shape
     return shape
 
+
 def suggest_udata_dim2load(dpath, p=1., n=5, show=True, return_tuple=False):
     """
     Returns a dictionary of inds = {"x0": x0, "x1": x1, "y0": y0, "y1": y1, "z0": z0, "z1": z1}
@@ -8960,31 +10106,40 @@ def suggest_udata_dim2load(dpath, p=1., n=5, show=True, return_tuple=False):
     -------
 
     """
-    height, width, depth, duration = get_udata_dim(dpath)
+    try:
+        height, width, depth, duration = get_udata_dim(dpath)
+        dim = 3
+    except:
+        height, width, duration = get_udata_dim(dpath)
+        dim = 2
+
     inc = int(duration / n)
     # fractional number of nans
     nx = count_nans_along_axis(dpath, axis='x', inc=inc)
     ny = count_nans_along_axis(dpath, axis='y', inc=inc)
-    nz = count_nans_along_axis(dpath, axis='z', inc=inc)
+    lx, ly = len(nx), len(ny)
 
-    lx, ly, lz = len(nx), len(ny), len(nz)
+    if dim == 3:
+        nz = count_nans_along_axis(dpath, axis='z', inc=inc)
+        lz = len(nz)
+        z0, _ = find_nearest(nz[:int(lz / 2)], (np.nanmin(nz) + np.nanmax(nz)) / 2. * p)
+        z1, _ = find_nearest(nz[int(lz / 2):], (np.nanmin(nz) + np.nanmax(nz)) / 2. * p)
+        z1 += int(lz / 2)
+    else:
+        z0, z1 = 0, None
 
-    x0, _ = find_nearest(nx[:int(lx/2)], (np.nanmin(nx) + np.nanmax(nx)) / 2. * p )
-    x1, _ = find_nearest(nx[int(lx/2):], (np.nanmin(nx) + np.nanmax(nx)) / 2. * p )
-    y0, _ = find_nearest(ny[:int(ly/2)], (np.nanmin(ny) + np.nanmax(ny)) / 2. * p )
-    y1, _ = find_nearest(ny[int(ly/2):], (np.nanmin(ny) + np.nanmax(ny)) / 2. * p )
-    z0, _ = find_nearest(nz[:int(lz/2)], (np.nanmin(nz) + np.nanmax(nz)) / 2. * p )
-    z1, _ = find_nearest(nz[int(lz/2):], (np.nanmin(nz) + np.nanmax(nz)) / 2. * p )
+    x0, _ = find_nearest(nx[:int(lx / 2)], (np.nanmin(nx) + np.nanmax(nx)) / 2. * p)
+    x1, _ = find_nearest(nx[int(lx / 2):], (np.nanmin(nx) + np.nanmax(nx)) / 2. * p)
+    y0, _ = find_nearest(ny[:int(ly / 2)], (np.nanmin(ny) + np.nanmax(ny)) / 2. * p)
+    y1, _ = find_nearest(ny[int(ly / 2):], (np.nanmin(ny) + np.nanmax(ny)) / 2. * p)
 
-    x1 += int(lx/2)
-    y1 += int(ly/2)
-    z1 += int(lz/2)
+    x1 += int(lx / 2)
+    y1 += int(ly / 2)
 
     if show:
         import tflow.graph as graph
         fig, ax = graph.plot(nx, label='x', subplot=121)
         fig, ax = graph.plot(ny, label='y', subplot=121)
-        fig, ax = graph.plot(nz, label='z', subplot=121)
 
         graph.axvline(ax, x=x0, color='C0')
         graph.axvline(ax, x=x1, color='C0')
@@ -8992,25 +10147,37 @@ def suggest_udata_dim2load(dpath, p=1., n=5, show=True, return_tuple=False):
         graph.axvline(ax, x=y0, color='C1')
         graph.axvline(ax, x=y1, color='C1')
 
-        graph.axvline(ax, x=z0, color='C2')
-        graph.axvline(ax, x=z1, color='C2')
+        if dim == 3:
+            fig, ax = graph.plot(nz, label='z', subplot=121)
+            graph.axvline(ax, x=z0, color='C2')
+            graph.axvline(ax, x=z1, color='C2')
+
         ax.legend()
 
         nx_new = count_nans_along_axis(dpath, axis='x', inc=inc, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
         ny_new = count_nans_along_axis(dpath, axis='y', inc=inc, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
-        nz_new = count_nans_along_axis(dpath, axis='z', inc=inc, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
 
         fig, ax2 = graph.plot(nx_new, label='x', subplot=122)
         fig, ax2 = graph.plot(ny_new, label='y', subplot=122)
-        fig, ax2 = graph.plot(nz_new, label='z', subplot=122, figsize=(17, 8))
+
+        if dim == 3:
+            nz_new = count_nans_along_axis(dpath, axis='z', inc=inc, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
+            fig, ax2 = graph.plot(nz_new, label='z', subplot=122, figsize=(17, 8))
+
         ax.legend()
-    print('... Suggested volume (x0, x1, y0, y1, z0, z1) = (%d, %d, %d, %d, %d, %d)' % (x0, x1, y0, y1, z0, z1))
+
+    if dim == 3:
+        print('... Suggested volume (x0, x1, y0, y1, z0, z1) = (%d, %d, %d, %d, %d, %d)' % (x0, x1, y0, y1, z0, z1))
+    else:
+        print('... Suggested volume (x0, x1, y0, y1, z0, z1) = (%d, %d, %d, %d, %d, None)' % (x0, x1, y0, y1, z0))
+
     if not return_tuple:
         # Return x0,... in a dictionary- one can pass this to get_udata_from_path(..., **ind_dict)
         ind_dict = {"x0": x0, "x1": x1, "y0": y0, "y1": y1, "z0": z0, "z1": z1}
         return ind_dict
     else:
         return x0, x1, y0, y1, z0, z1
+
 
 def find_nearest(array, value, option='normal'):
     """
@@ -9039,8 +10206,9 @@ def find_nearest(array, value, option='normal'):
         idx = np.nanargmin(np.abs(array_new - value))
         return idx, array_new[idx]
     else:
-        idx = (np.abs(array-value)).argmin()
+        idx = (np.abs(array - value)).argmin()
         return idx, array[idx]
+
 
 # functions to derive major quantities of turbulence from udata and save it into a hdf5 format
 def derive_all(udata, dx, dy, savepath, udatapath='none', **kwargs):
@@ -9453,3 +10621,998 @@ def get_time_indices_for_selfsimilar_movie(time, t0, dt, exponent=-1, nmax=None)
         t_ind, _ = find_nearest(time, t0 + tau)
         t_indices.append(t_ind)
     return np.asarray(t_indices)
+
+
+# Potential flow theory
+## APPROACH1: Compute the contour integral between point A (reference) and B (observing pt)
+# 2D flows
+def compute_streamfunction_values(udata, xx, yy,
+                                  x, y,
+                                  xref=0, yref=0,
+                                  contours=None, nctrs=4, nsample=100,
+                                  nkinks=5, noise=None,
+                                  return_contours=False):
+    """
+    Returns a streamfunction value at a point (x, y) for 2D incompressible flows
+    with respect to the value at the reference (xref, yref)
+
+    ... Computes a contour integral \int_A^B udy - vdx
+    ... Requires bezier module
+
+    Parameters
+    ----------
+    udata
+    xx
+    yy
+    x
+    y
+    xref, float
+    ... x coordinate of the reference point
+    yref, float
+    ... y coordinate of the reference point
+    contours: 3d array with shape (number of contours, number of points on each contour, 2), default: None
+        E.g. (x, y) on the 3rd contour is stored as (contours[2, :, 0], contours[2, :, 1])
+        ... By default, it generates nctrs contours connecting (xref, yref) and (x, y)
+            It generates non-selfintersecting, smooth conours. It could be non-smooth if (xref, yref) == (x, y)
+    nctrs: int, must be greater than or equal to 1
+        ... number of contours used to compute the streamfunction value at the given point
+        ... the streamfunction values could be different depending on the contour due to discreteness of data
+            ... divergent field will also result in such a discrepancy
+            udata must be non-divergent in order for the streamfunction to exist
+    nsample: int, default: 100
+        ... number of sampled points on each contour to compute the integral,
+    nkinks: int, must be greater or equal to 2
+        ... this controls how wiggly contours are if the contours were not given by the user
+    noise: array-like with two elements, default: None
+        ... This controls the maximum amplitude of the wiggle.
+    return_contours
+        ... If True, it returns contours used to compute the integral.
+    Returns
+    -------
+    psis: nd array with shape=(nctrs, udata.shape[-1)
+    contours (optional): points on the contours used to compute the streamfunction value
+
+    """
+    udata = fix_udata_shape(udata)
+    dim, duration = udata.shape[0], udata.shape[-1]
+
+    # Initialize
+    psis = np.empty((nctrs, duration))
+    psis[:] = np.nan
+
+    # Warning
+    if dim == 3:
+        raise ValueError(
+            '... Spatially 3D udata is provided. \n'
+            'Potential formation of 3D flows is possible but is out of the scope of this function')
+
+    if contours is None:
+        contours = np.empty((nctrs, nsample, 2))
+        for i in range(nctrs):
+            contours[i, ...] = gen_arb_curves([xref, yref], [x, y], n=nkinks, npts=nsample, noise=noise)
+
+    for i, contour in enumerate(contours):
+        xs, ys = contours[i, :, 0], contours[i, :, 1]
+        dx = np.diff(xs)
+        dy = np.diff(ys)
+        dx, dy = np.append(dx, 0), np.append(dy, 0)
+        dl = np.stack((dx, dy)).T
+
+        contour4int_func = contour[:, [1, 0]]  # y, x
+        for t in range(duration):
+            fs = interpolate_udata_at_instant_of_time(udata, xx, yy, t=t)
+            ux_along_cntr = fs[0](contour4int_func)
+            uy_along_cntr = fs[1](contour4int_func)
+            psi = ux_along_cntr * dl[:, 1] - uy_along_cntr * dl[:, 0]
+            psis[i, t] = np.nanmean(psi) * len(ux_along_cntr)
+
+    if return_contours:
+        contours = np.asarray(contours)
+        return psis, contours
+    else:
+        return psis
+
+
+def compute_streamfunction_direct(udata, xx, yy,
+                                  xref=0, yref=0,
+                                  inc=1,
+                                  nctrs=1, nsample=100,
+                                  nkinks=10, noise=None,
+                                  return_sampled_grid=False,
+                                  coordinate_system='cartesian',
+                                  notebook=True):
+    """
+    Returns a streamfunction of a given udata in a ND array by computing
+            \psi = \int_A^B udy - vdx  (cartesian)
+            \psi = \int_A^B \rho uz drho - urho dz  (cyindrical)
+
+    ... udata must be non-diversiont
+
+    Parameters
+    ----------
+    udata
+    xx: 2d array, a positional grid (x)
+        ... If coordinate_system == 'cylindrical', this will be interpreted as a grid of z
+    yy: 2d array, a positional grid (y)
+        ... If coordinate_system == 'cylindrical', this will be interpreted as a grid of rho=np.sqrt(x**2 + y**2)
+    xref: float, default: 0
+        ... reference point of a streamfunction
+        ... The contour integral will be calculated between (xref, yref) and (xp, yp)
+            (xp, yp) will be sampled from the given positinal grid.
+    yref: float, default: 0
+        ... reference point of a streamfunction
+        ... The contour integral will be calculated between (xref, yref) and (xp, yp)
+            (xp, yp) will be sampled from the given positinal grid.
+    inc: int, sampling frequency of (xp, yp) out of the positional grid (xx and yy)
+    nctrs: int, must be greater than or equal to 1
+        ... number of contours used to compute the streamfunction value at the given point
+        ... the streamfunction values could be different depending on the contour due to discreteness of data
+            ... divergent field will also result in such a discrepancy
+            udata must be non-divergent in order for the streamfunction to exist
+    nsample: int, default: 100
+        ... number of sampled points on each contour to compute the integral,
+    nkinks: int, must be greater or equal to 2
+        ... this controls how wiggly contours are if the contours were not given by the user
+    noise: array-like with two elements, default: None
+        ... This controls the maximum amplitude of the wiggle.
+    return_sampled_grid: bool, default: False
+        ... If True, this will return positional grids (xx_s, yy_s) used to sample the streamfunction values.
+            This becomes handy if inc is not equal to 1. You can always plot the result as ax.pcolormesh(xx_s, yy_s, psi)
+    coordinate_system: str, default: 'cartesian'
+        ... the form of the contour integral to compute the stream function depends on the coordinate system
+            psi = \int u dy - v dx (Cartesian, 2D)
+            psi = \int \rho (u_z drho - u_rho dz) (Cylindrical, 3D-axisymmetric)
+    notebook: bool, default: True
+        ... If True, it uses tqdm.tqdm_notebook for a progress bar.
+            (a natural choise if you run the code on Jupyter notebooks)
+        ... If False, it uses tqdm.tqdm for a progress bar.
+
+    Returns
+    -------
+    psi_master, psi_err_master, xx_sampled (Optional), yy_sampled (Optional)
+    """
+    if coordinate_system == 'cylindrical':
+        print('compute_streamfunction_direct():')
+        print('... coordinate_system is cylindrical')
+        print('... udata=(uz, urho), (xx, yy) will be interpreted as (zz, rrho)')
+        print('... (xp, yp, xref, yref) will be interpreted as (zp, rhop, zref, rhoref)')
+        print('... yy = rrho  must be in an ascending order. (1) you must be passing rho = sqrt(xx **2 + yy**2)\n'
+              'therefore, rho must be greater or equal to 0 !!!')
+
+
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+    udata = fix_udata_shape(udata)
+    dim, height, width, duration = udata.shape
+    x1d, y1d = xx[0, ::inc], yy[::inc, 0]
+    xx_sampled, yy_sampled = np.meshgrid(x1d, y1d)
+
+    psi_shape = (len(y1d), len(x1d), duration)
+
+    psi_master = np.empty(psi_shape)
+    psi_err_master = np.empty(psi_shape)
+
+
+
+    for t in range(duration):
+        for i, yp in enumerate(tqdm(y1d)):
+            for j, xp in enumerate(x1d):
+                if coordinate_system == 'cartesian':
+                    psis, contours = compute_streamfunction_values(udata, xx, yy,
+                                                                   xp, yp, xref, yref,
+                                                                   nkinks=nkinks, noise=noise,
+                                                                   nctrs=nctrs, nsample=nsample,
+                                                                   return_contours=True)
+                elif coordinate_system == 'cylindrical':
+                    psis, contours = compute_streamfunction_values_cylindrical(udata, xx, yy,
+                                                                   xp, yp, xref, yref,
+                                                                   nkinks=nkinks, noise=noise,
+                                                                   nctrs=nctrs, nsample=nsample,
+                                                                   return_contours=True)
+                psi_master[i, j, t] = np.nanmean(psis)
+                psi_err_master[i, j, t] = np.nanstd(psis)
+
+    if notebook:
+        from tqdm import tqdm as tqdm
+    if return_sampled_grid:
+        return psi_master, psi_err_master, xx_sampled, yy_sampled
+    else:
+        return psi_master, psi_err_master
+
+# 3D axisymmetric_flows
+def compute_streamfunction_values_cylindrical(udata_cylindrical, zz, rrho,
+                                  z, rho,
+                                  zref=0, rhoref=0,
+                                  contours=None, nctrs=4, nsample=100,
+                                  nkinks=10, noise=None,
+                                  return_contours=False):
+    """
+    Returns a streamfunction value at a point (x, y) for 3D, axisymmetric flows
+    with respect to the value at the reference (xref, yref)
+
+    ... Computes a contour integral \int_A^B rho (u_z drho - u_rho dz)
+    ... Requires bezier module
+
+    Parameters
+    ----------
+    udata_cylindrical: nd array, (u_z, u_rho)
+    zz
+    rrho
+    z
+    rho
+    zref, float
+    rhoref, float
+    contours: 3d array with shape (number of contours, number of points on each contour, 2), default: None
+        E.g. (x, y) on the 3rd contour is stored as (contours[2, :, 0], contours[2, :, 1])
+        ... By default, it generates nctrs contours connecting (xref, yref) and (x, y)
+            It generates non-selfintersecting, smooth conours. It could be non-smooth if (xref, yref) == (x, y)
+    nctrs: int, must be greater than or equal to 1
+        ... number of contours used to compute the streamfunction value at the given point
+        ... the streamfunction values could be different depending on the contour due to discreteness of data
+            ... divergent field will also result in such a discrepancy
+            udata must be non-divergent in order for the streamfunction to exist
+    nsample: int, default: 100
+        ... number of sampled points on each contour to compute the integral,
+    nkinks: int, must be greater or equal to 2
+        ... this controls how wiggly contours are if the contours were not given by the user
+    noise: array-like with two elements, default: None
+        ... This controls the maximum amplitude of the wiggle.
+    return_contours
+        ... If True, it returns contours used to compute the integral.
+
+    Returns
+    -------
+    psis: nd array with shape=(nctrs, udata.shape[-1)
+    contours (optional): points on the contours used to compute the streamfunction value
+
+    """
+    udata = fix_udata_shape(udata_cylindrical)
+    dim, duration = udata.shape[0], udata.shape[-1]
+
+    # Initialize
+    psis = np.empty((nctrs, duration))
+    psis[:] = np.nan
+
+    # Warning
+    if dim == 3:
+        raise ValueError(
+            '... Spatially 3D udata is provided. \n'
+            'Potential formation of 3D flows is possible but is out of the scope of this function')
+
+    if contours is None:
+        contours = np.empty((nctrs, nsample, 2))
+        for i in range(nctrs):
+            contours[i, ...] = gen_arb_curves([zref, rhoref], [z, rho], n=nkinks, npts=nsample, noise=noise)
+
+    for i, contour in enumerate(contours):
+        zs, rhos = contours[i, :, 0], contours[i, :, 1]
+        dz = np.diff(zs)
+        drho = np.diff(rhos)
+        dz, drho = np.append(dz, 0), np.append(drho, 0) # the destination of the contour will not be counted to the sum
+        dl = np.stack((dz, drho)).T
+
+        contour4int_func = contour[:, [1, 0]]  # y, x
+        for t in range(duration):
+            fs = interpolate_udata_at_instant_of_time(udata_cylindrical, zz, rrho, t=t)
+            uz_along_cntr = fs[0](contour4int_func)
+            urho_along_cntr = fs[1](contour4int_func)
+            psi = rhos * (uz_along_cntr * dl[:, 1] - urho_along_cntr * dl[:, 0])
+            psis[i, t] = np.nanmean(psi) * len(uz_along_cntr)
+
+    if return_contours:
+        contours = np.asarray(contours) # in (z, rho)
+        return psis, contours
+    else:
+        return psis
+
+
+def psi2udata(psi,
+              dx=1, dy=1,
+              xy_orientations=np.asarray([1, 1]),
+              xx=None, yy=None,
+              coordinate_system='cartesian'):
+    """
+    psi is streamfunction (psi) on u-grid,
+    returns v = dq/dx and u= -dq/dy, on U-grid
+
+    Source: https://anaconda.org/bfiedler/n090_streamfunctionvorticity2d/notebook?version=2018.07.28.0933
+
+    Parameters
+    ----------
+    psi
+    dx
+    dy
+
+    Returns
+    -------
+
+    """
+    # u = 0. * psi
+    # v = 0. * psi
+    #
+    # u[1:-1, 1:-1] = (psi[2:, 1:-1] - psi[:-2, 1:-1]) / (2 * dy)
+    # u[0, 1:-1] = psi[1, 1:-1] / dy
+    # u[-1, 1:-1] = -psi[-2, 1:-1] / dy
+    #
+    # v[1:-1, 1:-1] = -(psi[1:-1, 2:] - psi[1:-1, :-2]) / (2 * dx)
+    # v[1:-1, 0] = -psi[1:-1, 1] / dx
+    # v[1:-1, -1] = +psi[1:-1, -2] / dx
+
+    if coordinate_system == 'cylindrical':
+        print('... psi=psi(z, rho)')
+        print('... Note that Caucy-Riemann relation depends on the cooridnate system')
+        print('... passing the arguments to psi2udata_cylindrical')
+    elif coordinate_system=='spherical':
+        print('... not implemented yet')
+    else:
+        if xx is not None and yy is not None:
+            xy_orientations = get_jacobian_xyz_ijk(xx, yy)
+            dx, dy = get_grid_spacing(xx, yy)
+
+        u = np.gradient(psi, dy, axis=0) * xy_orientations[0]
+        v = -np.gradient(psi, dx, axis=1) * xy_orientations[1]
+
+        udata = np.stack((u, v))
+
+        return udata
+
+def psi2udata_cylindrical(psi,
+              rrho=None, zz=None,
+              return_cartesian=True):
+    """
+    psi is streamfunction (psi) on u-grid,
+    returns v = dq/dx and u= -dq/dy, on U-grid
+
+    Source: https://anaconda.org/bfiedler/n090_streamfunctionvorticity2d/notebook?version=2018.07.28.0933
+
+    Parameters
+    ----------
+    psi
+    dx
+    dy
+
+    Returns
+    -------
+
+    """
+
+    urho = - 1. / rrho * np.gradient(psi, zz[0, :], axis=1)
+    uz = 1. / rrho * np.gradient(psi, rrho[:, 0], axis=0)
+    udata_cylindrical = np.stack((uz, urho))
+
+
+    # udata_cylindrical = (uz, urho)
+    ## now, we redefine the z-axis as the x-axis, and the rho axis as y as we initially did.
+    ux = uz
+    uy = copy.deepcopy(urho)
+    drho = np.gradient(rrho[:, 0]) # If drho < 0, y<0. i.e. If drho < 0, dy = -drho
+    uy[drho < 0] *= -1 # this w
+    udata_cartesian = np.stack((ux, uy))
+
+    if return_cartesian:
+        return udata_cartesian
+    else:
+        return udata_cylindrical
+
+# Sample stream functions and udata
+def get_streamfunction_about_a_rankine_vortex(xx, yy, x0=0, y0=0, gamma=1., a=1.):
+    """
+    Returns a stream function about a lifting cylinder
+
+    Source: http://www-mdp.eng.cam.ac.uk/web/library/enginfo/aerothermal_dvd_only/aero/fprops/poten/node38.html
+
+    Parameters
+    ----------
+    xx
+    yy
+    x0
+    y0
+    u
+    a
+    beta
+
+    Returns
+    -------
+
+    """
+    rr, theta = cart2pol(xx-x0, yy-y0)
+    psi = np.empty_like(rr)
+
+    inside_core = rr <= a
+    psi[inside_core] = - gamma / (4 * np.pi * a ** 2) * rr[inside_core] ** 2
+    psi[~inside_core] = - gamma * a ** 2 / (4 * np.pi * a ** 2) * (1 + 2 * np.log(rr[~inside_core] / a))
+    return psi
+
+def get_streamfunction_about_a_lifting_cylinder(xx, yy, xc=0, yc=0, u=1, a=1, beta=-np.pi/4):
+    """
+    Returns a stream function about a lifting cylinder
+
+    Source: http://www-mdp.eng.cam.ac.uk/web/library/enginfo/aerothermal_dvd_only/aero/fprops/poten/node38.html
+
+    Parameters
+    ----------
+    xx
+    yy
+    x0
+    y0
+    u
+    a
+    beta
+
+    Returns
+    -------
+
+    """
+    rr, theta = cart2pol(xx-xc, yy-yc)
+    gamma = 4 * np.pi * u * a * np.sin(beta)
+    psi = u * rr * (1 - a ** 2 / rr ** 2) * np.sin(theta) - gamma / 2 / np.pi * np.log(rr)
+    return psi
+
+def get_flow_about_a_lifting_cylinder(xx, yy, xc=0, yc=0, u=1, a=1, beta=-np.pi/4, return_in_xy_basis=True):
+    """
+    Returns udata (ux, uy)
+    Parameters
+    ----------
+    xx
+    yy
+    xc
+    yc
+    U
+    R
+    return_in_xy_basis
+
+    Returns
+    -------
+    udata
+
+    """
+    psi = get_streamfunction_about_a_lifting_cylinder(xx, yy, xc=xc, yc=yc, u=u, a=a, beta=beta)
+
+    dx, dy = get_grid_spacing(xx, yy)
+    udata = psi2udata(psi, dx, dy)
+    udata_pol = cart2pol_udata(xx, yy, udata)
+
+    if return_in_xy_basis:
+        return udata
+    else:
+        return udata_pol
+
+def get_flow_past_a_circular_cylinder(xx, yy, xc=0, yc=0, u=1., a=1., return_in_xy_basis=True):
+    """
+    Returns udata (ux, uy) of a flow past a circular cylinder in Stokes limit
+
+    Parameters
+    ----------
+    xx
+    yy
+    xc
+    yc
+    U
+    a
+    return_in_xy_basis
+
+    Returns
+    -------
+    udata
+
+    """
+    k = u * a ** 2
+
+    rr, ttheta = cart2pol(xx - xc, yy - yc)
+
+    ur = np.cos(ttheta) * (u - k / rr ** 2)
+    utheta = -np.sin(ttheta) * (u + k / rr ** 2)
+    udata_pol = np.stack((ur, utheta))
+    xx, yy, udata = pol2cart_udata(rr, ttheta, udata_pol, x0=xc, y0=yc)
+
+    if return_in_xy_basis:
+        return udata
+    else:
+        return udata_pol
+
+
+
+def gen_bezier_curve(pts, n=100):
+    """
+
+    Generates a Benzier curve using n points
+    ... pts.shape = (n, 2)
+    ... pts[0] = x, pts[1] = y
+
+    REQUIRES berzier module
+
+    Parameters
+    ----------
+    pts: 2d array,
+        ... points used to draw bezier curves. Shape: (number of points, 2)
+    n: int
+        ... number of sampled points on the obtained bezier curve
+
+    Returns
+    -------
+    bezier_curve: 2d array, shape=(n, 2)
+        ... (x, y) = (bezier_curve[:, 0], bezier_curve[:, 1])
+
+    """
+    nodes = np.asarray(pts).T
+    dim, npts = nodes.shape
+
+    curve1 = bezier.Curve(nodes, degree=npts - 1)
+
+    s = np.linspace(0, 1, n)
+    bezier_curve = curve1.evaluate_multi(s).T
+    return bezier_curve
+
+
+def gen_arb_curves(pt1, pt2, n=5, npts=100, noise=None, allow_self_intersection=False,
+                   n_attempt=100):
+    """
+    Generates n arbitrary curves connecting pt1 and pt2
+    ... the obtained curve is not self-intersecting by default
+        ... this can be changed via "allow_self_intersection"
+
+    How it works:
+    1. Sample equally-spaced points on the straight line connecting pt1 and pt2
+    2. Add noise to each sampled points
+    3. Draw a Benzier curve with disturbed points (this makes the curve smooth)
+    4. If Step 3 results a self-intersecting curve, repeat 1-3 untile the curve is not self-intersecting
+    5. Repeat 1-4 until you obtain n curves
+
+
+    Parameters
+    ----------
+    pt1: 1d array-like, e.g.- [0., 0.,]
+    pt2: 1d array-like, e.g.- [1., 1.,]
+        ... pt1 and pt2 could be the same coordinate but one might need to adjust "noise" to obtain a desired curve
+            However, this would make the curve non-smooth at pt1
+    n: int, MUST be greater than or equal to 2
+        ... number of points used to construct a Benzier curve
+        ... The higher n is, the more wiggly/complex a curve becomes
+        ... n=2: Line
+            n=3: 1 kink
+            n=4: 2 kinks ...
+    npts: int
+        ... number of sampled points on the output curves
+            This essentially defines the number of kinks on the curve
+    noise:
+        ... noise is added to a straight lig
+    allow_self_intersection
+    n_attempt
+
+    Returns
+    -------
+    bezier_curve
+    """
+
+    def check_if_curve_self_intersects(pts, inc=1, verbose=False):
+        def ccw(A, B, C):
+            return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (C[0] - A[0])
+
+        def intersect(A, B, C, D):
+            return ccw(A, C, D) != ccw(B, C, D) and ccw(A, B, C) != ccw(A, B, D)
+
+        pts = np.asarray(pts)
+        n, dim = pts.shape
+
+        self_intersects = False
+        for i in range(0, n - inc, inc):
+            if self_intersects:
+                break
+            A = pts[i, :]
+            B = pts[i + inc, :]
+            for j in range(0, n - inc, inc):
+                if not j in list(range(i - inc, i + inc + 1)):
+                    C = pts[j, :]
+                    D = pts[j + inc, :]
+
+                    self_intersects = intersect(A, B, C, D)
+                    if self_intersects:
+                        if verbose:
+                            print(i, j, list(range(i - inc, i + inc)), self_intersects)
+                        break
+        return self_intersects
+
+    if n < 2:
+        raise ValueError('gen_arb_curves(): npts must be greater than or equal to 2!')
+
+    pt1, pt2 = np.asarray(pt1), np.asarray(pt2)
+
+    if noise is None:
+        # noise = np.abs((pt2 - pt1) / n - 1)
+        amp = np.sqrt(np.nansum((pt2 - pt1) ** 2)) / 2
+        noise = [amp, amp]
+
+    self_intersecting = True
+    counter = 0
+    while self_intersecting and counter < n_attempt:
+        nodes = np.empty((n, 2))
+        nodes[:, 0] = np.linspace(pt1[0], pt2[0], n)
+        nodes[:, 1] = np.linspace(pt1[1], pt2[1], n)
+        nodes[1:-1, 0] += (np.random.random(n - 2) - 0.5) * noise[0]
+        nodes[1:-1, 1] += (np.random.random(n - 2) - 0.5) * noise[1]
+
+        bezier_curve = gen_bezier_curve(nodes, n=npts)
+
+        counter += 1
+
+        if not allow_self_intersection:
+            # Check if the obtained curve is self-intersecting
+            self_intersecting = check_if_curve_self_intersects(bezier_curve)
+        else:
+            # If you don't care whether the obtained curve is self-intersecting, leave the while-loop
+            break
+    if counter == n_attempt:
+        print('gen_arb_curves(): Non-self-intersecting curve was not obtained with the given parameters after %d trials' % n_attempt)
+        print('... Consider decreasing noise')
+    return bezier_curve
+
+
+def get_streamfunction_hill_spherical_vortex(xx, yy, x0=0, y0=0, u=1, a=1, gamma=None,
+                                             reference_frame='lab',
+                                             return_cylindrical_coords=False):
+    """
+    Returns a streamfunction values for a Hill's spherical vortex in a lab frame
+
+    Source: https://link.springer.com/chapter/10.1007/978-3-319-55164-7_34 (by Emmanuel Branlard, p.413)
+
+    Hill's spherical vortex is an axisymmetric flow. Hence, it is often described in
+
+    Parameters
+    ----------
+    xx: 2d array, positional grid (x)
+    yy: 2d array, positional grid (y)
+    x0: float, default: 0
+        ... center of the spherical vortex is at (x0, y0)
+    y0: float, default: 0
+        ... center of the spherical vortex is at (x0, y0)
+    u: float
+        ... The center of the vortex moves at (-1.5u, 0)
+        ... gamma = 5 * a * u # circulaton of gamma
+    gamma: float, default: None
+        ... if given, u will be overwritten
+    r: float, >0
+        ... radius of the spherical vortex
+
+    Returns
+    -------
+    psi: 2d array, streamfunction
+    """
+    if gamma is not None:
+        u = gamma / 5 / a
+        print('get_streamfunction_hill_spherical_vortex():\n'
+              '... gamma is given. overwriting u to', u)
+
+    psi = np.empty_like(xx)
+
+    # From now on, use the cylindrical coordinates (x, y, z) -> (rho, phi, z)
+    # Input is (x, y). I treat the x as the z axis, and the np.abs(y) as rho.
+    # For axisymmetric flows, phi dependence can be dropped.
+    zz = xx-x0
+    rrho = np.abs(yy-y0)
+
+    # in cylindrical coordinate
+    rrho = np.abs(rrho)
+    rr = np.sqrt(zz ** 2 + rrho ** 2)
+    cond = rr < a
+    psi[cond] = - 3 / 4. * u * rrho[cond] ** 2 * (1 - rr[cond] ** 2 / a ** 2)
+    psi[~cond] = 1/2. * u * rrho[~cond] ** 2 * (1 - a ** 3 / rr[~cond] ** 3 )
+
+    # gamma = 5 * a * u # circulaton of gamma
+    uc = -1.5 * u # velocity at the center of the vortex
+
+    if reference_frame == 'lab':
+        pass
+    elif reference_frame == 'wind':
+        psi = psi - 1/2. * u * rrho ** 2
+        print('ssssere')
+    elif reference_frame == 'vortex':
+        psi = psi - 1/2. * uc * rrho ** 2
+    else:
+        raise ValueError('... Choose reference_frame from [lab, wind, vortex]')
+
+    if return_cylindrical_coords:
+        return psi, zz, rrho
+    else:
+        return psi
+
+
+def get_streamfunction_thin_cored_vring(xx, yy, x0=0, y0=0, gamma=1, R=1,
+                                         reference_frame='lab',
+                                         return_cylindrical_coords=False):
+    zz = xx - x0
+    rrho = np.abs(yy - y0)
+
+    k2 = 4 * rrho * R / (zz ** 2 + (rrho + R) ** 2)
+    k = np.sqrt(k2)
+
+    c1 = special.ellipk(k2)# complete elliptical integral of the first kind
+    c2 = special.ellipe(k2)# complete elliptical integral of the second kind
+
+    psi_cylindrical = gamma / 2 / np.pi * np.sqrt(rrho * R) * ( (2/k - k) * c1 - 2/k * c2 )
+
+    if reference_frame == 'lab':
+        pass
+    elif reference_frame == 'vortex':
+        # a = R / 86 # lamb, Sec.163. At this value, the center of the vortex is at the same speed as the center of the ring.
+        a = R / 4.708751231442116
+        # uc = gamma / (4 * np.pi * R) * np.log(8 * R / a)- 0.25
+        uc = gamma / (4 * np.pi * R) * (np.log(8 * R/a) - 0.25)
+        # uc = 0
+        psi_cylindrical = psi_cylindrical - 1/2. * uc * rrho ** 2
+    else:
+        raise ValueError('... Choose reference_frame from [lab, vortex]')
+
+    if return_cylindrical_coords:
+        return psi_cylindrical, zz, yy-y0
+    else:
+        return psi_cylindrical
+
+
+# APPROACH2: Solve a poisson equation (This will not work in general!)
+def get_streamfunction_poisson_solver(udata,
+                                      omega=None, dx=1., dy=1.,
+                                      xx=None, yy=None, verbose=True):
+    """
+    Computes the stream
+    Parameters
+    ----------
+    udata
+    omega
+    dx
+    dy
+    xx
+    yy
+    verbose
+
+    Returns
+    -------
+
+    """
+    print('get_streamfunction_poisson_solver(): DEPRECIATED. \n'
+          '... It outputs correct results iff the omega=0 at the boundaries.')
+
+    def normalize_positional_grid(xx):
+        xmin, xmax = np.nanmin(xx), np.nanmax(xx)
+        w = xmax - xmin
+        xx_n = (xx - xmin) / w
+        return xx_n
+
+    udata = fix_udata_shape(udata)
+    dim, ny, nx, duration = udata.shape
+
+    # Probably it is healthy to check if the field is non-divergent
+    # dx, dy = get_grid_spacing(xx, yy)
+    # divergence = np.nanmean(div(udata, dx=dx, dy=dy), axis=(0, 1))
+    xx_norm = normalize_positional_grid(xx)
+    yy_norm = normalize_positional_grid(yy)
+
+    # initialization
+    psi = np.empty((ny, nx, duration))
+    # omega_recovered = np.empty((ny, nx, duration)) # debugging purpose
+
+    if xx is not None and yy is not None:
+        dx, dy = get_grid_spacing(xx_norm, yy_norm)
+    if omega is None:
+        if verbose:
+            print('... vorticity is computed using (dx, dy)=(%f, %f)' % (dx, dy))
+            print('... Provide dx, dy if they are not correct')
+            print('... It is also recommended to supply xx, yy to ensure that curl() works')
+        omega = curl(udata, dx=dx, dy=dy, xx=xx_norm, yy=yy_norm)
+    else:
+        if verbose:
+            print('... Solving for psi in \del^2 psi = omega')
+            print('... vorticity is given by the user')
+            print('... (dx, dy)=(%f, %f)' % (dx, dy))
+
+    invlapl = poisson_fft_prep(nx, ny, dx, dy, lapl='discrete')  # lapl='discrete') #lapl='calculus' or lapl='discrete'
+    for t in range(duration):
+        psi[..., t] = poisson_fft(omega[..., t], invlapl)
+        # omega_recovered[..., t] = laplacian(psi[..., t], dx, dy) # For debugging- this should be identical to omega at t=t
+    return psi
+
+
+## Poisson solver (2D)
+def poisson_fft_prep(Nx, Ny, dx, dy, lapl='discrete'):
+    """
+    Returns the coefficients to multiply the vorticity Fourier amplitudes
+
+    Source: https://anaconda.org/bfiedler/n090_streamfunctionvorticity2d/notebook?version=2018.07.28.0933
+
+    Parameters
+    ----------
+    Nx
+    Ny
+    dx
+    dy
+    lapl
+
+    Returns
+    -------
+    invlapl: 2d array
+        ... the coefficents for multiplying the vorticity Fourier amplitudes
+
+    """
+    # returns the coefficients to multiply the vorticity Fourier amplitudes
+    L = dx * (Nx - 1)
+    W = dy * (Ny - 1)
+
+    Ka = np.arange(Nx - 2) + 1  # integer wavenumbers of the sine functions in the x-direction
+    Ma = np.arange(Ny - 2) + 1  # integer wavenumbers of the sine functions in the y-direction
+    ka = Ka * np.pi / L
+    ma = Ma * np.pi / W
+
+    lapl_op = np.zeros((Ny - 2, Nx - 2))
+    if lapl == 'discrete':
+        lapl_op[:] += (2 * np.cos(ka * dx) - 2) / dx ** 2  # add to every row
+    else:  # the calculus Laplacian
+        lapl_op[:] += -ka ** 2
+    lapl_opT = lapl_op.T  # reverse columns and rows
+    if lapl == 'discrete':
+        lapl_opT[:] += (2 * np.cos(ma * dy) - 2) / dy ** 2  # add to every row
+    else:  # the calculus Laplacian
+        lapl_opT[:] += -ma ** 2
+    lapl_op = lapl_opT.T  # reverse columns and rows
+    invlapl = 1. / lapl_op  # the coefficents for multiplying the vorticity Fourier amplitudes
+    return invlapl
+
+
+def poisson_fft(vort, invlapl):
+    """
+    Solves for psi in del^2 psi = vort
+
+    Source: https://anaconda.org/bfiedler/n090_streamfunctionvorticity2d/notebook?version=2018.07.28.0933
+
+    Parameters
+    ----------
+    vort: 2d array
+    invlapl: 2d array
+        ... inverse laplacian operator
+        ... can be obtained from poisson_fft_prep()
+
+    Returns
+    -------
+    psi: 2d array
+    """
+    # solves for psi in del^2 psi = vort
+    cv = vort[1:-1, 1:-1]  # central vorticity
+
+    # convert gridded vorticity to gridded Fourier coefficients A_k,m
+    cvt = fftpack.dst(cv, axis=1, type=1)
+    cvt = fftpack.dst(cvt, axis=0, type=1)
+
+    cpsit = cvt * invlapl  # Calculate B_k,m from A_k,m
+
+    # convert array of Fourier coefficents for psi to gridded central psi
+    cpsit = fftpack.idst(cpsit, axis=0, type=1)  # inverse transform
+    cpsi = fftpack.idst(cpsit, axis=1, type=1)  # inverse transform
+
+    sh = vort.shape
+    psi = np.zeros(sh)  # we need 0 on boundaries, next line fills the center
+    psi[...] = np.nan  # we need 0 on boundaries, next line fills the center
+    psi[1:-1, 1:-1] = cpsi / (4 * (sh[0] - 1) * (sh[1] - 1))  # apply normalization convention of FFT
+    return psi
+
+
+def laplacian(p, dx, dy, il=None, ir=None, jb=None, jt=None):
+    """
+    Returns Laplacian of p, d^2p/dx^2 + d^2/dy^2.
+    If needed, specify how to grab the image of a point outside
+    the domain.  Otherwise, the d^2p/dx^2 or d^2/dy^2 term is not included
+    on the boundary.
+
+    Source: https://anaconda.org/bfiedler/n090_streamfunctionvorticity2d/notebook?version=2018.07.28.0933
+
+    e.g. # Compute vorticity from a stream function
+        laplacian(streamfunction, dx, dy)
+
+
+    Parameters
+    ----------
+    p
+    dx
+    dy
+    il
+    ir
+    jb
+    jt
+
+    Returns
+    -------
+
+    """
+    rdx2 = 1. / (dx * dx)
+    rdy2 = 1. / (dy * dy)
+    lapl = np.zeros(p.shape)
+    lapl[:, 1:-1] = rdx2 * (p[:, :-2] - 2 * p[:, 1:-1] + p[:, 2:])
+    lapl[1:-1, :] += rdy2 * (p[:-2, :] - 2 * p[1:-1, :] + p[2:, :])
+    if il in [-2, -1, 0, 1]:
+        lapl[:, 0] += rdx2 * (p[:, il] - 2 * p[:, 0] + p[:, 1])
+    if ir in [-2, -1, 0, 1]:
+        lapl[:, -1] += rdx2 * (p[:, -2] - 2 * p[:, -1] + p[:, ir])
+    if jb in [-2, -1, 0, 1]:
+        lapl[0, :] += rdy2 * (p[jb, :] - 2 * p[0, :] + p[1, :])
+    if jt in [-2, -1, 0, 1]:
+        lapl[-1, :] += rdy2 * (p[-2, :] - 2 * p[-1, :] + p[jt, :])
+    return lapl
+
+# helpers for turbulent blob exp
+def compute_form_no(stroke_length, orifice_d=25.6, piston_d=160., num_orifices=1):
+    """
+    Returns a formation number with stroke length as an input
+    ... Old box (small): orifice_d=20, piston_d=125
+    ... New box (3D printed): orifice_d=25.6, piston_d=160
+    Parameters
+    ----------
+    stroke_length
+    orifice_d
+    piston_d
+    num_orifices
+
+    Returns
+    -------
+
+    """
+    LD = (piston_d / orifice_d)**2 * stroke_length / orifice_d / num_orifices
+    return LD
+
+
+
+def smooth(x, window_len=11, window='hanning', log=False):
+    """smooth the data using a window with requested size.
+
+    This method is based on the convolution of a scaled window with a given signal.
+    The signal is prepared by introducing reflected copies of the signal
+    (with the window size) in both ends so that transient parts are minimized
+    in the beginning and end part of the output signal.
+
+    input:
+        x: the input signal
+        window_len: the dimension of the smoothing window; should be an odd integer
+        window: the type of window from 'flat', 'hanning', 'hamming', 'bartlett', 'blackman'
+            flat window will produce a moving average smoothing.
+
+    output:
+        the smoothed signal
+
+    example:
+
+    t=linspace(-2,2,0.1)
+    x=sin(t)+randn(len(t))*0.1
+    y=smooth(x)
+
+    see also:
+
+    numpy.hanning, numpy.hamming, numpy.bartlett, numpy.blackman, numpy.convolve
+    scipy.signal.filter
+
+    TODO: the window parameter could be the window itself if an array instead of a string
+    NOTE: length(output) != length(input), to correct this: return y[(window_len/2-1):-(window_len/2)] instead of just y.
+    """
+
+    if x.ndim != 1:
+        raise ValueError("smooth() only accepts 1 dimension arrays.")
+
+    if x.size < window_len:
+        raise ValueError("Input vector needs to be bigger than window size.")
+
+    if window_len < 3:
+        return x
+
+    if not window in ['flat', 'hanning', 'hamming', 'bartlett', 'blackman']:
+        raise ValueError("Window is one of 'flat', 'hanning', 'hamming', 'bartlett', 'blackman'")
+
+    if log:
+        x = np.log(x)
+
+    s = np.r_[x[window_len - 1:0:-1], x, x[-2:-window_len - 1:-1]]
+    # print(len(s))
+    if window == 'flat':  # moving average
+        w = np.ones(window_len, 'd')
+    else:
+        w = eval('np.' + window + '(window_len)')
+
+    y = np.convolve(w / w.sum(), s, mode='valid')
+    if not log:
+        return y[(window_len//2-1):(window_len//2-1)+len(x)]
+    else:
+        return np.exp(y[(window_len // 2 - 1):(window_len // 2 - 1) + len(x)])

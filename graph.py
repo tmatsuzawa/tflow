@@ -1,12 +1,6 @@
-import numpy as np
-from scipy.optimize import curve_fit
-# import library.basics.std_func as std_func
-
 '''
 Module for plotting and saving figures
 '''
-
-
 import os
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -23,12 +17,16 @@ from mpl_toolkits.mplot3d import proj3d
 import mpl_toolkits
 import itertools
 from scipy import stats
+from scipy.optimize import curve_fit
+from scipy import interpolate
 import numpy as np
 import glob
 from fractions import Fraction
 from math import modf
 import pickle
 import copy
+
+import h5py
 import ilpm.vector as vec
 # comment this and plot_fit_curve if it breaks
 import library.basics.std_func as std_func
@@ -228,17 +226,20 @@ def plot(x, y=None, fignum=1, figsize=None, label='', color=None, subplot=None, 
     elif len(y) > len(x):
         print("Warning : x and y data do not have the same length")
         y = y[:len(x)]
+
+    # remove nans
+    keep = ~np.isnan(x) * ~np.isnan(y)
+    x, y = x[keep], y[keep]
+
     if maskon:
-        mask = get_mask4erroneous_pts(x, y, thd=thd)
+        keep = get_mask4erroneous_pts(x, y, thd=thd)
     else:
-        mask = [True] * len(x)
+        keep = [True] * len(x)
 
     if color is None:
-        ax.plot(x[mask], y[mask], label=label, **kwargs)
+        ax.plot(x[keep], y[keep], label=label, **kwargs)
     else:
-        ax.plot(x[mask], y[mask], color=color, label=label, **kwargs)
-
-
+        ax.plot(x[keep], y[keep], color=color, label=label, **kwargs)
 
     if legend:
         ax.legend()
@@ -258,10 +259,6 @@ def plot_multicolor(x, y=None, colored_by=None, cmap='viridis',
     org source: https://matplotlib.org/3.1.1/gallery/lines_bars_and_markers/multicolored_line.html
     """
 
-    if colored_by is None:
-        print('... colored_by is None. Pass a list/array by which line segments are colored. Using x instead...')
-        colored_by = x
-
     if vmin is None:
         vmin = np.nanmin(colored_by)
     if vmax is None:
@@ -279,6 +276,10 @@ def plot_multicolor(x, y=None, colored_by=None, cmap='viridis',
         # x = np.arange(len(x))
     # Make sure x and y are np.array
     x, y = np.asarray(x), np.asarray(y)
+
+    if colored_by is None:
+        print('... colored_by is None. Pass a list/array by which line segments are colored. Using x instead...')
+        colored_by = x
 
     if len(x) > len(y):
         print("Warning : x and y data do not have the same length")
@@ -322,7 +323,7 @@ def plot_with_arrows(x, y=None, fignum=1, figsize=None, label='', color=None, su
 def plot3d(x, y, z, fignum=1, figsize=None, label='', color=None, subplot=None, fig=None,
            ax=None, labelaxes=True, **kwargs):
     """
-    plot a 3D graph using given x,y, z
+    plot a 3D graph using given x, y, z
     """
 
     if fig is None and ax is None:
@@ -351,6 +352,8 @@ def plot3d(x, y, z, fignum=1, figsize=None, label='', color=None, subplot=None, 
 
     set_axes_equal(ax)
     return fig, ax
+
+
 
 def plot_surface(x, y, z, shade=True, fig=None, ax=None, fignum=1, subplot=None, figsize=None,
                  azdeg=0, altdeg=65):
@@ -395,7 +398,51 @@ def plot_surface(x, y, z, shade=True, fig=None, ax=None, fignum=1, subplot=None,
                        antialiased=False, facecolors=rgb)
     return fig, ax, surf
 
-def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None, label='', color='k', alpha=0.6, subplot=None, legend=False, **kwargs):
+def plot_spline(x, y=None, order=3,
+                fignum=1, figsize=None, subplot=None,
+                fig=None, ax=None,
+                label='', color=None, legend=False,
+                maskon=False, thd=1, **kwargs):
+
+    if fig is None and ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    elif fig is None:
+        fig = plt.gcf()
+    elif ax is None:
+        ax = plt.gca()
+
+    if y is None:
+        y = copy.deepcopy(x)
+        x = np.arange(len(x))
+    # Make sure x and y are np.array
+    x, y = np.asarray(x), np.asarray(y)
+
+    if len(x) > len(y):
+        print("Warning : x and y data do not have the same length")
+        x = x[:len(y)]
+    elif len(y) > len(x):
+        print("Warning : x and y data do not have the same length")
+        y = y[:len(x)]
+    if maskon:
+        mask = get_mask4erroneous_pts(x, y, thd=thd)
+    else:
+        mask = [True] * len(x)
+
+    spl_func = interpolate.UnivariateSpline(x[mask], y[mask], k=order)
+    x4plot = np.linspace(np.nanmin(x), np.nanmax(x), 1000)
+    y4plot = spl_func(x4plot)
+    if color is None:
+        ax.plot(x4plot, y4plot, label=label, **kwargs)
+    else:
+        ax.plot(x4plot, y4plot, color=color, label=label, **kwargs)
+
+    if legend:
+        ax.legend()
+    return fig, ax
+
+
+
+def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None, label='Re$_{\lambda} \approx 600 $ \n Saddoughi and Veeravalli, 1994', color='k', alpha=0.6, subplot=None, legend=False, **kwargs):
     """
     plot universal 1d energy spectrum (Saddoughi, 1992)
     """
@@ -416,6 +463,51 @@ def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None, label='', color='k
     labelaxes(ax, '$\kappa \eta$', '$E_{11} / (\epsilon\\nu^5)^{1/4}$')
     return fig, ax
 
+def plot_saddoughi_struc_func(fignum=1, fig=None, ax=None, figsize=None,
+                              label='Re$_{\lambda} \approx 600 $ \n Saddoughi and Veeravalli, 1994',
+                              color='k', alpha=0.6, subplot=None,
+                              legend=False,  zorder=0, **kwargs):
+    """
+    Plots the second order structure function on Saddoughi & Veeravalli, 1994
+
+    Parameters
+    ----------
+    fignum
+    fig
+    ax
+    figsize
+    label
+    color
+    alpha
+    subplot
+    legend
+    kwargs
+
+    Returns
+    -------
+
+    """
+    tflow_dir = os.path.split(os.path.realpath(__file__))[0]
+
+    if fig is None and ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    elif fig is None:
+        fig = plt.gcf()
+    elif ax is None:
+        ax = plt.gca()
+
+    datapath = tflow_dir + '/reference_data/sv_struc_func.h5'
+    # datapath = tflow_dir + '/velocity_ref/sv_struc_func.txt'
+    # data = np.loadtxt(datapath, skiprows=1, delimiter=',')
+    # r_scaled, dll = data[:, 0], data[:, 1]
+    with h5py.File(datapath, 'r') as ff:
+        r_scaled = np.asarray(ff['r_s'])
+        dll = np.asarray(ff['dll'])
+    ax.plot(r_scaled, dll, alpha=alpha, color=color, label=label, **kwargs)
+    if legend:
+        ax.legend()
+    tosemilogx(ax)
+    labelaxes(ax, '$r / \eta$', '$D_{LL} / (\epsilon r)^{2/3}$')
 
 def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
             marker='o', fillstyle='full', label=None, subplot=None, legend=False,
@@ -541,7 +633,7 @@ def pdf(data, nbins=10, return_data=False, vmax=None, vmin=None, fignum=1, figsi
         return fig, ax, bins, hist
 
 
-def errorbar(x, y, xerr=0, yerr=0, fignum=1, marker='o', fillstyle='full', linestyle='None', label=None, mfc='white',
+def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', linestyle='None', label=None, mfc='white',
              subplot=None, legend=False, figsize=None, maskon=False, thd=1, **kwargs):
     """ errorbar plot
 
@@ -571,8 +663,12 @@ def errorbar(x, y, xerr=0, yerr=0, fignum=1, marker='o', fillstyle='full', lines
     # Make xerr and yerr numpy arrays if they are not scalar. Without this, TypeError would be raised.
     if not (isinstance(xerr, int) or isinstance(xerr, float)):
         xerr = np.array(xerr)
+    else:
+        xerr = np.ones_like(x) * xerr
     if not (isinstance(yerr, int) or isinstance(yerr, float)):
         yerr = np.array(yerr)
+    else:
+        yerr = np.ones_like(x) * yerr
     if maskon:
         mask = get_mask4erroneous_pts(x, y, thd=thd)
     else:
@@ -655,6 +751,12 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
     xdata = np.array(xdata)
     ydata = np.array(ydata)
 
+    if len(xdata) != len(ydata):
+        print('x and y have different length! Data will be clipped... %d, %d' % (len(xdata), len(ydata)))
+        n = min(len(xdata), len(ydata))
+        xdata = xdata[:n]
+        ydata = ydata[:n]
+
     if any(np.isnan(ydata)) or any(np.isnan(xdata)):
         print('Original data contains np.nans! Delete them for curve fitting')
         condx, condy = np.isnan(xdata), np.isnan(ydata)
@@ -666,14 +768,15 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
         xdata, ydata = xdata[cond], ydata[cond]
 
     if xmin is None:
-        xmin = np.min(xdata)
+        xmin = np.nanmin(xdata)
     if xmax is None:
-        xmax = np.max(xdata)
+        xmax = np.nanmax(xdata)
 
     if maskon:
         mask = get_mask4erroneous_pts(xdata, ydata, thd=thd)
-        xdata = xdata[mask]
-        ydata = ydata[mask]
+        if any(mask):
+            xdata = xdata[mask]
+            ydata = ydata[mask]
 
 
     x_for_plot = np.linspace(xmin, xmax, 1000)
@@ -738,7 +841,7 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
 ## 2D plotsFor the plot you showed at group meeting of lambda converging with resolution, can you please make a version with two x axes (one at the top, one below) one pixel spacing, other PIV pixel spacing, and add a special tick on each for the highest resolution point.
 # (pcolormesh)
 def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None, vmax=None, log10=False, label=None,
-               cbar=True, cmap='magma', aspect='equal', option='scientific', ntick=5, tickinc=None, **kwargs):
+               cbar=True, cmap='magma', symmetric=False, aspect='equal', option='scientific', ntick=5, tickinc=None, **kwargs):
     """  Color plot of 2D array
     Parameters
     ----------
@@ -770,6 +873,24 @@ def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None
     if log10:
         z = np.log10(z)
 
+    # For Diverging colormap, ALWAYS make the color thresholds symmetric
+    if cmap in ['PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdGy', 'RdBu', 'RdYlBu', 'RdYlGn', 'Spectral', 'coolwarm', 'bwr', 'seismic']:
+        symmetric = True
+
+    if symmetric:
+        hide = np.isinf(z)
+        keep = ~hide
+        if vmin is None and vmax is None:
+            v = max(np.abs(np.nanmin(z[keep])), np.abs(np.nanmax(z[keep])))
+            vmin, vmax = -v, v
+        else:
+            arr = np.asarray([vmin, vmax])
+            v = np.nanmax(np.abs(arr))
+            vmin, vmax = -v, v
+
+
+
+
     # Note that the cc returned is a matplotlib.collections.QuadMesh
     # print('np.shape(z) = ' + str(np.shape(z)))
     if vmin is None and vmax is None:
@@ -795,7 +916,9 @@ def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None
 
 #imshow
 def imshow(griddata, xmin=0, xmax=1, ymin=0, ymax=1, cbar=True, vmin=0, vmax=0, \
-           fignum=1, subplot=111, figsize=__figsize__, interpolation='nearest', cmap='bwr', scale=1.0):
+           fignum=1, subplot=111, figsize=__figsize__, interpolation='nearest', cmap='bwr', scale=1.0,
+           key_kwargs={},
+           **kwargs):
     """
 
     Parameters
@@ -833,22 +956,223 @@ def imshow(griddata, xmin=0, xmax=1, ymin=0, ymax=1, cbar=True, vmin=0, vmax=0, 
 
 
 # quiver
-def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None, inc_x=1, inc_y=1, inc=None, aspect='equal', **kwargs):
+def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
+           inc_x=1, inc_y=1, inc=None, color='k',
+           vmin=None, vmax=None,
+           key=True, key_loc=[0.8, 1.06], key_length=None,
+           key_label=None, key_units='mm/s', key_labelpos='E',
+           key_pad=25., key_fmt='.1f',
+           key_kwargs={},
+           aspect='equal', **kwargs):
     if ax is None:
         fig, ax = set_fig(fignum, subplot, figsize=figsize)
     else:
         fig = plt.gcf()
     if inc is not None:
         inc_x = inc_y = inc
-    ax.quiver(x[::inc_y, ::inc_x], y[::inc_y, ::inc_x], u[::inc_y, ::inc_x], v[::inc_y, ::inc_x], **kwargs)
+    x_tmp, y_temp = x[::inc_y, ::inc_x], y[::inc_y, ::inc_x]
+    u_tmp, v_tmp = u[::inc_y, ::inc_x], v[::inc_y, ::inc_x]
+    u_norm = np.sqrt(u_tmp ** 2 + v_tmp ** 2)
+
+    if vmin is None:
+        vmin = np.nanmin(u_norm)
+    if vmax is None:
+        vmax = np.nanmax(u_norm)
+    hide1 = u_norm < vmin
+    hide2 = u_norm > vmax
+    hide3 = np.isinf(u_norm)
+    hide = np.logical_or(np.logical_or(hide1, hide2), hide3)
+    cond = ~hide
+
+    Q = ax.quiver(x_tmp[cond], y_temp[cond], u_tmp[cond], v_tmp[cond], color=color, **kwargs)
+
+    if key:
+        if key_length is None:
+            U_rms = np.nanmean(u_norm[cond])
+            U_rmedians = np.nanmedian(u_norm[cond])
+
+            # key_length = 10 ** round(np.log10(U_rms))
+            # key_length = 10 ** round(np.log10(U_rmedians))
+            # key_length = round(U_rmedians, int(-round(np.log10(U_rmedians))) + 1) * 5
+            key_length = round(U_rms, int(-round(np.log10(U_rms))) + 1)
+        if key_label is None:
+            key_label = '{:' + key_fmt + '} '
+            key_label = key_label.format(key_length) + key_units
+        title(ax, '   ') # dummy title to create space on the canvas
+        ax._set_title_offset_trans(key_pad)
+
+        ax.quiverkey(Q, key_loc[0], key_loc[1], key_length, key_label, labelpos=key_labelpos, coordinates='axes',
+                     color=color, **key_kwargs)
     ax.set_aspect(aspect)
+    return fig, ax, Q
+
+# streamlines
+def streamplot(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None, density=[1., 1.],
+               aspect='equal', **kwargs):
+    """
+    Plots streamlines (2D)
+
+    Parameters
+    ----------
+    x: 2d array
+    y: 2d array
+    u: 2d array
+    v: 2d array
+    subplot: int
+    fignum: int
+    figsize: tuple
+    ax: matplotlib.ax.Axes instance
+    density: 1d array-like
+        ... density of streamlines
+    aspect: str, default: "equal"
+        ... options: "equal", "auto"
+    kwargs: dict
+        ... passed to ax.streamplot()
+
+    Returns
+    -------
+
+    """
+    if ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    else:
+        fig = plt.gcf()
+    ax.streamplot(x, y, u, v, density=density, **kwargs)
+
+    if aspect=='equal':
+        ax.set_aspect('equal')
     return fig, ax
 
+def contour(x, y, psi, levels=10,
+            vmin=None, vmax=None,
+            subplot=None, fignum=1, figsize=None, ax=None,
+            clabel=True,
+            fontsize=9, inline=True, fmt='%1.3f',
+            label_kwargs={},
+            **kwargs):
+    """
+    Plot contours.
 
+
+    Parameters
+    ----------
+    x: 2d array
+    y: 2d array
+    psi: 2d array
+    levels: int or 1d array-like
+        ... If int (n), it plots n contours.
+        ... If array-like, it plots contours at the corresponding levels.
+    vmin: int
+        ... plots contours at the levels in (vmin, vmax)
+    vmax: int
+        ... plots contours at the levels in (vmin, vmax)
+    subplot: int
+    fignum: int
+    figsize: tuple
+    ax: matplotlib.ax.Axes instance
+    fontsize
+        ... passed to ax.clabel()
+    inline: bool, default: True
+        ... passed to ax.clabel()
+    fmt: str, default: "%.1.3f"
+        ... passed to ax.clabel()
+    label_kwargs
+        ... passed to ax.clabel()
+    kwargs: dict
+        ... passed to ax.contour()
+
+    Returns
+    -------
+
+    """
+    if ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    else:
+        fig = plt.gcf()
+
+    if vmin is None:
+        vmin = np.nanmin(psi)
+    if vmax is None:
+        vmax = np.nanmax(psi)
+    hide1 = psi < vmin
+    hide2 = psi > vmax
+    hide = np.logical_or(hide1, hide2)
+    psi[hide] = np.nan
+
+    ctrs = ax.contour(x, y, psi, levels, **kwargs)
+    if clabel:
+        ax.clabel(ctrs, fontsize=fontsize, inline=inline, fmt=fmt, **label_kwargs)
+
+    return fig, ax, ctrs
+
+
+def get_contours(ctrs, close_ctr=True, thd=0.5, min_length=0,
+                 levels=None):
+    """
+    Returns positions of contours drawn by ax.contour()
+    ... each contour has a different length.
+
+    Parameters
+    ----------
+    ctrs: QuadContourSet instance (output of ax.contour)
+    close_ctr: bool
+        ... If True, returned points on the contours would be closed.
+    thd: float
+        ... Relevant parameter if close_ctr is True
+        ... Let the beginning and the end of a contour be R1 and R2.
+            If |R1 - R2| < thd, it considers the contour closed.
+    Returns
+    -------
+    verts: list
+        ... verts[n] stores (x, y) of the n-th contour
+        ... xn, yn = verts[n][:, 0], verts[n][:, 1]
+    """
+    def get_path_length(p):
+        """
+        Returns arclength of a matplotlib.path.Path instance
+        Parameters
+        ----------
+        p: matplotlib.path.Path instance
+
+        Returns
+        -------
+        length
+        """
+        vert = p.vertices
+        x, y = vert[:, 0], vert[:, 1]
+        xdiff, ydiff = np.diff(x), np.diff(y)
+        length = np.nansum(np.sqrt(xdiff ** 2 + ydiff **2))
+        return length
+
+    verts = []
+    level_list = []
+    n_levels = len(ctrs.collections)
+    for i in range(n_levels):
+        ps = ctrs.collections[i].get_paths()
+        n_ctrs = len(ps) # number of contours at the i-th level
+
+        for j in range(n_ctrs):
+            vert = ps[j].vertices
+            if close_ctr:
+                x0, y0 = vert[0, 0], vert[0, 1]
+                x1, y1 = vert[-1, 0], vert[-1, 1]
+                r = np.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2)
+                if r > thd:
+                    vert = np.append(vert, [[x0, y0]], axis=0)
+                    ps[j].vertices = vert
+            arclength = get_path_length(ps[j])
+            if arclength > min_length:
+                verts.append(vert)
+                if levels is None:
+                    level_list.append(i)
+                else:
+                    level_list.append(levels[i])
+    return verts, level_list
 
 ## Miscellanies
 def show():
     plt.show()
+
 
 ## Lines
 def axhline(ax, y, x0=None, x1=None, color='black', linestyle='--', **kwargs):
@@ -1103,7 +1427,28 @@ def arrow3D(x, y, z, dx, dy, dz, lw=3, arrowstyle='-|>', color='r', mutation_sca
     return fig, ax, arrow_obj
 
 def arrow(x, y, dx, dy,
-            ax=None, fig=None, fignum=1, subplot=111, figsize=None, **kwargs):
+          ax=None, fig=None, fignum=1, subplot=111, figsize=None, **kwargs):
+    """
+    Adds an arrow on a canvas
+    ... Specify an arrow by its starting point (x, y) and its direction (dx, dy)
+
+    Parameters
+    ----------
+    x
+    y
+    dx
+    dy
+    ax
+    fig
+    fignum
+    subplot
+    figsize
+    kwargs
+
+    Returns
+    -------
+
+    """
     if fig is None and ax is None:
         fig, ax = set_fig(fignum, subplot, figsize=figsize)
     elif fig is None:
@@ -1419,7 +1764,7 @@ def add_colorbar_alone(ax, values, cmap=cmap, label=None, fontsize=None, option=
     if ticklabel is not None:
         cb.ax.set_yticklabels(ticklabel)
 
-    if not label is None:
+    if label is not None:
         if fontsize is None:
             cb.set_label(label, color=color)
         else:
@@ -1583,10 +1928,28 @@ def set_ytick_interval(ax, tickint):
 
 
 ##Title
-def title(ax, title, subplot=111, **kwargs):
+def title(ax, title, **kwargs):
+    """
+    ax.set_title(title, **kwargs)
+    ... if you want more space for the tile, try "pad=50"
+
+    Parameters
+    ----------
+    ax
+    title
+    subplot
+    kwargs
+
+    Returns
+    -------
+
+    """
     ax.set_title(title, **kwargs)
 
-def suptitle(title, fignum=None, **kwargs):
+def suptitle(title, fignum=None,
+             tight_layout=True,
+             rect=[0, 0.03, 1, 0.95],
+             **kwargs):
     """
     Add a centered title to the figure.
     If fignum is given, it adds a title, then it reselects the figure which selected before this method was called.
@@ -1604,9 +1967,11 @@ def suptitle(title, fignum=None, **kwargs):
     """
     if fignum is not None:
         plt.figure(fignum)
-
+    fig = plt.gcf()
 
     plt.suptitle(title, **kwargs)
+    if tight_layout:
+        fig.tight_layout(rect=rect)
 
 
 
@@ -1920,7 +2285,8 @@ def create_cmap_using_values(colors=None, color1='greenyellow', color2='darkgree
 
     return newcmap
 
-def get_colors_and_cmap_using_values(values, cmap=None, color1='greenyellow', color2='darkgreen', vmin=None, vmax=None, n=100):
+def get_colors_and_cmap_using_values(values, cmap=None, color1='greenyellow', color2='darkgreen',
+                                     vmin=None, vmax=None, n=100):
     """
     Returns colors (list), cmap instance, mpl.colors.Normalize instance
     Parameters
@@ -1952,7 +2318,7 @@ def get_colors_and_cmap_using_values(values, cmap=None, color1='greenyellow', co
     colors = cmap(norm(values))
     return colors, cmap, norm
 
-def get_color_list_gradient(color1='greenyellow', color2='darkgreen', n=10):
+def get_color_list_gradient(color1='greenyellow', color2='darkgreen', color3='darkgreen', n=10):
     """
     Returns a list of colors in RGB between color1 and color2
     Input (color1 and color2) can be RGB or color names set by matplotlib
@@ -1964,23 +2330,49 @@ def get_color_list_gradient(color1='greenyellow', color2='darkgreen', n=10):
 
     Returns
     -------
-
+    color_list
     """
-    # convert color names to rgb if rgb is not given as arguments
-    if not color1[0] == '#':
-        color1 = cname2hex(color1)
-    if not color2[0] == '#':
-        color2 = cname2hex(color2)
-    color1_rgb = hex2rgb(color1) / 255.  # np array
-    color2_rgb = hex2rgb(color2) / 255.  # np array
+    if color3 is None:
 
-    r = np.linspace(color1_rgb[0], color2_rgb[0], n)
-    g = np.linspace(color1_rgb[1], color2_rgb[1], n)
-    b = np.linspace(color1_rgb[2], color2_rgb[2], n)
-    color_list = list(zip(r, g, b))
+        # convert color names to rgb if rgb is not given as arguments
+        if not color1[0] == '#':
+            color1 = cname2hex(color1)
+        if not color2[0] == '#':
+            color2 = cname2hex(color2)
+        color1_rgb = hex2rgb(color1) / 255.  # np array
+        color2_rgb = hex2rgb(color2) / 255.  # np array
+
+        r = np.linspace(color1_rgb[0], color2_rgb[0], n)
+        g = np.linspace(color1_rgb[1], color2_rgb[1], n)
+        b = np.linspace(color1_rgb[2], color2_rgb[2], n)
+        color_list = list(zip(r, g, b))
+    else:
+        # convert color names to rgb if rgb is not given as arguments
+        if not color1[0] == '#':
+            color1 = cname2hex(color1)
+        if not color2[0] == '#':
+            color2 = cname2hex(color2)
+        if not color3[0] == '#':
+            color3 = cname2hex(color3)
+        color1_rgb = hex2rgb(color1) / 255.  # np array
+        color2_rgb = hex2rgb(color2) / 255.  # np array
+        color3_rgb = hex2rgb(color3) / 255.  # np array
+
+        n_middle = int((n-1)/2)
+
+        r1 = np.linspace(color1_rgb[0], color2_rgb[0], n_middle, endpoint=False)
+        g1 = np.linspace(color1_rgb[1], color2_rgb[1], n_middle, endpoint=False)
+        b1 = np.linspace(color1_rgb[2], color2_rgb[2], n_middle, endpoint=False)
+        color_list1 = list(zip(r1, g1, b1))
+
+        r2 = np.linspace(color2_rgb[0], color3_rgb[0], n-n_middle)
+        g2 = np.linspace(color2_rgb[1], color3_rgb[1], n-n_middle)
+        b2 = np.linspace(color2_rgb[2], color3_rgb[2], n-n_middle)
+        color_list2 = list(zip(r2, g2, b2))
+        color_list = color_list1 + color_list2
     return color_list
 
-def get_color_from_cmap(cmap='viridis', n=10, lut=12):
+def get_color_from_cmap(cmap='viridis', n=10, lut=None):
     """
     A simple function which returns a list of RGBA values from a cmap (evenly spaced)
     ... If one desires to assign a color based on values, use get_colors_and_cmap_using_values()
@@ -1999,7 +2391,7 @@ def get_color_from_cmap(cmap='viridis', n=10, lut=12):
 
     """
     cmap = mpl.cm.get_cmap(cmap, lut)
-    colors = cmap(np.linspace(0, 1, n))
+    colors = cmap(np.linspace(0, 1, n, endpoint=True))
     return colors
 
 def hex2rgb(hex):
@@ -2163,7 +2555,7 @@ def add_subplot_axes(ax, rect, axisbg='w', alpha=1):
     y = infig_position[1]
     width *= rect[2]
     height *= rect[3]
-    subax = fig.add_axes([x, y, width,height])
+    subax = fig.add_axes([x, y, width, height])
     subax.set_facecolor(axisbg)
     subax.patch.set_alpha(alpha)
     x_labelsize = subax.get_xticklabels()[0].get_size()
@@ -2311,8 +2703,7 @@ def draw_box(ax, xx, yy, w_box=325., h_box=325., xoffset=0, yoffset=0, linewidth
     ax.spines["left"].set_visible(False)
 
 
-def draw_cuboid(ax, xx, yy, zz, color='c', lw=2, subplot=None,
-                figsize=None, **kwargs):
+def draw_cuboid(ax, xx, yy, zz, color='c', lw=2, **kwargs):
 
 
     xmin, xmax = np.nanmin(xx), np.nanmax(xx)
@@ -2333,6 +2724,49 @@ def draw_cuboid(ax, xx, yy, zz, color='c', lw=2, subplot=None,
     set_axes_equal(ax)
 
 
+def add_color_wheel(fig=None, fignum=1, figsize=__figsize__,
+         rect=[0.68, 0.65, 0.2, 0.2],
+         cmap=None, cmapname='hsv',
+         norm=None, values=[-np.pi, np.pi],
+         n=2056,
+         ring=True,
+         text='Phase',
+         fontsize=__fontsize__,
+         ratio=1, text_loc_ratio=0.35, text_loc_angle=np.pi*1.07,
+         **kwargs
+         ):
+    if fig is None:
+        fig = plt.figure(num=fignum, figsize=figsize)
+
+    subax = fig.add_axes(rect, projection='polar')
+    subax._direction = 2*np.pi
+
+    if cmap is None or norm is None:
+       colors, cmap, norm = get_colors_and_cmap_using_values(values, cmap=cmapname, n=n)
+
+    cb = mpl.colorbar.ColorbarBase(subax,
+                                   cmap=cmap,
+                                    norm=norm,
+                                    orientation='horizontal')
+
+    # aesthetics - get rid of border and axis labels
+    cb.outline.set_visible(False)
+    subax.set_axis_off()
+
+    if ring:
+        w = values[1] - values[0]
+        subax.set_rlim([values[0] - w * ratio , values[1]]) # This makes it a color RING not a wheel (filled circle)
+    # addtext(subax, text, np.pi*1.07, (values[0] - w/2.9 ), color='w', fontsize=fontsize)
+    addtext(subax, text,
+            text_loc_angle,
+            values[0] - w * ratio * (1/ (1/text_loc_ratio * ratio + 1)), color='w', fontsize=fontsize)
+
+
+    # subax2 = fig.add_axes([0.2, 0.2, 0.6, 0.6])
+    # plot([0, 1], [0, 1], ax=subax2)
+    # addtext(subax2, text, 0, 0, color='w', fontsize=fontsize)
+    # # print(values[0], values[0] - w)
+    return subax, cb
 ## misc.
 def simplest_fraction_in_interval(x, y):
     """Return the fraction with the lowest denominator in [x,y]."""
@@ -2365,7 +2799,7 @@ def approximate_fraction(x, e):
 def get_mask4erroneous_pts(x, y, thd=1):
     """
     Retruns a mask that can be sued to hide erroneous data points for 1D plots
-    ... e.g. x[mask], y[mask] hide the jumps which appear to be false to human eyes
+    ... e.g. x[mask] and y[mask] hide the jumps which appear to be false to human eyes
     ... Uses P = dy/dx / y to determine whether data points appear to be false
         If P is high, we'd expect a jump. thd is a threshold of P.
 
@@ -2380,9 +2814,15 @@ def get_mask4erroneous_pts(x, y, thd=1):
     mask: 1d bool array
 
     """
+    # remove nans
+    keep_x, keep_y = ~np.isnan(x), ~np.isnan(y)
+    keep = keep_x * keep_y
+    x, y = x[keep], y[keep]
+
+
     fractional_dydx =  np.gradient(y, x) / y
     mask = np.abs(fractional_dydx) < thd
-    mask = np.roll(mask, 1) # due to the convention of np.gradient
+    mask = np.roll(mask, 1) # shift the resulting array (the convention of np.gradient)
     return mask
 
 def tight_layout(fig, rect=[0, 0.03, 1, 0.95]):
@@ -2443,7 +2883,7 @@ def get_plot_data_from_fig(fig, axis_number=0):
         x = fig.axes[axis_number].lines[i]._xorig
         y = fig.axes[axis_number].lines[i]._yorig
         xlist.append(x)
-        ylist.apppend(y)
+        ylist.append(y)
     return xlist, ylist
 
 ## Interactive plotting
@@ -2687,3 +3127,65 @@ def list_available_backends():
 
 def use_backend(name='agg'):
     mpl.use(name)
+
+
+# smooth a curve using convolution
+def smooth(x, window_len=11, window='hanning', log=False):
+    """smooth the data using a window with requested size.
+
+    This method is based on the convolution of a scaled window with a given signal.
+    The signal is prepared by introducing reflected copies of the signal
+    (with the window size) in both ends so that transient parts are minimized
+    in the beginning and end part of the output signal.
+
+    input:
+        x: the input signal
+        window_len: the dimension of the smoothing window; should be an odd integer
+        window: the type of window from 'flat', 'hanning', 'hamming', 'bartlett', 'blackman'
+            flat window will produce a moving average smoothing.
+
+    output:
+        the smoothed signal
+
+    example:
+
+    t=linspace(-2,2,0.1)
+    x=sin(t)+randn(len(t))*0.1
+    y=smooth(x)
+
+    see also:
+
+    numpy.hanning, numpy.hamming, numpy.bartlett, numpy.blackman, numpy.convolve
+    scipy.signal.filter
+
+    TODO: the window parameter could be the window itself if an array instead of a string
+    NOTE: length(output) != length(input), to correct this: return y[(window_len/2-1):-(window_len/2)] instead of just y.
+    """
+
+    if x.ndim != 1:
+        raise ValueError("smooth() only accepts 1 dimension arrays.")
+
+    if x.size < window_len:
+        raise ValueError("Input vector needs to be bigger than window size.")
+
+    if window_len < 3:
+        return x
+
+    if not window in ['flat', 'hanning', 'hamming', 'bartlett', 'blackman']:
+        raise ValueError("Window is one of 'flat', 'hanning', 'hamming', 'bartlett', 'blackman'")
+
+    if log:
+        x = np.log(x)
+
+    s = np.r_[x[window_len - 1:0:-1], x, x[-2:-window_len - 1:-1]]
+    # print(len(s))
+    if window == 'flat':  # moving average
+        w = np.ones(window_len, 'd')
+    else:
+        w = eval('np.' + window + '(window_len)')
+
+    y = np.convolve(w / w.sum(), s, mode='valid')
+    if not log:
+        return y[(window_len//2-1):(window_len//2-1)+len(x)]
+    else:
+        return np.exp(y[(window_len // 2 - 1):(window_len // 2 - 1) + len(x)])
