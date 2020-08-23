@@ -27,9 +27,9 @@ import pickle
 import copy
 
 import h5py
-import ilpm.vector as vec
+# import ilpm.vector as vec
 # comment this and plot_fit_curve if it breaks
-import library.basics.std_func as std_func
+import tflow.std_func as std_func
 
 #Global variables
 #Default color cycle: iterator which gets repeated if all elements were exhausted
