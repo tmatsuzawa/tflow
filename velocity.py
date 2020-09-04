@@ -15,7 +15,6 @@ import itertools
 import os, copy, sys, re  # fundamentals
 import time as time_mod
 import subprocess
-import bezier
 
 import warnings
 import matplotlib.cbook
@@ -973,10 +972,16 @@ def fft_nd(udata, dx=1, dy=1, dz=1,
         return ukdata
 
 
-def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
+#### Energy spectra computation (LEGACY)- used until 08/31/20
+def get_energy_spectrum_nd_old(udata, x0=0, x1=None, y0=0, y1=None,
                            z0=0, z1=None, dx=None, dy=None, dz=None,
                            window=None, correct_signal_loss=True):
     """
+    DEPRECIATED: TM cleaned up the code, and improved the literacy and transparency of the algorithm- TM (Sep 2020)
+    ... Please use the updated function: get_energy_spectrum_nd()
+    ... the new function correctly returns the SPECTRAL DENSITY. T
+    ...... This code might contain minor errors (like a factor of 2pi). The new code has no such ambiguity.
+
     Returns nd energy spectrum from velocity data (FFT of a velocity field)
 
     Parameters
@@ -1127,7 +1132,6 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
         # ... But energy spectrum is indeed plotting the SPECTRAL DENSITY!
         deltakx, deltaky = kx[1] - kx[0], ky[1] - ky[0]
         ek = ek / (deltakx * deltaky)
-
         return ek, np.asarray([kxx, kyy])
 
     elif dim == 3:
@@ -1149,11 +1153,13 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
         return ek, np.asarray([kxx, kyy, kzz])
 
 
-def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
+def get_energy_spectrum_old(udata, x0=0, x1=None, y0=0, y1=None,
                         z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
                         window=None, correct_signal_loss=True, remove_undersampled_region=True,
                         cc=1.75, notebook=True):
     """
+    DEPRECIATED: TM cleaned up the code, and improved the literacy and transparency of the algorithm- TM (Sep 2020)
+
     Returns 1D energy spectrum from velocity field data
     ... The algorithm implemented in this function is VERY QUICK because it does not use the two-point vel. autorcorrelation tensor.
     ... Instead, it converts u(kx, ky, kz)u*(kx, ky, kz) into u(kr)u*(kr). (here * dentoes the complex conjugate)
@@ -1220,6 +1226,9 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
         Wavenumber with shape (number of data points, duration)
 
     """
+    print('get_energy_spectrum_old(): is DEPRECIATED since 09/01/20')
+    print('... Still works perfectly. Yet, TM highly recommends to use the updated function: get_energy_spectrum()')
+
     if notebook:
         from tqdm import tqdm_notebook as tqdm
         print('Using tqdm_notebook. If this is a mistake, set notebook=False')
@@ -1271,6 +1280,10 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
         e_ks
         ks
         nkout
+        d: int/float, DIMENSION OF THE FLOW (NOT DIMENSION OF AVAILABLE VELOCITY FIELD)
+            ... For 3D turbulence, d = 3
+                ... d is equal to 3 even if udata is an 2D field embedded in an actual 3D field,
+            ... For 2D turbulence, d = 2
 
         Returns
         -------
@@ -1283,12 +1296,16 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
                                ks[1, 1, 0] - ks[1, 0, 0]
             e_ks *= deltakx * deltaky  # use the raw DFT outputs (power=integrated density over a px)
             deltakr = np.sqrt(deltakx ** 2 + deltaky ** 2)  # radial k spacing of the velocity field
+            dx, dy = 2.*np.pi / ks[0, 0, 0] * -0.5, 2.*np.pi / ks[1, 0, 0] * -0.5
+
         if dim == 3:
             deltakx, deltaky, deltakz = ks[0, 0, 1, 0] - ks[0, 0, 0, 0], \
                                         ks[1, 1, 0, 0] - ks[1, 0, 0, 0], \
                                         ks[2, 0, 0, 1] - ks[2, 0, 0, 0]
             e_ks *= deltakx * deltaky * deltakz  # use the raw DFT outputs (power=integrated density over a px)
             deltakr = np.sqrt(deltakx ** 2 + deltaky ** 2 + deltakz ** 2)  # radial k spacing of the velocity field
+            dx, dy, dz = 2.*np.pi / ks[0, 0, 0] * -0.5, 2.*np.pi / ks[1, 0, 0] * -0.5, 2.*np.pi / ks[2, 0, 0] * -0.5
+
         kk = np.zeros((ks.shape[1:]))
         for i in range(dim):
             kk += ks[i, ...] ** 2
@@ -1350,10 +1367,15 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
             # Old stuff 2: scaling that works?
             # e_k1ds[..., t] = e_k1d * jacobian / (n_samples * deltak) * (deltak / deltakr) ** dim / deltak
             # e_k1d_errs[..., t] = e_k1d_err * jacobian / (n_samples * deltak) * (deltak / deltakr) ** dim / deltak
+            # print(dx, dy, deltakr, deltakx * dx * ks.shape[2])
+            print(deltakr, deltak)
+            # 2019-2020 August
+            # e_k1ds[..., t] = e_k1d * jacobian / (n_samples * deltakr ** 2) * cc
+            # e_k1d_errs[..., t] = e_k1d_err * jacobian / (n_samples * deltakr ** 2) * cc
 
-            e_k1ds[..., t] = e_k1d * jacobian / (n_samples * deltakr **2) * cc
-            e_k1d_errs[..., t] = e_k1d_err * jacobian / (n_samples * deltakr **2) * cc
-
+            # # Update in Aug, 2020- TM
+            e_k1ds[..., t] = e_k1d * jacobian / (n_samples * deltakr ** 2) * cc
+            e_k1d_errs[..., t] = e_k1d_err * jacobian / (n_samples * deltakr ** 2) * cc
         return e_k1ds, e_k1d_errs, k1ds
 
     dim, duration = len(udata), udata.shape[-1]
@@ -1378,10 +1400,9 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
 
     return e_k, e_k_err, kk
 
-
-def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
+def get_1d_energy_spectrum_old(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
                            z0=0, z1=None, dx=None, dy=None, dz=None,
-                           window=None, correct_signal_loss=True):
+                           window=None, correct_signal_loss=True, debug=True):
     """
     Returns 1D energy spectrum from velocity field data
 
@@ -1539,9 +1560,9 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
         e33 = np.nanmean(e33_nd, axis=ax_ind_for_avg)
         e33_err = np.nanstd(e33_nd, axis=ax_ind_for_avg)
 
-        eiis, eii_errs = np.array([e11, e22, e33]), np.array([e11_err, e22_err, e33_err])
+        eiis, eii_errs = np.array([e11, e22, e33]) * 2, np.array([e11_err, e22_err, e33_err]) * 2
     elif dim == 2:
-        eiis, eii_errs = np.array([e11, e22]), np.array([e11_err, e22_err])
+        eiis, eii_errs = np.array([e11, e22]) * 2, np.array([e11_err, e22_err]) * 2
     else:
         raise ValueError('... 1d spectrum: Check the dimension of udata! It must be 2 or 3!')
 
@@ -1558,6 +1579,604 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
         for i in range(dim):
             eiis[i] /= signal_intensity_loss
             eii_errs[i] /= signal_intensity_loss
+    if debug:
+        print('get_1d_energy_spectrum_old(): debug is set True. It will check the property \int_0^\infty Eii = 2 <ui ui>' )
+        for i in range(dim):
+            ui2_tavg = np.nanmean(udata[i, ...]**2, axis=tuple(range(dim)))
+            k_i, eiis_i = clean_data_interp1d(eiis[i, ...], k)
+            integral_i = np.trapz(eiis_i, x=k_i, axis=0)
+            print('... <u%d squared> / integral of E_%d%d: ' % (i+1, i+1, i+1), ui2_tavg / integral_i )
+    return eiis, eii_errs, k
+
+#### Energy spectra computation (UP-TO-DATE)
+def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
+                           z0=0, z1=None, dx=None, dy=None, dz=None,
+                           window=None, correct_signal_loss=True,
+                           return_in = 'spectral density'):
+    """
+    Returns ND energy spectrum from velocity data (FFT of a velocity field)
+    ... Returns the SPECTRUM DENSITY not power (integrated spectral density)
+    ... Few Important Tips:
+        ... np.fft.fft() returns POWER not spectrum density
+            ... If you want to check Parseval's theorem, you must use the POWER not SPECTRAL DENSITY
+                Parseval's theorem:
+                    ukdata =  np.fft.fft(udata, axis=(1, dim+1)
+                    1/n_samples * np.nansum( ukdata * np.conjucate(ukdata)) ) = np.nansum(udata ** 2)
+        ... np.fft.fft() returns the DFT in frequency space (NOT ANGULAR FREQUENCY space)
+        ... To convert the power (DFT output) to spectral density, one must do following.
+                ukdata /= (dfx * dfy * dfz) * n_samples
+            ... where dfx = 1 / dx, etc. and n_samples is the number of samples actually discrete-fourie transformed.
+
+    Parameters
+    ----------
+    udata: nd array
+    dx: data spacing in x (units: mm/px)
+    dy: data spacing in y (units: mm/px)
+    dz: data spacing in z (units: mm/px)
+    dx: float
+        spacing in x
+    dy: float
+        spacing in y
+    dz: float
+        spacing in z
+    nkout: int, default: None
+        number of bins to compute energy/dissipation spectrum
+    window: str
+        Windowing reduces undesirable effects due to the discreteness of the data.
+        A wideband window such as 'flattop' is recommended for turbulent energy spectra.
+
+        For the type of applying window function, choose from below:
+        boxcar, triang, blackman, hamming, hann, bartlett, flattop, parzen, bohman, blackmanharris, nuttall, barthann,
+        kaiser (needs beta), gaussian (needs standard deviation), general_gaussian (needs power, width),
+        slepian (needs width), chebwin (needs attenuation), exponential (needs decay scale),
+        tukey (needs taper fraction)
+    correct_signal_loss: bool, default: True
+        If True, it would compensate for the loss of the signals due to windowing.
+        Always recommended to obtain accurate spectral densities.
+
+    Returns
+    -------
+    energy_fft: nd array with shape (height, width, duration) or (height, width, depth, duration)
+    ks: nd array with shape (ncomponents, height, width, duration) or (ncomponents, height, width, depth, duration)
+
+    Example
+    -----------------
+    nx, ny = 100, 100
+    x = np.linspace(0, 2*np.pi, nx)
+    y = np.linspace(0, 4*np.pi, ny)
+    dx, dy = x[1]- x[0], y[1]-y[0]
+
+    # Position grid
+    xx, yy = np.meshgrid(x, y)
+
+    # In Fourier space, energy will have a peak at (kx, ky) = (+/- 5, +/- 2)
+    ux = np.sin(2.5*xx + yy)
+    uy = np.sin(yy) * 0
+    udata_test = np.stack((ux, uy))
+    ek, ks = get_energy_spectrum_nd(udata_test, dx=dx, dy=dy)
+    graph.color_plot(xx, yy, (ux**2 + uy**2 ) /2., fignum=2, subplot=121)
+    fig22, ax22, cc22 = graph.color_plot(ks[0], ks[1], ek.real[..., 0], fignum=2, subplot=122, figsize=(16, 8))
+    graph.setaxes(ax22, -10, 10, -10, 10)
+
+    """
+    if dx is None or dy is None:
+        print('ERROR: dx or dy is not provided! dx is grid spacing in real space.')
+        print('... k grid will be computed based on this spacing! Please provide.')
+        raise ValueError
+    if x0 is None:
+        x0 = 0
+    if y0 is None:
+        y0 = 0
+    if x1 is None:
+        x1 = udata[0].shape[1]
+    if y1 is None:
+        y1 = udata[0].shape[0]
+
+    dim = len(udata)
+    udata = fix_udata_shape(udata)
+    if dim == 2:
+        udata = udata[:, y0:y1, x0:x1, :]
+    elif dim == 3:
+        if z1 is None:
+            z1 = udata[0].shape[2]
+        if dz is None:
+            print('ERROR: dz is not provided! dx is grid spacing in real space.')
+            print('... k grid will be computed based on this spacing! Please provide.')
+            raise ValueError
+        udata = udata[:, y0:y1, x0:x1, z0:z1, :]
+
+    n_samples = 1
+    for d in range(dim):
+        n_samples *= udata.shape[d + 1]
+
+    # WINDOWING
+    duration = udata.shape[-1]
+    if window is not None:
+        if dim == 2:
+            xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+            windows = get_window_radial(xx, yy, wtype=window, duration=duration)
+            # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
+            udata_tapered = np.empty_like(udata)
+            for i in range(dim):
+                udata_tapered[i, ...] = udata[i, ...] * windows
+            # udata_tapered = udata * windows
+        elif dim == 3:
+            xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+            windows = get_window_radial(xx, yy, zz, wtype=window, duration=duration)
+            # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
+            udata_tapered = np.empty_like(udata)
+            for i in range(dim):
+                udata_tapered[i, ...] = udata[i, ...] * windows
+            # udata_tapered = udata * windows
+
+        # PERFORM DFT on the windowed field
+        # DFT returns the POWER (INTEGRATED SPECTRAL DENSITY)
+        ukdata = np.fft.fftn(udata_tapered, axes=list(range(1, dim + 1)))  # POWER
+        ukdata = np.fft.fftshift(ukdata, axes=list(range(1, dim + 1)))
+
+        energy, energy_tapered = get_energy(udata), get_energy(udata_tapered)
+        signal_intensity_losses = np.nanmean(energy_tapered, axis=tuple(range(dim))) / np.nanmean(energy, axis=tuple(
+            range(dim)))
+
+    else:
+        ukdata = np.fft.fftn(udata, axes=list(range(1, dim + 1)))
+        ukdata = np.fft.fftshift(ukdata, axes=list(range(1, dim + 1)))
+        signal_intensity_losses = np.ones(duration)
+    ##################################################
+    # CONVERT TO SPECTRAL DENSITY
+    ##################################################
+    if dim == 2:
+        dim, height, width, duration = ukdata.shape
+        kx = np.fft.fftshift(np.fft.fftfreq(width, d=dx)) * 2 * np.pi
+        ky = np.fft.fftshift(np.fft.fftfreq(height, d=dy)) * 2 * np.pi
+        deltakx, deltaky = kx[1] - kx[0], ky[1] - ky[0]
+        dfx, dfy = deltakx / 2 / np.pi, deltaky / 2 / np.pi
+        dz = dfz = deltakz = 1  # for convenience
+    elif dim == 3:
+        dim, height, width, depth, duration = ukdata.shape
+        kx = np.fft.fftshift(np.fft.fftfreq(width, d=dx)) * 2 * np.pi
+        ky = np.fft.fftshift(np.fft.fftfreq(height, d=dy)) * 2 * np.pi
+        kz = np.fft.fftshift(np.fft.fftfreq(depth, d=dz)) * 2 * np.pi
+
+        deltakx, deltaky, deltakz = kx[1] - kx[0], ky[1] - ky[0], kz[1] - kz[0]
+
+        # Frequency: 1/dx, 1/dy, 1/dz
+        dfx, dfy, dfz = deltakx / 2 / np.pi, deltaky / 2 / np.pi, deltakz / 2 / np.pi
+
+    # CHOOSE WHETHER TO OUTPUT IN RAW SPECTRAL DFT OUTPUT OR SPECTRAL DENSITY
+    # ... Raw DFT output: integrated spectral density (power)
+    # ...... This is somnething you can use to check Parseval's theorem for example
+    # ... For Espec calculation, spectral density is way easier to use.
+    if return_in == 'spectral density':
+        ukdata /= (dfx * dfy * dfz) * n_samples  # THIS IS THE CORRECT WAY TO CONVERT TO SPECTRAL DENSITY!
+
+    ##################################################
+    # compute E(\vec{k})
+    ##################################################
+    ek = np.zeros(ukdata[0].shape)
+
+    for i in range(dim):
+        ek[...] += np.abs(ukdata[i, ...]) ** 2
+    ek /= 2.
+
+    if correct_signal_loss:
+        for t in range(duration):
+            # print signal_intensity_losses[t]
+            ek[..., t] = ek[..., t] / signal_intensity_losses[t]
+    if dim == 2:
+        kxx, kyy = np.meshgrid(kx, ky)
+        kxx, kyy = kxx, kyy
+        return ek, np.asarray([kxx, kyy])
+
+    elif dim == 3:
+        kxx, kyy, kzz = np.meshgrid(ky, kx, kz)
+        return ek, np.asarray([kxx, kyy, kzz])
+
+
+def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
+                        z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
+                        window=None, correct_signal_loss=True, remove_undersampled_region=True,
+                        cc=1, notebook=True, debug=False):
+    """
+    Returns 1D energy spectrum from velocity field data
+    ... The algorithm implemented in this function is VERY QUICK because it does not use the two-point vel. autorcorrelation tensor.
+    ... Instead, it converts u(kx, ky, kz)u*(kx, ky, kz) into u(kr)u*(kr). (here * dentoes the complex conjugate)
+    ... CAUTION: Must provide udata with aspect ratio ~ 1
+    ...... The conversion process induces unnecessary error IF the dimension of u(kx, ky, kz) is skewed.
+    ...... i.e. Make udata.shape like (800, 800), (1024, 1024), (512, 512) for accurate results.
+    ... KNOWN ISSUES:
+    ...... This function returns a bad result for udata with shape like (800, 800, 2)
+
+
+    Parameters
+    ----------
+    udata: nd array
+    epsilon: nd array or float, default: None
+        dissipation rate used for scaling energy spectrum
+        If not given, it uses the values estimated using the rate-of-strain tensor
+    nu: flaot, viscosity
+    x0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    x1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    dx: float
+        spacing in x
+    dy: float
+        spacing in y
+    dz: float
+        spacing in z
+    nkout: int, default: None
+        number of bins to compute energy/dissipation spectrum
+    notebook: bool, default: True
+        Use tqdm.tqdm_notebook if True. Use tqdm.tqdm otherwise
+    window: str
+        Windowing reduces undesirable effects due to the discreteness of the data.
+        A wideband window such as 'flattop' is recommended for turbulent energy spectra.
+
+        For the type of applying window function, choose from below:
+        boxcar, triang, blackman, hamming, hann, bartlett, flattop, parzen, bohman, blackmanharris, nuttall, barthann,
+        kaiser (needs beta), gaussian (needs standard deviation), general_gaussian (needs power, width),
+        slepian (needs width), chebwin (needs attenuation), exponential (needs decay scale),
+        tukey (needs taper fraction)
+    correct_signal_loss: bool, default: True
+        If True, it would compensate for the loss of the signals due to windowing.
+        Always recommended to obtain accurate spectral densities.
+    remove_undersampled_region: bool, default: True
+        If True, it will not sample the region with less statistics.
+    cc: float, default: 1.75
+        A numerical factor to compensate for the signal loss due to approximations.
+        ... cc=1.75 was obtained from the JHTD data.
+    Returns
+    -------
+    e_k: numpy array
+        Energy spectrum with shape (number of data points, duration)
+    e_k_err: numpy array
+        Energy spectrum error with shape (number of data points, duration)
+    kk: numpy array
+        Wavenumber with shape (number of data points, duration)
+
+    """
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+        print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+    else:
+        from tqdm import tqdm
+
+    def delete_masked_elements(data, mask):
+        """
+        Deletes elements of data using mask, and returns a 1d array
+        Parameters
+        ----------
+        data: N-d array
+        mask: N-d array, bool
+
+        Returns
+        -------
+        compressed_data
+
+        """
+        data_masked = ma.array(data, mask=mask)
+        compressed_data = data_masked.compressed()
+        '...Reduced data using a given mask'
+        return compressed_data
+
+    def convert_nd_spec_to_1d(ek_nd, ks, nkout=None, cc=1., d=3,
+                              debug=False, udata=None):
+        """
+
+
+        Parameters
+        ----------
+        ek_nd
+        ks
+        nkout
+        d: int/float, DIMENSION OF THE FLOW (NOT DIMENSION OF AVAILABLE VELOCITY FIELD)
+            ... For 3D turbulence, d = 3
+                ... d is equal to 3 even if udata is an 2D field embedded in an actual 3D field,
+            ... For 2D turbulence, d = 2
+
+        Returns
+        -------
+
+        """
+        if debug:
+            print('get_energy_spectrum/convert_nd_spec_to_1d: You set debug=True. '
+                  'Will check the energy conservation (Parseval\'s theorem and isotropy approximation')
+            if udata is None:
+                print('... udata is required for debugging. Not supplied, terminating the process...')
+                sys.exit()
+
+        dim = ks.shape[0]
+        duration = ek_nd.shape[-1]
+
+        # INITIALIZATIONS
+        if nkout is None:
+            nkout = int(np.max(ks.shape[1:]) * 1.0)
+        shape = (nkout, duration)
+
+        eks = np.empty(shape)
+        ek_errs = np.empty(shape)
+        k1ds = np.empty(shape)
+
+        # PREPARATION
+        if dim == 2:
+            kx = ks[0][0, :]
+            ky = ks[1][:, 0]
+            deltakx, deltaky = kx[1] - kx[0], ky[1] - ky[0]
+            dfx, dfy = deltakx / 2 / np.pi, deltaky / 2 / np.pi
+            depth, dz, dfz = 1, 1, 1  # for convenience for later computation
+            kxx, kyy = np.meshgrid(kx, ky)
+            kk = np.sqrt(kxx ** 2 + kyy ** 2)  # radial
+
+            dx, dy = 2. * np.pi / ks[0, 0, 0] * -0.5, 2. * np.pi / ks[1, 0, 0] * -0.5
+        if dim == 3:
+            kx = ks[0][0, :, 0]
+            ky = ks[1][:, 0, 0]
+            kz = ks[2][0, 0, :]
+            deltakx, deltaky, deltakz = kx[1] - kx[0], ky[1] - ky[0], kz[1] - kz[0]
+            dfx, dfy, dfz = deltakx / 2 / np.pi, deltaky / 2 / np.pi, deltakz / 2 / np.pi
+            kxx, kyy, kzz = np.meshgrid(ky, kx, kz)
+
+            kk = np.sqrt(kxx ** 2 + kyy ** 2 + kzz ** 2)  # radial
+            dx, dy, dz = 2. * np.pi / ks[0, 0, 0, 0] * -0.5, 2. * np.pi / ks[1, 0, 0, 0] * -0.5, 2. * np.pi / ks[
+                2, 0, 0, 0] * -0.5
+        n_samples = kk.size
+
+        if remove_undersampled_region:
+            kx_max, ky_max = np.nanmax(ks[0, ...]), np.nanmax(ks[1, ...])
+            k_max = np.nanmin([kx_max, ky_max])
+            if dim == 3:
+                kz_max = np.nanmax(ks[2, ...])
+                k_max = np.nanmin([k_max, kz_max])
+
+        for t in range(duration):
+            # flatten arrays to feed to binned_statistic\
+            kk_flatten, e_knd_flatten = kk.flatten(), e_ks[..., t].flatten()
+
+            if remove_undersampled_region:
+                mask = np.abs(kk_flatten) > k_max
+                kk_flatten = delete_masked_elements(kk_flatten, mask)
+                e_knd_flatten = delete_masked_elements(e_knd_flatten, mask)
+
+            # print(kk.shape, ek_nd.shape, ukdata.shape, udata.shape)
+            e_k1d, k_edges, binnumber = binned_statistic(kk_flatten, e_knd_flatten, statistic='mean', bins=nkout)
+            e_k1d_std, k_edges, binnumber = binned_statistic(kk_flatten, e_knd_flatten, statistic='std', bins=nkout)
+            counts, k_edges, binnumber = binned_statistic(kk_flatten, e_knd_flatten, statistic='count', bins=nkout)
+            k_binwidth = (k_edges[1] - k_edges[0])
+            k1d = k_edges[1:] - k_binwidth / 2
+
+            if dim == 3:
+                jacobian = 4 * np.pi * (k1d / 2 / np.pi) ** 2
+            elif dim == 2:
+                jacobian = 2 * np.pi * (k1d / 2 / np.pi)
+
+            # ENERGY SPECTRUM
+            freq1d_i, e_freq1d_i = clean_data_interp1d(e_k1d * jacobian, k1d / 2 / np.pi)
+            k1d_i, e_k1d_i = freq1d_i * 2 * np.pi, e_freq1d_i[:, 0] / 2 / np.pi
+            # ENERGY SPECTRUM ERROR
+            # e_freq1d_i_err, e_freq1d_i = clean_data_interp1d(e_k1d_std * jacobian * np.sqrt(counts), k1d / 2 / np.pi)
+            # k1d_i, e_k1d_i_err = freq1d_i * 2 * np.pi, e_freq1d_i_err[:, 0] / 2 / np.pi
+            e_k1d_i_err = e_k1d_std / 2 / np.pi * np.sqrt(counts)
+
+            # Finally, e(k) describes the distribution of AVG energy- divide it by volume
+            volume = n_samples * dx * dy * dz
+            eks[:, t] = e_k1d_i / volume * cc
+            ek_errs[:, t] = e_k1d_i_err / volume * cc
+
+            if debug:
+                total_energy = np.nansum(udata ** 2) * dx * dy * dz / 2
+                total_energy_iso = np.trapz(e_freq1d_i[:, 0], freq1d_i[:, 0])
+                print('total energy in real space: ', total_energy)
+                print('total energy in Fourier space: ', np.nansum(ek_nd) * dfx * dfy * dfz)
+                print(
+                'total energy in Fourier space (isotropic approximation), kmin, kmax: ', total_energy_iso, k1d_i[0, 0],
+                k1d_i[-1, 0])
+                print('volume', volume)
+        k1ds = k1d_i
+        return eks, ek_errs, k1ds
+
+    dim, duration = len(udata), udata.shape[-1]
+
+    e_ks, ks = get_energy_spectrum_nd(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz,
+                                      window=window, correct_signal_loss=correct_signal_loss)
+    e_k, e_k_err, kk = convert_nd_spec_to_1d(e_ks, ks, nkout=nkout, cc=cc, udata=udata, debug=debug)
+
+    if notebook:
+        from tqdm import tqdm as tqdm
+
+    return e_k, e_k_err, kk
+
+def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
+                           z0=0, z1=None, dx=None, dy=None, dz=None,
+                           window=None, correct_signal_loss=True, debug=False):
+    """
+    Returns 1D energy spectrum from velocity field data
+
+    Parameters
+    ----------
+    udata: nd array
+    k: str, default: 'kx'
+        string to specify the direction along which the given velocity field is Fourier-transformed
+    x0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    x1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    dx: float
+        spacing in x
+    dy: float
+        spacing in y
+    dz: float
+        spacing in z
+    window: str
+        Windowing reduces undesirable effects due to the discreteness of the data.
+        A wideband window such as 'flattop' is recommended for turbulent energy spectra.
+
+        For the type of available window function, choose from below:
+        boxcar, triang, blackman, hamming, hann, bartlett, flattop, parzen, bohman, blackmanharris, nuttall, barthann,
+        kaiser (needs beta), gaussian (needs standard deviation), general_gaussian (needs power, width),
+        slepian (needs width), chebwin (needs attenuation), exponential (needs decay scale),
+        tukey (needs taper fraction)
+    correct_signal_loss: bool
+        If True, it would compensate for the loss of the signals due to windowing.
+        Always recommended to obtain accurate spectral densities.
+
+    Returns
+    -------
+    eiis: numpy array
+        eiis[0] = E11, eiis[1] = E22
+        ... 1D energy spectra with argument k="k" (kx by default)
+    eii_errs: numpy array:
+        eiis[0] = E11_error, eiis[1] = E22_error
+    k: 1d numpy array
+        Wavenumber with shape (number of data points, )
+        ... Unlike get_energy_spectrum(...), this method NEVER outputs the wavenumber array with shape (number of data points, duration)
+    """
+    if x0 is None:
+        x0 = 0
+    if y0 is None:
+        y0 = 0
+    if x1 is None:
+        x1 = udata[0].shape[1]
+    if y1 is None:
+        y1 = udata[0].shape[0]
+
+    udata = fix_udata_shape(udata)
+    dim, duration = len(udata), udata.shape[-1]
+    if dim == 2:
+        ux, uy = udata[0, y0:y1, x0:x1, :], udata[1, y0:y1, x0:x1, :]
+        height, width, duration = ux.shape
+        udata_tmp = udata[:, y0:y1, x0:x1, :]
+    elif dim == 3:
+        ux, uy, uz = udata[0, y0:y1, x0:x1, z0:z1, :], udata[1, y0:y1, x0:x1, z0:z1, :], udata[2, y0:y1, x0:x1, z0:z1,:]
+        height, width, depth, duration = ux.shape
+        udata_tmp = udata[:, y0:y1, x0:x1, z0:z1, :]
+    else:
+        raise ValueError('... Error: Invalid dimension is given. Use 2 or 3 for the number of spatial dimensions. ')
+
+
+    if k == 'kx':
+        ax_ind = 1  # axis number to take 1D DFT
+        n = width
+        d = dx
+        if dim == 2:
+            ax_ind_for_avg = 0  # axis number(s) to take statistics (along y)
+        elif dim == 3:
+            ax_ind_for_avg = (0, 2)  # axis number(s) to take statistics  (along y and z)
+    elif k == 'ky':
+        ax_ind = 0  # axis number to take 1D DFT
+        n = height
+        d = dy
+        if dim == 2:
+            ax_ind_for_avg = 1  # axis number(s) to take statistics  (along x)
+        elif dim == 3:
+            ax_ind_for_avg = (1, 2)  # axis number(s) to take statistics  (along x and z)
+    elif k == 'kz':
+        ax_ind = 2  # axis number to take 1D DFT
+        n = depth
+        d = dz
+        ax_ind_for_avg = (0, 1)  # axis number(s) along which statistics is computed  (along x and y)
+    freq = np.fft.fftshift(np.fft.fftfreq(n, d=d))
+    deltaf = freq[1] - freq[0]
+    n_samples = ux.shape[ax_ind]
+
+    # Apply a hamming window to get lean FFT spectrum for aperiodic signals
+    if window is not None:
+        duration = udata.shape[-1]
+        if dim == 2:
+            xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+            windows = get_window_radial(xx, yy, wtype=window, duration=duration, x0=x0, x1=x1, y0=y0, y1=y1)
+            udata_tapered = np.empty_like(udata_tmp)
+            for i in range(dim):
+                udata_tapered[i, ...] = udata_tmp[i, ...] * windows
+            ux, uy = udata_tapered
+        elif dim == 3:
+            xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+            windows = get_window_radial(xx, yy, zz, wtype=window, duration=duration, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0,
+                                        z1=z1)
+            udata_tapered = np.empty_like(udata_tmp)
+            for i in range(dim):
+                udata_tapered[i, ...] = udata_tmp[i, ...] * windows
+            ux, uy, uz = udata_tapered
+
+    if correct_signal_loss:
+        if window is not None:
+            if dim == 2:
+                xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+                window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
+                signal_intensity_loss = np.nanmean(window_arr)
+            elif dim == 3:
+                xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+                window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
+                signal_intensity_loss = np.nanmean(window_arr)
+        else:
+            signal_intensity_loss = 1.
+    # E11
+    ux_k = np.fft.fftshift(np.fft.fft(ux, axis=ax_ind))
+    ux_k /= 2 * np.pi * deltaf * n_samples# convert to spectral density (Power per wavenumber)
+    e11_nd = np.abs(ux_k * np.conj(ux_k)) * 2 # e11 is defined as twice as the square of the 1D FT of u1
+    e11 = np.nanmean(e11_nd, axis=ax_ind_for_avg)
+    e11_err = np.nanstd(e11_nd, axis=ax_ind_for_avg)
+
+    # E22
+    uy_k = np.fft.fftshift(np.fft.fft(uy, axis=ax_ind))
+    uy_k /= 2 * np.pi *deltaf * n_samples # convert to spectral density
+    e22_nd = np.abs(uy_k * np.conj(uy_k)) * 2 # e22 is defined as twice as the square of the 1D FT of u2
+    e22 = np.nanmean(e22_nd, axis=ax_ind_for_avg)
+    e22_err = np.nanstd(e22_nd, axis=ax_ind_for_avg)
+
+
+    # Get an array for wavenumber
+    k = np.fft.fftfreq(n, d=d) * 2 * np.pi  # shape=(n, duration)
+    k = np.fft.fftshift(k)
+    deltak = k[1] - k[0]
+    if dim == 3:
+        # E33
+        uz_k = np.fft.fftshift(np.fft.fft(uz, axis=ax_ind))
+        uz_k /= 2 * np.pi *deltaf * n_samples  # convert to spectral density
+        e33_nd = np.abs(uz_k * np.conj(uz_k)) * 2 # e33 is defined as twice as the square of the 1D FT of u3
+        e33 = np.nanmean(e33_nd, axis=ax_ind_for_avg)
+        e33_err = np.nanstd(e33_nd, axis=ax_ind_for_avg)
+
+        # Must divide by 2pi because np.fft.fft() performs in the frequency space (NOT angular frequency space)
+        eiis, eii_errs = np.array([e11, e22, e33]), np.array([e11_err, e22_err, e33_err])
+    elif dim == 2:
+        # Must divide by 2pi^2 because np.fft.fft() performs in the frequency space (NOT angular frequency space)
+        eiis, eii_errs = np.array([e11, e22]), np.array([e11_err, e22_err])
+    else:
+        raise ValueError('... 1d spectrum: Check the dimension of udata! It must be 2 or 3!')
+
+
+    # Windowing causes the loss of the signal (energy.)
+    # ... This compensates for the loss.
+    if correct_signal_loss:
+        for i in range(dim):
+            eiis[i] /= signal_intensity_loss
+            eii_errs[i] /= signal_intensity_loss
+    if debug:
+        print('get_1d_energy_spectrum(): debug is set True. It will check the property \int_0^\infty Eii = 2 <ui ui>' )
+        etavg = get_time_avg_energy(udata)
+
+        for i in range(dim):
+            ui2_tavg = np.nanmean(udata[i, ...]**2, axis=tuple(range(dim)))
+            k_i, eiis_i = clean_data_interp1d(eiis[i, ...], k)
+            integral_i = np.trapz(eiis_i, x=k_i, axis=0)
+            print('... <u%d squared> / integral of E_%d%d: ' % (i+1, i+1, i+1), ui2_tavg / integral_i )
     return eiis, eii_errs, k
 
 
@@ -7447,6 +8066,78 @@ def clean_data(data, mask=None,
         from tqdm import tqdm as tqdm
 
     return data
+
+def clean_data_interp1d(y, x=None, thd=None, p=0.98):
+    """
+    Replaces np.nan in the input with linearly interpolated values
+
+
+    Parameters
+    ----------
+    y: nd array with shape (n,) or (n, duration)
+    x: nd array with shape (n,) or (n, duration) (optional)
+        ... MUST have the same shape as y
+    thd: float
+        ... threshold on the slope (dy/dx) used to spot the spurious values
+        ... If np.abs( dy/dx )  / y) < thd, the points in y will be removed, and will be interpolated as well as np.nan in y.
+    p: float, 0 < p < 1
+        ... if thd is None, it will remove (1-p) of the data points in y, and replaces with the interpolated values
+
+    Returns:
+    ----------
+    x_output: nd array with shape (n, 1) or (n, duration)
+        ... new x for new y
+    y_output: nd array with shape (n, 1) or (n, duration)
+        ... interpolated y
+    """
+    y = np.asarray(y)
+    if len(y.shape) == 1:
+        shape = y.shape
+        y = y.reshape(shape + (1,))
+    duration = y.shape[1]
+
+    if x is None:
+        x = np.arange(len(y_tmp))
+        x = x.reshape(shape + (1,))
+    else:
+        x = np.asarray(x)
+        if len(x.shape) == 1:
+            shape = x.shape
+            x = x.reshape(shape + (1,))
+
+    x_output, y_output = np.empty_like(x), np.empty_like(y)
+
+    for t in range(duration):
+        y_tmp = y[:, t]
+        x_tmp = x[:, t]
+
+        keep_x_0, keep_y_0 = ~np.isnan(x_tmp), ~np.isnan(y_tmp)
+        keep_x_1, keep_y_1 = ~np.isinf(x_tmp), ~np.isinf(y_tmp)
+        keep = keep_x_0 * keep_y_0 * keep_x_1 * keep_y_1
+        x_keep, y_keep = x_tmp[keep], y_tmp[keep]
+
+        fractional_dydx = np.gradient(y_keep, x_keep) / y_keep
+
+        if thd is None:
+            zeta = sorted(np.abs(fractional_dydx))
+            n_zeta = len(zeta)
+            try:
+                thd = zeta[int(n_zeta * p)]
+            except:
+                thd = zeta[-1]
+        mask = np.abs(fractional_dydx) < thd
+        mask = np.roll(mask, 1)  # shift the resulting array (due to the convention of np.gradient)
+
+        x_clean, y_clean = x_keep[mask], y_keep[mask]
+
+        f = interpolate.interp1d(x_clean, y_clean)
+
+        xmin, xmax = np.nanmin(x_clean), np.nanmax(x_clean)
+        new_x = np.linspace(xmin, xmax, len(x_tmp))
+        y_interpolated = f(new_x)
+        x_output[:, t] = new_x
+        y_output[:, t] = y_interpolated
+    return x_output, y_output
 
 
 def get_instantaneous_center_of_energy(udata, xx, yy, zz=None,

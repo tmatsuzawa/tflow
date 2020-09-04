@@ -235,7 +235,6 @@ def plot(x, y=None, fignum=1, figsize=None, label='', color=None, subplot=None, 
         keep = get_mask4erroneous_pts(x, y, thd=thd)
     else:
         keep = [True] * len(x)
-
     if color is None:
         ax.plot(x[keep], y[keep], label=label, **kwargs)
     else:
@@ -2318,7 +2317,7 @@ def get_colors_and_cmap_using_values(values, cmap=None, color1='greenyellow', co
     colors = cmap(norm(values))
     return colors, cmap, norm
 
-def get_color_list_gradient(color1='greenyellow', color2='darkgreen', color3='darkgreen', n=10):
+def get_color_list_gradient(color1='greenyellow', color2='darkgreen', color3=None, n=10):
     """
     Returns a list of colors in RGB between color1 and color2
     Input (color1 and color2) can be RGB or color names set by matplotlib
@@ -2333,7 +2332,6 @@ def get_color_list_gradient(color1='greenyellow', color2='darkgreen', color3='da
     color_list
     """
     if color3 is None:
-
         # convert color names to rgb if rgb is not given as arguments
         if not color1[0] == '#':
             color1 = cname2hex(color1)
@@ -2617,8 +2615,9 @@ def draw_rectangle(ax, x, y, width, height, angle=0.0, linewidth=1, edgecolor='r
     return rect
 
 
-def draw_box(ax, xx, yy, w_box=325., h_box=325., xoffset=0, yoffset=0, linewidth=5,
-             scalebar=True, sb_length=50., sb_units='$mm$', sb_loc=(0.95, 0.1), sb_txtloc=(0.0, 0.4), sb_lw=10, sb_txtcolor='white',
+def draw_box(ax, xx, yy, w_box=351., h_box=351., xoffset=0, yoffset=0, linewidth=5,
+             scalebar=True, sb_length=50., sb_units='$mm$', sb_loc=(0.95, 0.1), sb_txtloc=(0.0, 0.4),
+             sb_lw=10, sb_txtcolor='white', sb_fontsize=None,
              facecolor='k', fluidcolor='skyblue'):
     """
     Draws a box and fills the surrounding area with color (default: skyblue)
@@ -2633,9 +2632,9 @@ def draw_box(ax, xx, yy, w_box=325., h_box=325., xoffset=0, yoffset=0, linewidth
     yy: 2d numpy array
         y coordinates
     w_box: float/int
-        width of the box
+        width of the box- used to be set as 325
     h_box: float/int
-        height of the box
+        height of the box- used to be set as 325
     xoffset: float/int
         real number to shift the box center in the x direction
     yoffset:
@@ -2693,7 +2692,7 @@ def draw_box(ax, xx, yy, w_box=325., h_box=325., xoffset=0, yoffset=0, linewidth
         xmin, xmax, ymin, ymax = ax.axis()
         width, height = xmax - xmin, ymax - ymin
         ax.plot(x_sb, y_sb, linewidth=sb_lw, color=sb_txtcolor)
-        ax.text(x_sb_txt, y_sb_txt, '%d %s' % (sb_length, sb_units), color=sb_txtcolor)
+        ax.text(x_sb_txt, y_sb_txt, '%d %s' % (sb_length, sb_units), color=sb_txtcolor, fontsize=None)
     ax.get_xaxis().set_visible(False)
     ax.get_yaxis().set_visible(False)
 
