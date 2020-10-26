@@ -201,7 +201,7 @@ def plotfunc(func, x, param, fignum=1, subplot=111, ax = None, label=None, color
     return fig, ax
 
 def plot(x, y=None, fignum=1, figsize=None, label='', color=None, subplot=None, legend=False,
-         fig=None, ax=None, maskon=False, thd=1, **kwargs):
+         fig=None, ax=None, maskon=False, thd=1, xmax=None, **kwargs):
     """
     plot a graph using given x,y
     fignum can be specified
@@ -235,6 +235,8 @@ def plot(x, y=None, fignum=1, figsize=None, label='', color=None, subplot=None, 
         keep = get_mask4erroneous_pts(x, y, thd=thd)
     else:
         keep = [True] * len(x)
+    if xmax is not None:
+        keep *= x < xmax
     if color is None:
         ax.plot(x[keep], y[keep], label=label, **kwargs)
     else:
@@ -441,7 +443,10 @@ def plot_spline(x, y=None, order=3,
 
 
 
-def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None, label='Re$_{\lambda} \approx 600 $ \n Saddoughi and Veeravalli, 1994', color='k', alpha=0.6, subplot=None, legend=False, **kwargs):
+def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None,
+                   # label='Re$_{\lambda} \\approx 600 $ \n Saddoughi and Veeravalli, 1994',
+                   label='Re$_{\lambda} \\approx 600 $ \n SV, 1994',
+                   color='k', alpha=0.6, subplot=None, cc=1, legend=False, **kwargs):
     """
     plot universal 1d energy spectrum (Saddoughi, 1992)
     """
@@ -454,7 +459,7 @@ def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None, label='Re$_{\lambd
 
     x = np.asarray([1.27151, 0.554731, 0.21884, 0.139643, 0.0648844, 0.0198547, 0.00558913, 0.00128828, 0.000676395, 0.000254346])
     y = np.asarray([0.00095661, 0.0581971, 2.84666, 11.283, 59.4552, 381.78, 2695.48, 30341.9, 122983, 728530])
-
+    y *= cc
     ax.plot(x, y, color=color, label=label, alpha=alpha,**kwargs)
     if legend:
         ax.legend()
@@ -585,7 +590,31 @@ def scatter3d(x, y, z, ax=None, fig=None, fignum=1, figsize=None, marker='o',
     set_axes_equal(ax)
     return fig, ax
 
-def pdf(data, nbins=10, return_data=False, vmax=None, vmin=None, fignum=1, figsize=None, subplot=None, density=True, analyze=False, **kwargs):
+def pdf(data, nbins=100, return_data=False, vmax=None, vmin=None,
+        fignum=1, figsize=None, subplot=None, density=True, analyze=False, **kwargs):
+    """
+    Plots a probability distribution function of ND data
+    ... a wrapper for np.histogram and matplotlib
+    ... Returns fig, ax, (optional: bins, hist)
+
+    Parameters
+    ----------
+    data
+    nbins
+    return_data
+    vmax
+    vmin
+    fignum
+    figsize
+    subplot
+    density
+    analyze
+    kwargs
+
+    Returns
+    -------
+
+    """
     def compute_pdf(data, nbins=10):
         # Get a normalized histogram
         # exclude nans from statistics
@@ -915,7 +944,7 @@ def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None
 
 #imshow
 def imshow(griddata, xmin=0, xmax=1, ymin=0, ymax=1, cbar=True, vmin=0, vmax=0, \
-           fignum=1, subplot=111, figsize=__figsize__, interpolation='nearest', cmap='bwr', scale=1.0,
+           fignum=1, subplot=111, figsize=__figsize__, interpolation='nearest', cmap='bwr',
            key_kwargs={},
            **kwargs):
     """
@@ -958,11 +987,61 @@ def imshow(griddata, xmin=0, xmax=1, ymin=0, ymax=1, cbar=True, vmin=0, vmax=0, 
 def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
            inc_x=1, inc_y=1, inc=None, color='k',
            vmin=None, vmax=None,
+           absolute=False,
            key=True, key_loc=[0.8, 1.06], key_length=None,
            key_label=None, key_units='mm/s', key_labelpos='E',
            key_pad=25., key_fmt='.1f',
            key_kwargs={},
-           aspect='equal', **kwargs):
+           aspect='equal',
+           **kwargs):
+    """
+    Wrapper for plt.quiver()
+
+    Some tips:
+    ... plt.quiver() autoscales the arrows. This may be problematic if you want to show them with absolute scales.
+    ... I got a workaround for you. You can control this by toggling a boolean "absolute"
+    ...... If "absolute" is False, it autoscales.
+    ...... If "absolute" is True, you must supply "scale" (float)
+    ......... e.g. Plot two quiver plots with the same scale
+            fig1, ax1, Q1 = quiver(x1, y1, u1, v1, scale=4, fignum=1, key_length=50)
+            quiver(x2, y2, u2, v2, scale=4, fignum=2, key_length=50) # scale could be Q1.scale
+    ............ This ensures to plot the arrows with the same scale with the same quiver key.
+                This is essential to create an animation of quiver plots to avoid distraction.
+
+    Parameters
+    ----------
+    x
+    y
+    u
+    v
+    subplot
+    fignum
+    figsize
+    ax
+    inc_x
+    inc_y
+    inc
+    color
+    vmin
+    vmax
+    absolute
+    u_ref
+    key
+    key_loc
+    key_length
+    key_label
+    key_units
+    key_labelpos
+    key_pad
+    key_fmt
+    key_kwargs
+    aspect
+    kwargs
+
+    Returns
+    -------
+
+    """
     if ax is None:
         fig, ax = set_fig(fignum, subplot, figsize=figsize)
     else:
@@ -972,6 +1051,7 @@ def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
     x_tmp, y_temp = x[::inc_y, ::inc_x], y[::inc_y, ::inc_x]
     u_tmp, v_tmp = u[::inc_y, ::inc_x], v[::inc_y, ::inc_x]
     u_norm = np.sqrt(u_tmp ** 2 + v_tmp ** 2)
+    u_rms = np.sqrt(np.nanmean(u_tmp ** 2 + v_tmp ** 2))
 
     if vmin is None:
         vmin = np.nanmin(u_norm)
@@ -993,13 +1073,14 @@ def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
             # key_length = 10 ** round(np.log10(U_rms))
             # key_length = 10 ** round(np.log10(U_rmedians))
             # key_length = round(U_rmedians, int(-round(np.log10(U_rmedians))) + 1) * 5
-            key_length = round(U_rms, int(-round(np.log10(U_rms))) + 1)
+            key_length = round(u_rms, int(-round(np.log10(U_rms))) + 1)
         if key_label is None:
             key_label = '{:' + key_fmt + '} '
             key_label = key_label.format(key_length) + key_units
         title(ax, '   ') # dummy title to create space on the canvas
         ax._set_title_offset_trans(key_pad)
-
+        # print(key_length)
+        # print(Q.scale)
         ax.quiverkey(Q, key_loc[0], key_loc[1], key_length, key_label, labelpos=key_labelpos, coordinates='axes',
                      color=color, **key_kwargs)
     ax.set_aspect(aspect)

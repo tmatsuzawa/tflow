@@ -4,10 +4,9 @@ import numpy as np
 import numpy.ma as ma
 import re
 import h5py
-from scipy import fftpack, signal
+from scipy import fftpack, signal, integrate
 from scipy.interpolate import interp2d, griddata, UnivariateSpline, RegularGridInterpolator, LinearNDInterpolator
 from scipy.stats import binned_statistic, binned_statistic_2d, multivariate_normal
-import scipy.integrate as integrate
 from scipy.optimize import minimize, curve_fit
 from scipy import ndimage, interpolate, signal, special
 from scipy.signal import butter, medfilt, filtfilt # filters for signal processing
@@ -256,6 +255,88 @@ def reynolds_decomposition(udata):
     return u_mean, u_turb
 
 
+def get_mean_flow_field_using_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
+                                        t0=0, t1=None, inc=1,
+                                        clean=True, cutoff=np.inf, method='nn', median_filter=False, verbose=False,
+                                        notebook=True):
+    """
+    Returns mean_field when a path to udata is provided
+    ... recommended to use if udata is large (> half of your memory size)
+    ... only a snapshot of data exists on memory while time-averaging is performed
+
+    Parameters
+    ----------
+    udatapath: str
+        ... path to udata
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    t0 int, default: 0
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+    t1 int, default: None
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+    slicez: int, default: None
+        ... Option to return a 2D time-averaged field at z=slicez from 4D udata
+        ... This is mostly for the sake of fast turnout of analysis
+    inc: int, default: 1
+        ... time increment to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+    thd: float, default: np.inf
+        ... energy > thd will be replaced by fill_value. (Manual screening of data)
+    fill_value: float, default: np.nan
+        ... value used to fill the data when data value is greater than a threshold
+
+    Returns
+    -------
+
+    """
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+        print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+    else:
+        from tqdm import tqdm
+
+    with h5py.File(udatapath, mode='r') as f:
+        try:
+            height, width, depth, duration = f['ux'].shape
+            height, width, depth = f['ux'][y0:y1, x0:x1, z0:z1, 0].shape
+            dim = 3
+            shape = (dim, height, width, depth)
+        except:
+            height, width, duration = f['ux'].shape
+            height, width = f['ux'][y0:y1, x0:x1, 0].shape
+            dim = 2
+            shape = (dim, height, width)
+        if t1 is None:
+            t1 = duration
+        udata_m = np.zeros(shape)
+
+        counter = 0
+        for t in tqdm(range(t0, t1, inc)):
+            udata_tmp = get_udata_from_path(udatapath,
+                                            x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1,
+                                            t0=t, t1=t+1, verbose=verbose)
+            if clean:
+                udata_tmp = clean_udata(udata_tmp, cutoff=cutoff, method=method, median_filter=median_filter,
+                                    verbose=verbose, showtqdm=verbose)
+            else:
+                udata_tmp = fix_udata_shape(udata_tmp)
+            udata_m += udata_tmp[..., 0]
+            counter += 1
+        udata_m /= counter
+
+    if notebook:
+        from tqdm import tqdm
+    return udata_m
+
 ########## vector operations ##########
 def div(udata, dx=1., dy=1., dz=1., xyz_orientations=np.asarray([1, -1, 1]), xx=None, yy=None, zz=None):
     """
@@ -503,7 +584,12 @@ def get_spatial_avg_energy(udata, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None):
         udata = udata[:, y0:y1, x0:x1, z0:z1, :]
     energy = get_energy(udata)
     energy_vs_t = np.nanmean(energy, axis=tuple(range(dim)))
-    energy_vs_t_err = np.nanstd(energy, axis=tuple(range(dim)))
+    energy_vs_t_std = np.nanstd(energy, axis=tuple(range(dim)))
+
+    n_elements = np.empty(energy.shape[-1])
+    for t in range(energy.shape[-1]):
+        n_elements[t] = np.sum(~np.isnan(energy[..., t]))
+    energy_vs_t_err = energy_vs_t_std / np.sqrt(n_elements)
     return energy_vs_t, energy_vs_t_err
 
 
@@ -540,7 +626,12 @@ def get_spatial_avg_enstrophy(udata, x0=0, x1=None, y0=0, y1=None,
 
     enstrophy = get_enstrophy(udata, dx=dx, dy=dy, dz=dz, xx=xx, yy=yy, zz=zz)
     enstrophy_vs_t = np.nanmean(enstrophy, axis=tuple(range(dim)))
-    enstrophy_vs_t_err = np.nanstd(enstrophy, axis=tuple(range(dim)))
+    enstrophy_vs_t_std = np.nanstd(enstrophy, axis=tuple(range(dim)))
+
+    n_elements = np.empty(enstrophy.shape[-1])
+    for t in range(enstrophy.shape[-1]):
+        n_elements[t] = np.sum(~np.isnan(enstrophy[..., t]))
+    energy_vs_t_err = enstrophy_vs_t_std / np.sqrt(n_elements)
     return enstrophy_vs_t, enstrophy_vs_t_err
 
 
@@ -767,76 +858,6 @@ def compute_line_integral(*args, **kwargs):
     return results
 
 
-def compute_streamfunction_values(udata, xx, yy, x, y,
-                                  contour=None, rs=[10.],
-                                  n=100, return_contours=False):
-    contours = []
-    udata = fix_udata_shape(udata)
-    dim, duration = udata.shape[0], udata.shape[-1]
-
-
-    if dim == 3:
-        raise ValueError(
-            '... Spatially 3D udata is provided. \n'
-            'Potential formation of 3D flows is possible but is out of the scope of this function')
-
-    if contour is None:
-        thetas = np.linspace(0, 2 * np.pi, n)
-        gammas = np.empty((len(rs), duration))
-        for m, r in enumerate(rs):
-            xs = x + r * (np.cos(thetas) - 1)
-            ys = y + r * (np.sin(thetas) - 1)
-
-            dx = np.diff(xs, append=xs[0])
-            dy = np.diff(ys, append=ys[0])
-
-            dl = np.stack((dx, dy)).T
-            contour = np.stack((xs, ys)).T  # x, y
-            contour4int_func = contour[:, [1, 0]]  # y, x
-
-            contours.append(contour)
-
-            # Interpolating function, output of interpolate_udata_at_instant_of_time(), requires arguments y, x, z
-            # in that order (... this is just a convention)
-            # To accomodate this, change the order of the contour array
-            for t in range(duration):
-                fs = interpolate_udata_at_instant_of_time(udata, xx, yy, zz=zz, t=t)
-                gamma = 0  # initialization
-                for i in range(dim):
-                    uxi_along_cntr = fs[i](contour4int_func)  # fs[i]( (y, x, z) ): ui at (x, y, z)
-                    gamma += uxi_along_cntr * dl[:, i]
-                gammas[m, t] = np.nanmean(gamma) * len(uxi_along_cntr)
-    else:
-        contours.append(contour)
-        if contour.shape[-1] == 2:
-            contour4int_func = contour[:, [1, 0]]
-        elif contour.shape[-1] == 3:
-            contour4int_func = contour[:, [1, 0, 2]]
-
-        if dim != contour.shape[-1]:
-            print('... udata dimension and contour dimension does not match!')
-            print('... This makes ambiguious how to compute a line integral. Aborting... ')
-            sys.exit(1)
-        else:
-            dxis = []
-            for i in range(dim):
-                dxi = np.diff(contour[:, i], append=contour[0, i])
-                dxis.append(dxi)
-            dl = np.stack([dxi for dxi in dxis]).T
-
-            gammas = np.empty(duration)
-            for t in range(duration):
-                fs = interpolate_udata_at_instant_of_time(udata, xx, yy, zz=zz, t=t)
-                gamma = 0  # initialization
-                for i in range(dim):
-                    uxi_along_cntr = fs[i](contour4int_func)
-                    gamma += uxi_along_cntr * dl[:, i]
-                gammas[t] = np.nanmean(gamma) * len(uxi_along_cntr)
-    if return_contours:
-        contours = np.asarray(contours)
-        return gammas, contours
-    else:
-        return gammas
 
 
 ########## Energy spectrum, Dissipation spectrum ##########
@@ -1589,7 +1610,7 @@ def get_1d_energy_spectrum_old(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
     return eiis, eii_errs, k
 
 #### Energy spectra computation (UP-TO-DATE)
-def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
+def get_energy_spectrum_nd_ver2(udata, x0=0, x1=None, y0=0, y1=None,
                            z0=0, z1=None, dx=None, dy=None, dz=None,
                            window=None, correct_signal_loss=True,
                            return_in = 'spectral density'):
@@ -1773,7 +1794,7 @@ def get_energy_spectrum_nd(udata, x0=0, x1=None, y0=0, y1=None,
         return ek, np.asarray([kxx, kyy, kzz])
 
 
-def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
+def get_energy_spectrum_ver2(udata, x0=0, x1=None, y0=0, y1=None,
                         z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
                         window=None, correct_signal_loss=True, remove_undersampled_region=True,
                         cc=1, notebook=True, debug=False):
@@ -1939,7 +1960,7 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
 
         for t in range(duration):
             # flatten arrays to feed to binned_statistic\
-            kk_flatten, e_knd_flatten = kk.flatten(), e_ks[..., t].flatten()
+            kk_flatten, e_knd_flatten = kk.flatten(), ek_nd[..., t].flatten()
 
             if remove_undersampled_region:
                 mask = np.abs(kk_flatten) > k_max
@@ -1980,12 +2001,12 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
                 'total energy in Fourier space (isotropic approximation), kmin, kmax: ', total_energy_iso, k1d_i[0, 0],
                 k1d_i[-1, 0])
                 print('volume', volume)
-        k1ds = k1d_i
+        k1ds = k1d_i[:, 0]
         return eks, ek_errs, k1ds
 
     dim, duration = len(udata), udata.shape[-1]
 
-    e_ks, ks = get_energy_spectrum_nd(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz,
+    e_ks, ks = get_energy_spectrum_nd_ver2(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz,
                                       window=window, correct_signal_loss=correct_signal_loss)
     e_k, e_k_err, kk = convert_nd_spec_to_1d(e_ks, ks, nkout=nkout, cc=cc, udata=udata, debug=debug)
 
@@ -2126,8 +2147,12 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
                 signal_intensity_loss = np.nanmean(window_arr)
         else:
             signal_intensity_loss = 1.
+    print('deltaf, nsamples, d', deltaf, n_samples, d)
+    print('dx, 1/deltaf/n', d, 1/deltaf/n_samples)
     # E11
     ux_k = np.fft.fftshift(np.fft.fft(ux, axis=ax_ind))
+
+    print('Parseval', np.nansum(ux**2)/(np.nansum(np.abs(ux_k * np.conj(ux_k)) * 2) / n_samples))
     ux_k /= 2 * np.pi * deltaf * n_samples# convert to spectral density (Power per wavenumber)
     e11_nd = np.abs(ux_k * np.conj(ux_k)) * 2 # e11 is defined as twice as the square of the 1D FT of u1
     e11 = np.nanmean(e11_nd, axis=ax_ind_for_avg)
@@ -2135,7 +2160,7 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
 
     # E22
     uy_k = np.fft.fftshift(np.fft.fft(uy, axis=ax_ind))
-    uy_k /= 2 * np.pi *deltaf * n_samples # convert to spectral density
+    uy_k /= 2 * np.pi * deltaf * n_samples # convert to spectral density
     e22_nd = np.abs(uy_k * np.conj(uy_k)) * 2 # e22 is defined as twice as the square of the 1D FT of u2
     e22 = np.nanmean(e22_nd, axis=ax_ind_for_avg)
     e22_err = np.nanstd(e22_nd, axis=ax_ind_for_avg)
@@ -2170,13 +2195,11 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
             eii_errs[i] /= signal_intensity_loss
     if debug:
         print('get_1d_energy_spectrum(): debug is set True. It will check the property \int_0^\infty Eii = 2 <ui ui>' )
-        etavg = get_time_avg_energy(udata)
-
         for i in range(dim):
-            ui2_tavg = np.nanmean(udata[i, ...]**2, axis=tuple(range(dim)))
-            k_i, eiis_i = clean_data_interp1d(eiis[i, ...], k)
-            integral_i = np.trapz(eiis_i, x=k_i, axis=0)
-            print('... <u%d squared> / integral of E_%d%d: ' % (i+1, i+1, i+1), ui2_tavg / integral_i )
+            ui2_tavg = np.nanmean(udata[i, ...]**2, axis=tuple(range(dim)))[0]
+            k_i, eiis_i = clean_data_interp1d(eiis[i, ..., 0], k)
+            integral_i = np.trapz(eiis_i[..., 0], x=k_i[:, 0], axis=0)
+            print('...Frame0: <u%d squared> / integral of E_%d%d: ' % (i+1, i+1, i+1), ui2_tavg / integral_i )
     return eiis, eii_errs, k
 
 
@@ -4965,7 +4988,10 @@ def get_integral_scales_iso_spec(udata, e_k, k):
     u2_irms = get_characteristic_velocity(udata) ** 2
     L_iso_spec = []
     for t in range(duration):
-        L_iso_spec.append(np.pi / (2. * u2_irms[t]) * np.trapz(e_k[1:, t] / k[1:, t], k[1:, t]))
+        try:
+            L_iso_spec.append(np.pi / (2. * u2_irms[t]) * np.trapz(e_k[1:, t] / k[1:, t], k[1:, t]))
+        except:
+            L_iso_spec.append(np.pi / (2. * u2_irms[t]) * np.trapz(e_k[1:, t] / k[1:], k[1:]))
     return np.asarray(L_iso_spec)
 
 
@@ -5268,7 +5294,7 @@ def get_skewness(udata, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=No
         y1 = udata[0].shape[0]
 
     udata = fix_udata_shape(udata)
-    dim = len(udata)
+    dim = udata.shape[0]
 
     if dim == 2:
         udata = udata[:, y0:y1, x0:x1, t0:t1]
@@ -5704,7 +5730,8 @@ def get_rescaled_structure_function_saddoughi(p=2):
 # To do so, use the following helper.
 
 def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
-                        x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, inc=10, notebook=True, **kwargs):
+                        x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, inc=10, notebook=True,
+                        clean=False, cutoff=np.inf, median_filter=False, replace_zeros=True, **kwargs):
     """
     (For 3D velocity field data)
     Given a path to a hdf5 file which stores udata,
@@ -5750,6 +5777,8 @@ def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
         # load a dummy data
         udata, xx, yy, zz = get_udata_from_path(udatapath, return_xy=True, t0=t, t1=t + 1,
                                                 x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, verbose=False)
+        if clean:
+            udata = clean_udata(udata, cutoff=cutoff, verbose=False, median_filter=median_filter,  replace_zeros=replace_zeros, showtqdm=False)
         if i == 0:
             datalist = []
             result = func(udata, **kwargs)
@@ -5783,6 +5812,7 @@ def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
 
 def get_time_avg_energy_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                                        t0=0, t1=None, slicez=None, inc=1, thd=np.inf, fill_value=np.nan,
+                                       udata_mean=None,
                                        notebook=True):
     """
     Returns time-averaged energy when a path to udata is provided
@@ -5846,12 +5876,12 @@ def get_time_avg_energy_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None, 
                 eavg = np.zeros((height, width, depth))
                 counters = np.zeros((height, width, depth))
                 for t in tqdm(range(t0, t1, inc)):
-                    energy_inst = (f['ux'][y0:y1, x0:x1, z0:z1, t] ** 2 + f['uy'][y0:y1, x0:x1, z0:z1, t] ** 2 + f[
-                                                                                                                     'uz'][
-                                                                                                                 y0:y1,
-                                                                                                                 x0:x1,
-                                                                                                                 z0:z1,
-                                                                                                                 t] ** 2) / 2.
+                    udata = np.stack((f['ux'][y0:y1, x0:x1, z0:z1, t],
+                                      f['uy'][y0:y1, x0:x1, z0:z1, t],
+                                      f['uz'][y0:y1, x0:x1, z0:z1, t]))
+                    if udata_mean is not None:
+                        udata -= udata_mean
+                    energy_inst = get_energy(udata)
                     energy_inst[energy_inst > thd] = fill_value
                     eavg = np.nansum(np.stack((eavg, energy_inst)), 0)
                     counters += ~np.isnan(energy_inst)
@@ -5860,9 +5890,12 @@ def get_time_avg_energy_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None, 
                 eavg = np.zeros((height, width))
                 counters = np.zeros((height, width))
                 for t in tqdm(range(t0, t1, inc)):
-                    energy_inst = (f['ux'][y0:y1, x0:x1, slicez - z0, t] ** 2 + f['uy'][y0:y1, x0:x1, slicez - z0,
-                                                                                t] ** 2 + f['uz'][y0:y1, x0:x1,
-                                                                                          slicez - z0, t] ** 2) / 2.
+                    udata = np.stack((f['ux'][y0:y1, x0:x1, slicez - z0, t],
+                                      f['uy'][y0:y1, x0:x1, slicez - z0, t],
+                                      f['uz'][y0:y1, x0:x1, slicez - z0, t]))
+                    if udata_mean is not None:
+                        udata -= udata_mean
+                    energy_inst = get_energy(udata)
                     energy_inst[energy_inst > thd] = fill_value
                     eavg = np.nansum(np.stack((eavg, energy_inst)), 0)
                     counters += ~np.isnan(energy_inst)
@@ -5871,7 +5904,11 @@ def get_time_avg_energy_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None, 
             eavg = np.zeros((height, width))
             counters = np.zeros((height, width))
             for t in tqdm(range(t0, t1, inc)):
-                energy_inst = (f['ux'][y0:y1, x0:x1, t] ** 2 + f['uy'][y0:y1, x0:x1, t] ** 2) / 2.
+                udata = np.stack((f['ux'][y0:y1, x0:x1, t],
+                                  f['uy'][y0:y1, x0:x1, t]))
+                if udata_mean is not None:
+                    udata -= udata_mean
+                energy_inst = get_energy(udata)
                 energy_inst[energy_inst > thd] = fill_value
                 eavg = np.nansum(np.stack((eavg, energy_inst)), 0)
                 counters += ~np.isnan(energy_inst)
@@ -5901,7 +5938,7 @@ def count_nans_along_axis(udatapath, axis='z',
     array in which a fraction of nans in udata is included
     """
     shape = get_udata_dim(udatapath)
-    dim = shape[0]
+    dim = len(shape)-1
     nnan_list = []
 
     if x1 is None:
@@ -5921,8 +5958,7 @@ def count_nans_along_axis(udatapath, axis='z',
         print('... 2D udata. Returns the ratio of the no. of nans to the column length along x')
         axis = 'x'
     else:
-        print(
-                    '... 3D udata. Returns the ratio of the no. of nans to the number of elements on the plane along %s' % axis)
+        print('... 3D udata. Returns the ratio of the no. of nans to the number of elements on the plane along %s' % axis)
 
     if axis == 'z':
         for z0_ in range(z0, z1):
@@ -5954,13 +5990,12 @@ def count_nans_along_axis(udatapath, axis='z',
                                         x0=x0, x1=x1, z0=z0, z1=z1)
             nnan = np.nansum(np.isnan(udata)) / float(udata.size)
             nnan_list.append(nnan)
-
     return np.asarray(nnan_list)
 
 
 def get_time_avg_enstrophy_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                                           t0=0, t1=None, slicez=None, inc=1, thd=np.inf, fill_value=np.nan,
-                                          xx=None, yy=None, zz=None,
+                                          udata_mean=None,
                                           notebook=True):
     """
     Returns time-averaged energy when a path to udata is provided
@@ -6286,7 +6321,7 @@ def export_raw_file_from_dpath(udatapath, func=get_energy, x0=0, x1=None, y0=0, 
 
 
 def export_raw_file(data2save, savepath, dtype='uint32', thd=np.inf, interpolate=None, fill_value=np.nan,
-                    contrast=True, log10=False, **kwargs):
+                    contrast=True, contrast_value=None, log10=False, notebook=True, **kwargs):
     """
     A helper to export a raw file from a numpy array with inteprolation feature
 
@@ -6298,7 +6333,7 @@ def export_raw_file(data2save, savepath, dtype='uint32', thd=np.inf, interpolate
     thd: float default: np.inf
         ... data > thd will be replaced by fill_value
     interpolate: str, default None
-        ... choose from 'idw' and 'localmean'
+        ... choose from 'idw' and 'localmean', 'nn
             ... if specified, it replaces np.nan in array using replace_nan(...)
     fill_value: float, default: np.nan
         ... value that is used to fill in data where data value > thd
@@ -6315,31 +6350,38 @@ def export_raw_file(data2save, savepath, dtype='uint32', thd=np.inf, interpolate
     for i in shape:
         savepath += '_%03dx' % i
 
+    data2save[np.isinf(data2save)] = fill_value
     if thd is not None:
         fill = data2save > thd
         data2save[fill] = fill_value  # this fills values. np.nan won't get filled
 
-    if interpolate is not None:
-        data2save = replace_nans(data2save, method=interpolate, **kwargs)
+    if interpolate == 'nn':
+        data2save = replace_nan_w_nn(data2save, notebook=notebook)
+    elif interpolate in ['localmean', 'idw']:
+        data2save = replace_nans(data2save, method=interpolate, notebook=notebook, **kwargs)
+
 
     if contrast:
-        try:
-            maxint = 2 ** int(dtype[-2:]) - 1
-        except:
-            maxint = 2 ** int(dtype[-1:]) - 1
-        max_value, min_value = np.nanmax(data2save), np.nanmin(data2save)
-        contrast_value = maxint / (max_value - min_value)
-        data2save = (data2save - min_value) * contrast_value
-        print('intensity was enhanced by %.2f' % contrast_value)
+        if contrast_value is None:
+            try:
+                maxint = 2 ** int(dtype[-2:]) - 1
+            except:
+                maxint = 2 ** int(dtype[-1:]) - 1
+            max_value, min_value = np.nanmax(data2save), np.nanmin(data2save)
+            contrast_value = maxint / (max_value - min_value)
+            data2save = (data2save - min_value) * contrast_value
+            print('intensity was enhanced by %.2f' % contrast_value, maxint, max_value - min_value)
+        else:
+            data2save = data2save * contrast_value
+            print('intensity was multiplied by %.2f' % contrast_value)
+
     else:
         contrast_value = 1
-
     if log10:
         data2save = np.log10(data2save)
 
     savedir = os.path.split(savepath)[0]
     savepath += '%s_thd%06.f_intp%s_ctr%06.f_log%r.raw' % (dtype, thd, interpolate, contrast_value, log10)
-
     if not os.path.exists(savedir):
         os.makedirs(savedir)
     data2save.astype(dtype).tofile(savepath)
@@ -6585,7 +6627,6 @@ def slicer(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, s
 
         if insideBox(pt_a_tmp[0], pt_a_tmp[1], pt_a_tmp[2], xx, yy, zz):
             #             pt_b_tmp = np.matmul(Mab, pt_a_tmp) # pt in the basis b- (u,v, w)
-
             us.append(pt_b_tmp[1])
             vs.append(pt_b_tmp[2])
             ws.append(pt_b_tmp[0])
@@ -6689,7 +6730,8 @@ def slicer(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, s
 
 ## Get a slice of a 3D velocity field
 def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
-                   method='nn', max_iter=10, tol=0.05, basis=None, apply_convention=True,
+                   method='nn', max_iter=10, tol=0.05, median_filter=True,
+                   basis=None, apply_convention=True,
                    u_basis='npq', notebook=True):
     """
     Returns a spatially 2D udata which is on the cross section of a volumetric data
@@ -6773,8 +6815,7 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
     dim, duration = udata.shape[0], udata.shape[-1]
 
     # Clean udata
-    udata = clean_udata(udata, method=method, max_iter=max_iter, tol=tol)
-
+    udata = clean_udata(udata, method=method, max_iter=max_iter, tol=tol, median_filter=median_filter)
     # Extract info about the cross section
     xs, ys, zs, ps, qs, ns, Mab, Mba, basis = slicer(xx, yy, zz, n, pt, spacing=spacing,
                                                      basis=basis, apply_convention=apply_convention,
@@ -6792,6 +6833,7 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
         n = [0]
         pp, qq, nn = np.meshgrid(p, q, n)  # THIS WORKS! DO not touch this
         shape = pp.shape
+
         pts_b = np.stack((nn.flatten(), pp.flatten(), qq.flatten()))  # npq
 
         pts_a = np.matmul(Mba, pts_b)  # x, y, z
@@ -6811,9 +6853,7 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
             udata_si_npq_basis = np.empty(master_shape)
 
         udata_si_xyz_basis[..., t] = np.stack((ux_si, uy_si, uz_si))
-        udata_si_npq_basis[..., t] = np.stack(
-            (un_si, up_si, uq_si))  # un, up, uq- velocity also obeys the transformation rule as position
-
+        udata_si_npq_basis[..., t] = np.stack((un_si, up_si, uq_si))  # un, up, uq- velocity also obeys the transformation rule as position
     udata_si_xyz_basis = np.squeeze(udata_si_xyz_basis)  # ux, uy, uz
     udata_si_npq_basis = np.squeeze(udata_si_npq_basis)  # un, up, uq
 
@@ -6833,6 +6873,131 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
         print('... Choices: "npq"- (un, up, uq) velocity parallel to the surface vector, and its transverse directions')
         print('... Choices: "xyz"- (ux, uy, uz) velocity in the standard basis')
         return None
+
+## Get a slice of a 3D scalar field
+def slice_3d_scalar_field(field, xx, yy, zz, n, pt, spacing=None, show=False,
+                          basis=None, apply_convention=True,
+                          notebook=True):
+    """
+    Returns a spatially 2D udata which is on the cross section of a volumetric data
+    ... There are two ways to return the velocity field on the cross section.
+        1. In the standard basis (xyz, i.e. ux, uy, uz)
+        2. In the NEW basis (which I call npq basis, i.e. un, up, uq)
+            the basis vector n is identical to the unit area vector of the cross section
+    ... By default, this function returns a 2D velocity field in the NEW basis (npq) as well as its coordinates in the same basis.
+        ... This is a natural choice since the cross section is spanned by the new basis vectors p and q.
+        ... Any postional vector on the cross section is expresed by its linear combinations.
+            r = c1 \hat{p} + c2 \hat{q}
+            (c1, c2) are the coordinates in the pq basis.
+            (Technically, the basis vectors are n, p, q but the coefficient of the n basis vector is always zero on the cross section.)
+            By default, this function returns...
+            1. velocity field in the NEW basis (npq) on the cross section
+            2. Coordinates in the pq basis (technically npq basis, but the coordinate in the basis vector n is always zero so I don't return it)
+    ... You CAN retrieve the velocity field in the standard basis (xyz, i.e. ux, uy, uz).
+        Just set "u_basis" equal to "xyz"
+        If you want both (in npq and xyz basses), set  "u_basis" equal to "both"
+    ... If you want a change-of-basis matrix from basis A to basis B, use ilpm.vector.get_change_of_basis_matrix(basisA, basisB)
+        e.g.
+            Mab = vec.get_change_of_basis_matrix(basis_xyz, basis_npq) # transformation matrix from xyz coords to npq coords
+            Mba = np.linalg.inv(Mab) # the change-of-basis matrix is ALWAYS unitary.
+
+    Example:
+
+    Parameters
+    ----------
+    filed: spatially 3d udata (3D or 4D array) with shape (height, width, depth, duration) or  (dim, height, width, depth)
+    xx: 3d array, grid of x-coordinate
+    yy: 3d array, grid of y-coordinate
+    zz: 3d array, grid of z-coordinate
+    n: 1d array-like, area vector (it does not have to be normalized)
+    pt: 1d array-like, xyz coordinates of a point on the plane (Note that n and pt uniquely defines a plane)
+    spacing: float, must be greater than 0. Sampling spatial resolution on the plane
+    show: bool, tflow.graph or takumi.graph is required. If True, it will automatically plot the sampled points on the
+        cross section in a 3D view as well as the new basis vectors
+    method: str, interpolation method of udata, options: 'nn', 'localmean', 'idw'
+        ... volumetric udata may contain lots of np.nan, and cleaning udata often results better results.
+        ... 'nn': nearest neighbor filling
+        ... 'localmean': filling using a direct covolution (inpainting with a neighbor averaging kernel)
+        ... 'idw': filling using a direct covolution (inpainting with a Gaussian kernel)
+    max_iter: int, parameter for replacng nans in udata clean_udata()
+    tol: float, parameter for replacng nans in udata clean_udata()
+    basis: 3x3 matrix, column vectors are the basis vectors.
+        ... If given, the basis vectors are used to span the crosss section.
+        ... The basis vectors may be rotated or converted to right-handed at the end.
+        ...
+    apply_convention: bool, If True, it enforces the new basis to follow the convention (right-handed etc.)
+    u_basis: str, default: "npq", options: "npq", "xyz" / "standard" "std", "both"
+        ... the basis used to represent a velocity field on the plane
+        ... "npq": It returns velocity vectors in the npq basis. Returning udata[i, ...] = (un, up, uq)
+            (un, up, uq) = (velocity component parallel to the area vector,
+                            vel comp parallel to the second basis vector p,
+                            vel comp parallel to the second basis vector q)
+        ... "xyz". "standard", or "std": It returns velocity vectors in the npq basis. Returning udata[i, ...] = (ux, uy, uz)
+
+
+
+    Returns
+    -------
+    udata_si_npq_basis: udata in the npq basis on the plane spanned by the basis vectors p and q.
+        ... its shape is (dim, height, width, duration) = (3, height, width, duration)
+        ... udata_si_npq_basis[0, ...] is velocity u \cdot \hat{n}
+        ... udata_si_npq_basis[1, ...] is velocity u \cdot \hat{p}
+        ... udata_si_npq_basis[2, ...] is velocity u \cdot \hat{q}
+    pp: 2d nd array, p-grid
+    qq: 2d nd array, q-grid
+    """
+
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+        # print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+    else:
+        from tqdm import tqdm
+
+    if spacing is None:
+        dx, dy, dz = get_grid_spacing(xx, yy, zz)
+        spacing = min([dx, dy, dz])
+        print('slice_3d_scalar_field:')
+        print('... spacing: ', spacing)
+
+    field = np.asarray(field)
+    if len(field.shape) == 3:
+        field = field.reshape(field.shape + (1,))
+    duration = field.shape[-1]
+
+    # Extract info about the cross section
+    xs, ys, zs, ps, qs, ns, Mab, Mba, basis = slicer(xx, yy, zz, n, pt, spacing=spacing,
+                                                     basis=basis, apply_convention=apply_convention,
+                                                     show=show)
+    for i, t in tqdm(enumerate(range(duration))):
+        fi = interpolate_scalar_field_at_instant_of_time(field, xx, yy, zz, t=t, bounds_error=False) # interpolating function
+
+        pmin, pmax, qmin, qmax = np.nanmin(ps), np.nanmax(ps), np.nanmin(qs), np.nanmax(qs)
+        p = np.arange(pmin, pmax, spacing)
+        q = np.arange(qmin, qmax, spacing)
+        n = [0]
+        pp, qq, nn = np.meshgrid(p, q, n)  # THIS WORKS! DO not touch this
+        shape = pp.shape
+        pts_b = np.stack((nn.flatten(), pp.flatten(), qq.flatten()))  # npq
+
+        pts_a = np.matmul(Mba, pts_b)  # x, y, z
+        pts_a[[0, 1], :] = pts_a[[1, 0], :]  # interpolating function takes (y, x, z) not (x, y, z). Swap axes.
+
+        field_si = fi(pts_a.T).reshape(shape)
+        if i == 0:
+            master_shape = shape + (duration,)
+            field_si_xyz_basis = np.empty(master_shape)
+
+        field_si_xyz_basis[..., t] = field_si
+
+    field_si_xyz_basis = np.squeeze(field_si_xyz_basis)  # ux, uy, uz
+
+    pp, qq = np.squeeze(pp), np.squeeze(qq)  # 2D grid
+
+    if notebook:
+        from tqdm import tqdm as tqdm
+
+    return field_si_xyz_basis, pp, qq
+
 
 
 def interpolate_udata_at_instant_of_time(udata, xx, yy, zz=None, t=0, bounds_error=False, **kwargs):
@@ -7500,8 +7665,10 @@ def fill_unphysical_with_sth(U, mask, fill_value=np.nan):
 
 def clean_udata(udata, mask=None,
                 method='nn', max_iter=10, tol=0.05, kernel_radius=2, kernel_sigma=2,
+                fill_value=0, # for method=='fill'
                 cutoff=np.inf,
                 median_filter=True,
+                replace_zeros=True,
                 showtqdm=True, verbose=False, notebook=True):
     """
     ND interpolation using direct convolution (replac_nan(...))
@@ -7515,8 +7682,13 @@ def clean_udata(udata, mask=None,
     cutoffU
     fill_value
     verbose
-    method: str- options are 'nn' (nearest neighbor filling), 'local mean',
-        'idw' (convolution with a Gaussian kernel)
+    method: str- options are 'fill', 'nn', 'local mean', 'idw'
+        ... 'fill' (fill by a constant "fill_value")
+        ... 'nn' (nearest neighbor filling),
+        ... 'local mean',
+        ... 'idw' (convolution with a Gaussian kernel)
+    replace_zeros: bool default: True
+        ... Some softwares assign 0 as a velocity instead of na or np.nan
     notebook
 
     Returns
@@ -7542,6 +7714,8 @@ def clean_udata(udata, mask=None,
         udata[mask] = np.nan
     # manual cleaning
     udata[np.logical_or(np.abs(udata) > cutoff, np.isinf(udata))] = np.nan
+    if replace_zeros:
+        udata[udata == 0] = np.nan
 
     nnans = np.count_nonzero(np.isnan(udata))
     if nnans == 0:  # udata is already clean (No nan values and no values beyond cutoff)
@@ -7549,8 +7723,11 @@ def clean_udata(udata, mask=None,
 
     # Method 1
     if method == 'nn':  # nearest neighbor filling
-        udata_i = replace_nan_w_nn_udata(udata, notebook=notebook)
-    else:
+        udata_i = replace_nan_w_nn_udata(udata, notebook=notebook, showtqdm=showtqdm)
+    elif method == 'fill':  # fill nans by a constant "fill_value"
+        udata_i = copy.deepcopy(udata)
+        udata_i[np.isnan(udata_i)] = fill_value
+    else: # inpainting
         # Initialization of an inpainted field
         udata_i = np.empty_like(udata)
         for t in tqdm(range(duration), desc='replacing nans', disable=not showtqdm):
@@ -7829,7 +8006,7 @@ def replace_nan_w_nn(data, notebook=False, verbose=False):
         return data
 
 
-def replace_nan_w_nn_udata(udata, notebook=False, verbose=False):
+def replace_nan_w_nn_udata(udata, notebook=False, verbose=False, showtqdm=True):
     """
     The fastest and most robust function to fill the missing values in udata
 
@@ -7853,7 +8030,7 @@ def replace_nan_w_nn_udata(udata, notebook=False, verbose=False):
     dim, duration = udata.shape[0], udata.shape[-1]
 
     udata_filled = np.empty_like(udata)
-    for t in tqdm(range(duration), desc='replace_nan_w_nn_udata'):
+    for t in tqdm(range(duration), desc='replace_nan_w_nn_udata', disable=not showtqdm):
         for i in range(dim):
             udata_filled[i, ..., t] = replace_nan_w_nn(udata[i, ..., t], verbose=verbose)
 
@@ -8019,7 +8196,7 @@ def replace_nans(array, max_iter=50, tol=0.05, kernel_radius=2, kernel_sigma=2, 
 
 def clean_data(data, mask=None,
                method='nn', max_iter=10, tol=0.05, kernel_radius=2, kernel_sigma=2,
-               cutoff=np.inf, showtqdm=True, verbose=False, notebook=True):
+               cutoff=np.inf, fill_value=0, verbose=False, notebook=True):
     """
     Fills missing values (np.nan) in an array by nearest neighbor filling OR direct convolution (inpainting)
     ND interpolation using direct convolution (replac_nan(...))
@@ -8033,8 +8210,9 @@ def clean_data(data, mask=None,
     cutoffU
     fill_value
     verbose
-    method: str, choose from 'nn', 'localmean', 'idw'
+    method: str, choose from 'fill', 'nn', 'localmean', 'idw'
         ... computation is more expensive as it gets more right.
+        ... fill: it filles
     notebook
 
     Returns
@@ -8058,6 +8236,8 @@ def clean_data(data, mask=None,
 
     if method == 'nn':  # nearest neighbor filling
         data = replace_nan_w_nn(data, notebook=notebook)
+    elif method == 'fill':  # fill nans by a constant "fill_value"
+        data[np.isnan(data)] = fill_value
     else:
         # Initialization of an inpainted field
         data = replace_nans(data, max_iter=max_iter, tol=tol, kernel_radius=kernel_radius,
@@ -8074,8 +8254,8 @@ def clean_data_interp1d(y, x=None, thd=None, p=0.98):
 
     Parameters
     ----------
-    y: nd array with shape (n,) or (n, duration)
-    x: nd array with shape (n,) or (n, duration) (optional)
+    y: 1/2d array with shape (n,) or (n, duration)
+    x: 1/2d array with shape (n,) or (n, duration) (optional)
         ... MUST have the same shape as y
     thd: float
         ... threshold on the slope (dy/dx) used to spot the spurious values
@@ -8097,7 +8277,7 @@ def clean_data_interp1d(y, x=None, thd=None, p=0.98):
     duration = y.shape[1]
 
     if x is None:
-        x = np.arange(len(y_tmp))
+        x = np.arange(len(y))
         x = x.reshape(shape + (1,))
     else:
         x = np.asarray(x)
@@ -8257,617 +8437,617 @@ def get_center_of_vorticity(udata, xx, yy, sigma=5, sign='auto',
             omega_blurred[y0:y1, x0:x1])
 
     return centers
-
-
-    # # plotting usual stuff # REQUIRES graph module. Ask Takumi for details or check out takumi's git on immense
-    # def plot_energy_spectra(udata, dx, dy, dz=None, x0=0, x1=None, y0=0, y1=None, window='flattop', epsilon_guess=10**5, nu=1.004, label='',
-    #                             plot_e22=False, plot_ek=False, fignum=1, t0=0, legend=True, loc=3):
-    #     """
-    #     A method to quickly plot the 1D energy spectra
-    #     Parameters
-    #     ----------
-    #     udata
-    #     dx
-    #     dy
-    #     dz
-    #     x0
-    #     x1
-    #     y0
-    #     y1
-    #     window
-    #     epsilon_guess
-    #     nu
-    #     plot_e22
-    #     plot_ek
-    #     fignum
-    #     t0
-    #     legend
-    #
-    #     Returns
-    #     -------
-    #     fig1, (ax1, ax2)
-    #
-    #     """
-    #     __fontsize__ = 25
-    #     __figsize__ = (16, 8)
-    #     # See all available arguments in matplotlibrc
-    #     params = {'figure.figsize': __figsize__,
-    #               'font.size': __fontsize__,  # text
-    #               'legend.fontsize': 18,  # legend
-    #               'axes.labelsize': __fontsize__,  # axes
-    #               'axes.titlesize': __fontsize__,
-    #               'xtick.labelsize': __fontsize__,  # tick
-    #               'ytick.labelsize': __fontsize__,
-    #               'lines.linewidth': 8,
-    #               'axes.titlepad': 10}
-    #     graph.update_figure_params(params)
-    #
-    #     ax1_ylabel = '$E_{11}$ ($mm^3/s^2$)'
-    #     ax2_ylabel = '$E_{11} / (\epsilon\\nu^5)^{1/4}$'
-    #
-    #
-    #     eiis, err, k11 = get_1d_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
-    #     if epsilon_guess is not None:
-    #         e11_s, k11_s = scale_energy_spectrum(eiis[0, ...], k11, epsilon=epsilon_guess, nu=nu)
-    #         e22_s, k22_s = scale_energy_spectrum(eiis[1, ...], k11, epsilon=epsilon_guess, nu=nu)
-    #         eiis_s = np.stack((e11_s, e22_s))
-    #         epsilon = epsilon_guess
-    #     else:
-    #         eiis_s, _, k11_s = get_1d_rescaled_energy_spectrum(udata, dx=dx, dy=dy, dz=dz, nu=nu)
-    #         epsilon = get_epsilon_using_sij(udata, dx, dy, dz, nu=nu)[t0]
-    #     fig1, ax1 = graph.plot(k11[1:], kolmogorov_53_uni(k11[1:], epsilon, c=0.5), label='$C_1\epsilon^{2/3}\kappa^{-5/3}$', fignum=1, subplot=121, color='k')
-    #     fig1, ax2 = graph.plot_saddoughi(fignum=fignum, subplot=122, color='k', label='Scaled $E_{11}$ (SV 1994)')
-    #
-    #     fig1, ax1 = graph.plot(k11[1:], eiis[0, 1:, t0], label='$E_{11}$' + label, fignum=fignum, subplot=121)
-    #     fig1, ax2 = graph.plot(k11_s[1:], eiis_s[0, 1:, t0], label='Scaled $E_{11}$' + label, fignum=fignum, subplot=122)
-    #
-    #     if plot_e22:
-    #         fig1, ax1 = graph.plot(k11[1:], eiis[1, 1:, t0], label='$E_{22}$' + label, fignum=fignum, subplot=121)
-    #         fig1, ax2 = graph.plot(k11_s[1:], eiis_s[1, 1:, t0], label='Scaled $E_{22}$' + label, fignum=fignum, subplot=122)
-    #         ax1_ylabel = ax1_ylabel[:-13] + ', $E_{22}$ ($mm^3/s^2$)'
-    #         ax2_ylabel = ax2_ylabel + ', $E_{22} / (\epsilon\\nu^5)^{1/4}$'
-    #
-    #     if plot_ek:
-    #         ek, _, kk = get_energy_spectrum(udata, dx=dx, dy=dy, dz=dz, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
-    #         ek_s, kk_s = scale_energy_spectrum(ek, kk, epsilon=epsilon, nu=nu)
-    #         fig1, ax1 = graph.plot(kk[:, t0], ek[:, t0], label='$E$' + label, fignum=fignum, subplot=121)
-    #         fig1, ax2 = graph.plot(kk_s[:, t0], ek_s[:, t0], label='Scaled $E$' + label, fignum=fignum, subplot=122)
-    #
-    #         ax1_ylabel = ax1_ylabel[:-13] + ', $E$ ($mm^3/s^2$)'
-    #         ax2_ylabel = ax2_ylabel + ', $E / (\epsilon\\nu^5)^{1/4}$'
-    #
-    #     graph.tologlog(ax1)
-    #     graph.tologlog(ax2)
-    #     if legend:
-    #         ax1.legend(loc=loc)
-    #         ax2.legend(loc=loc)
-    #
-    #     graph.labelaxes(ax1, '$\kappa$ ($mm^{-1}$)', ax1_ylabel)
-    #     graph.labelaxes(ax2, '$\kappa \eta $ ', ax2_ylabel)
-    #
-    #     # graph.setaxes(ax1, 10 ** -1.5, 10 ** 0.8, 10 ** 0.3, 10 ** 5.3)
-    #     graph.setaxes(ax2, 10 ** -3.8, 2, 10 ** -3.5, 10 ** 6.5)
-    #
-    #     fig1.tight_layout(rect=[0, 0.03, 1, 0.95])
-    #     return fig1, (ax1, ax2)
-    #
-    # def plot_energy_spectra_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=None, y0=0, y1=None, window='flattop', epsilon_guess=10**5, nu=1.004, label='',
-    #                             plot_e22=False, plot_ek=False, fignum=1, t0=0, legend=True, loc=3, crop_edges=5, yoffset_box=20, sb_txtloc=(-0.1, 0.4),
-    #                                          vmax=10**4.8):
-    #     """
-    #     A method to quickly plot the energy spectra (snapshot) and time-averaged energy
-    #
-    #     Parameters
-    #     ----------
-    #     udata
-    #     dx
-    #     dy
-    #     dz
-    #     x0
-    #     x1
-    #     y0
-    #     y1
-    #     window
-    #     epsilon_guess
-    #     nu
-    #     label
-    #     plot_e22
-    #     plot_ek
-    #     fignum
-    #     t0
-    #     legend
-    #     loc
-    #     crop_edges
-    #     yoffset_box
-    #     sb_txtloc
-    #
-    #     Returns
-    #     -------
-    #
-    #     """
-    #     __fontsize__ = 20
-    #     __figsize__ = (24, 8)
-    #     # See all available arguments in matplotlibrc
-    #     params = {'figure.figsize': __figsize__,
-    #               'font.size': __fontsize__,  # text
-    #               'legend.fontsize': 18,  # legend
-    #               'axes.labelsize': __fontsize__,  # axes
-    #               'axes.titlesize': __fontsize__,
-    #               'xtick.labelsize': __fontsize__,  # tick
-    #               'ytick.labelsize': __fontsize__,
-    #               'lines.linewidth': 5,
-    #               'axes.titlepad': 10}
-    #     graph.update_figure_params(params)
-    #
-    #     dim = udata.shape[0]
-    #     n = crop_edges
-    #     if x1 is None:
-    #         x1 = udata.shape[2]-1
-    #     if y1 is None:
-    #         y1 = udata.shape[1]-1
-    #
-    #     ax2_ylabel = '$E_{11}$ ($mm^3/s^2$)'
-    #     ax3_ylabel = '$E_{11} / (\epsilon\\nu^5)^{1/4}$'
-    #
-    #     # Compute energy heatmap and draw rectangle
-    #     energy_avg = np.nanmean(get_energy(udata), axis=dim)
-    #     xx, yy = get_equally_spaced_grid(udata, spacing=dx)
-    #     # Time-averaged Energy
-    #     fig1, ax1, cc1 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], energy_avg[n:-n, n:-n],
-    #                                          label='$\\frac{1}{2} \langle U_i   U_i \\rangle$ ($mm^2/s^2$)',
-    #                                          vmin=0, vmax=vmax, fignum=fignum, subplot=131)
-    #     graph.draw_box(ax1, xx, yy, yoffset=yoffset_box, sb_txtloc=sb_txtloc)
-    #     graph.draw_rectangle(ax1, xx[y0, x0], yy[y0, x0], np.abs(xx[y0, x1]-xx[y0, x0]), np.abs(yy[y1, x0]-yy[y0, x0]), edgecolor='C0', linewidth=5)
-    #
-    #     # Coompute energy spectra
-    #     eiis, err, k11 = get_1d_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
-    #     if epsilon_guess is not None:
-    #         e11_s, k11_s = scale_energy_spectrum(eiis[0, ...], k11, epsilon=epsilon_guess, nu=nu)
-    #         e22_s, k22_s = scale_energy_spectrum(eiis[1, ...], k11, epsilon=epsilon_guess, nu=nu)
-    #         eiis_s = np.stack((e11_s, e22_s))
-    #         epsilon = epsilon_guess
-    #     else:
-    #         eiis_s, _, k11_s = get_1d_rescaled_energy_spectrum(udata, dx=dx, dy=dy, dz=dz, nu=nu)
-    #         epsilon = get_epsilon_using_sij(udata, dx, dy, dz, nu=nu)[t0]
-    #     fig1, ax2 = graph.plot(k11[1:], kolmogorov_53_uni(k11[1:], epsilon, c=0.5), label='$C_1\epsilon^{2/3}\kappa^{-5/3}$', fignum=fignum, subplot=132, color='k')
-    #     fig1, ax3 = graph.plot_saddoughi(fignum=fignum, subplot=133, color='k', label='Scaled $E_{11}$ (SV 1994)')
-    #
-    #     fig1, ax2 = graph.plot(k11[1:], eiis[0, 1:, t0], label='$E_{11}$' + label, fignum=fignum, subplot=132)
-    #     fig1, ax3 = graph.plot(k11_s[1:], eiis_s[0, 1:, t0], label='Scaled $E_{11}$' + label, fignum=fignum, subplot=133)
-    #
-    #     if plot_e22:
-    #         fig1, ax2 = graph.plot(k11[1:], eiis[1, 1:, t0], label='$E_{22}$' + label, fignum=fignum, subplot=132)
-    #         fig1, ax3 = graph.plot(k11_s[1:], eiis_s[1, 1:, t0], label='Scaled $E_{22}$' + label, fignum=fignum, subplot=133)
-    #         ax2_ylabel = ax2_ylabel[:-13] + ', $E_{22}$ ($mm^3/s^2$)'
-    #         ax3_ylabel = ax3_ylabel + ', $E_{22} / (\epsilon\\nu^5)^{1/4}$'
-    #
-    #     if plot_ek:
-    #         ek, _, kk = get_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
-    #         ek_s, kk_s = scale_energy_spectrum(ek, kk, epsilon=epsilon, nu=nu)
-    #         fig1, ax2 = graph.plot(kk[:, t0], ek[:, t0], label='$E$' + label, fignum=fignum, subplot=132)
-    #         fig1, ax3 = graph.plot(kk_s[:, t0], ek_s[:, t0], label='Scaled $E$' + label, fignum=fignum, subplot=133)
-    #
-    #         ax2_ylabel = ax2_ylabel[:-13] + ', $E$ ($mm^3/s^2$)'
-    #         ax3_ylabel = ax3_ylabel + ', $E / (\epsilon\\nu^5)^{1/4}$'
-    #
-    #     graph.tologlog(ax2)
-    #     graph.tologlog(ax3)
-    #     if legend:
-    #         ax2.legend(loc=loc)
-    #         ax3.legend(loc=loc)
-    #
-    #     graph.labelaxes(ax2, '$\kappa$ ($mm^{-1}$)', ax2_ylabel)
-    #     graph.labelaxes(ax3, '$\kappa \eta $ ', ax3_ylabel)
-    #
-    #     # graph.setaxes(ax1, 10 ** -1.5, 10 ** 0.8, 10 ** 0.3, 10 ** 5.3)
-    #     graph.setaxes(ax3, 10 ** -3.8, 2, 10 ** -3.5, 10 ** 6.5)
-    #
-    #     fig1.tight_layout(rect=[0, 0.03, 1, 0.95])
-    #     return fig1, (ax1, ax2, ax3)
-    #
-    #
-    #
-    # def plot_energy_spectra_avg_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=None, y0=0, y1=None, window='flattop',
-    #                                          epsilon_guess=10 ** 5, nu=1.004, label='',
-    #                                          plot_e11=True, plot_e22=False, plot_ek=False, plot_kol=False, plot_sv=True,
-    #                                          color_ref='k', alpha_ref=0.6,
-    #                                          fignum=1, legend=True, loc=3,
-    #                                          crop_edges=5, yoffset_box=20, sb_txtloc=(-0.1, 0.4), errorfill=True,
-    #                                          vmin=0, vmax=10**5,
-    #                                          figparams=None):
-    #     """
-    #     A method to quickly plot the energy spectra (Time-averaged) and time-averaged energy
-    #
-    #     Parameters
-    #     ----------
-    #     udata
-    #     dx
-    #     dy
-    #     dz
-    #     x0
-    #     x1
-    #     y0
-    #     y1
-    #     window
-    #     epsilon_guess
-    #     nu
-    #     label
-    #     plot_e22
-    #     plot_ek
-    #     fignum
-    #     t0
-    #     legend
-    #     loc
-    #     crop_edges
-    #     yoffset_box
-    #     sb_txtloc
-    #
-    #     Returns
-    #     -------
-    #
-    #     """
-    #     if figparams is None:
-    #         __fontsize__ = 20
-    #         __figsize__ = (24, 8)
-    #         # See all available arguments in matplotlibrc
-    #         params = {'figure.figsize': __figsize__,
-    #                   'font.size': __fontsize__,  # text
-    #                   'legend.fontsize': 18,  # legend
-    #                   'axes.labelsize': __fontsize__,  # axes
-    #                   'axes.titlesize': __fontsize__,
-    #                   'xtick.labelsize': __fontsize__,  # tick
-    #                   'ytick.labelsize': __fontsize__,
-    #                   'lines.linewidth': 5,
-    #                   'axes.titlepad': 10
-    #                   }
-    #     else:
-    #         params = figparams
-    #     graph.update_figure_params(params)
-    #
-    #     dim = udata.shape[0]
-    #     n = crop_edges
-    #
-    #     ax2_ylabel = '$E_{11}$ ($mm^3/s^2$)'
-    #     ax3_ylabel = '$E_{11} / (\epsilon\\nu^5)^{1/4}$'
-    #
-    #     # Compute energy heatmap and draw rectangle
-    #     energy_avg = np.nanmean(get_energy(udata), axis=dim)
-    #     xx, yy = get_equally_spaced_grid(udata, spacing=dx)
-    #     # Time-averaged Energy
-    #     fig1, ax1, cc1 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], energy_avg[n:-n, n:-n],
-    #                                       label='$\\frac{1}{2} \langle U_i   U_i \\rangle$ ($mm^2/s^2$)',
-    #                                       vmin=vmin, vmax=vmax, fignum=fignum, subplot=131)
-    #     graph.draw_box(ax1, xx, yy, yoffset=yoffset_box, sb_txtloc=sb_txtloc)
-    #     graph.draw_rectangle(ax1, xx[y0, x0], yy[y0, x0], np.abs(xx[y0, x1] - xx[y0, x0]), np.abs(yy[y1, x0] - yy[y0, x0]),
-    #                          edgecolor='C0', linewidth=5)
-    #
-    #     # Coompute energy spectra
-    #     eiis_raw, err, k11 = get_1d_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
-    #     eiis = np.nanmean(eiis_raw, axis=2)
-    #     eii_errs = np.nanstd(eiis_raw, axis=2)/2.
-    #     if epsilon_guess is not None:
-    #         e11_s, k11_s = scale_energy_spectrum(eiis_raw[0, ...], k11, epsilon=epsilon_guess, nu=nu)
-    #         e22_s, k22_s = scale_energy_spectrum(eiis_raw[1, ...], k11, epsilon=epsilon_guess, nu=nu)
-    #         eiis_s = np.stack((np.nanmean(e11_s, axis=1), np.nanmean(e22_s, axis=1)))
-    #         eii_errs_s = np.stack((np.nanstd(e11_s, axis=1), np.nanstd(e22_s, axis=1)))/2.
-    #         epsilon = epsilon_guess
-    #     else:
-    #         eiis_s_raw, _, k11_s = get_1d_rescaled_energy_spectrum(udata, dx=dx, dy=dy, dz=dz, nu=nu)
-    #         eiis_s = np.nanmean(eiis_s_raw, axis=2)
-    #         eii_errs_s = np.nanstd(eiis_s_raw, axis=2)
-    #         epsilon = np.nanmean(get_epsilon_using_sij(udata, dx, dy, dz, nu=nu))
-    #     if plot_kol:
-    #         fig1, ax2 = graph.plot(k11[1:], kolmogorov_53_uni(k11[1:], epsilon, c=0.5),
-    #                                label='$C_1\epsilon^{2/3}\kappa^{-5/3}$',
-    #                                fignum=fignum, subplot=132,
-    #                                color=color_ref, alpha=alpha_ref, lw=params['lines.linewidth']*0.6)
-    #     if plot_sv:
-    #         fig1, ax3 = graph.plot_saddoughi(fignum=fignum, subplot=133,
-    #                                          color=color_ref, alpha=alpha_ref, lw=params['lines.linewidth']*0.6,
-    #                                          label='Scaled $E_{11}$ (SV 1994)')
-    #     if plot_e11:
-    #         if not errorfill:
-    #             fig1, ax2 = graph.plot(k11[1:], eiis[0, 1:], label='$E_{11}$' + label, fignum=fignum, subplot=132, linewidth=10)
-    #             fig1, ax3 = graph.plot(k11_s[1:], eiis_s[0, 1:], label='Scaled $E_{11}$' + label, fignum=fignum, subplot=133, linewidth=10)
-    #         else:
-    #             fig1, ax2, _ = graph.errorfill(k11[1:], eiis[0, 1:], eii_errs[0, 1:], label='$E_{11}$' + label, fignum=fignum, subplot=132)
-    #             fig1, ax3, _ = graph.errorfill(k11_s[1:], eiis_s[0, 1:], eii_errs_s[0, 1:], label='Scaled $E_{11}$' + label, fignum=fignum, subplot=133)
-    #
-    #
-    #     if plot_e22:
-    #         if not errorfill:
-    #             fig1, ax2 = graph.plot(k11[1:], eiis[1, 1:], label='$E_{22}$' + label, fignum=fignum, subplot=132)
-    #             fig1, ax3 = graph.plot(k11_s[1:], eiis_s[1, 1:], label='Scaled $E_{22}$' + label, fignum=fignum, subplot=133)
-    #         else:
-    #             fig1, ax2, _ = graph.errorfill(k11[1:], eiis[1, 1:], eii_errs[1, 1:],label='$E_{22}$' + label, fignum=fignum, subplot=132)
-    #             fig1, ax3, _ = graph.errorfill(k11_s[1:], eiis_s[1, 1:], eii_errs_s[1, 1:],label='Scaled $E_{22}$' + label, fignum=fignum, subplot=133)
-    #         ax2_ylabel = ax2_ylabel[:-13] + ', $E_{22}$ ($mm^3/s^2$)'
-    #         ax3_ylabel = ax3_ylabel + ', $E_{22} / (\epsilon\\nu^5)^{1/4}$'
-    #
-    #     if plot_ek:
-    #         ek_raw, _, kk = get_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
-    #         ek_s_raw, kk_s = scale_energy_spectrum(ek_raw, kk, epsilon=epsilon, nu=nu)
-    #
-    #         ek, ek_s = np.nanmean(ek_raw, axis=1), np.nanmean(ek_s_raw, axis=1)
-    #         ek_err, ek_s_err = np.nanstd(ek_raw, axis=1), np.nanstd(ek_s_raw, axis=1)
-    #         if not errorfill:
-    #             fig1, ax2 = graph.plot(kk[:, 0], ek, label='$E$' + label, fignum=fignum, subplot=132, color='b', linestyle='--', linewidth=10)
-    #             fig1, ax3 = graph.plot(kk_s[:, 0], ek_s, label='Scaled $E$' + label, fignum=fignum, subplot=133, color='b', linestyle='--', linewidth=10)
-    #         else:
-    #             fig1, ax2, _ = graph.errorfill(kk[:, 0], ek, ek_err, label='$E$' + label, fignum=fignum, subplot=132)
-    #             fig1, ax3, _ = graph.errorfill(kk_s[:, 0], ek_s, ek_s_err, label='Scaled $E$' + label, fignum=fignum, subplot=133)
-    #
-    #
-    #         ax2_ylabel = ax2_ylabel[:-13] + ', $E$ ($mm^3/s^2$)'
-    #         ax3_ylabel = ax3_ylabel + ', $E / (\epsilon\\nu^5)^{1/4}$'
-    #
-    #     graph.tologlog(ax2)
-    #     graph.tologlog(ax3)
-    #     if legend:
-    #         ax2.legend(loc=loc)
-    #         ax3.legend(loc=loc)
-    #
-    #     graph.labelaxes(ax2, '$\kappa$ ($mm^{-1}$)', ax2_ylabel)
-    #     graph.labelaxes(ax3, '$\kappa \eta $ ', ax3_ylabel)
-    #
-    #     # graph.setaxes(ax1, 10 ** -1.5, 10 ** 0.8, 10 ** 0.3, 10 ** 5.3)
-    #     graph.setaxes(ax3, 10 ** -3.8, 2, 10 ** -3.5, 10 ** 6.5)
-    #
-    #     fig1.tight_layout(rect=[0, 0.03, 1, 0.95])
-    #
-    #     return fig1, (ax1, ax2, ax3)
-    #
-    #
-    # def plot_mean_flow(udata, xx, yy, f_p=5., crop_edges=4, fps=1000., data_spacing=1, umin=-200, umax=200, tau0=0, tau1=10, yoffset_box=20.):
-    #     """
-    #     A method to quickly plot the mean flow
-    #     ... dependencies: takumi.library.graph
-    #     ... graph is Takumi's plotting module which mainly utilizes matplotlib.
-    #     ... graph can be found under library/display her: https://github.com/tmatsuzawa/library
-    #
-    #
-    #     Parameters
-    #     ----------
-    #     udata
-    #     xx
-    #     yy
-    #     f_p
-    #     crop_edges
-    #     fps
-    #     data_spacing
-    #     umin
-    #     umax
-    #     tau0
-    #     tau1
-    #     yoffset_box
-    #
-    #     Returns
-    #     -------
-    #
-    #     """
-    #     __figsize__, __fontsize__ = (24, 20), 16
-    #     params = {'figure.figsize': __figsize__,
-    #               'font.size': __fontsize__,  # text
-    #               'legend.fontsize': 16,  # legend
-    #               'axes.labelsize': __fontsize__,  # axes
-    #               'axes.titlesize': __fontsize__,
-    #               'xtick.labelsize': __fontsize__,  # tick
-    #               'ytick.labelsize': __fontsize__,
-    #               'axes.edgecolor': 'black',
-    #               'axes.linewidth': 0.8,
-    #               'lines.linewidth': 5.}
-    #     graph.update_figure_params(params)
-    #     # Forcing Period
-    #     tau_p = int(1. / f_p * fps / data_spacing)  # 1/f *(fps/data_spacing) in frames
-    #     # no. of pixels to ignore at the edge
-    #     n = crop_edges
-    #
-    # PLOTTING
-    gridshape = (7, 6)
-    ax_evst = plt.subplot2grid(gridshape, (0, 0), colspan=6)
-    ax_enstvst = ax_evst.twinx()
-
-    ax_eavg = plt.subplot2grid(gridshape, (1, 1), colspan=2, rowspan=2)
-    ax_e_mf = plt.subplot2grid(gridshape, (1, 3), colspan=2, rowspan=2)
-
-    ax_enstavg = plt.subplot2grid(gridshape, (3, 1), colspan=2, rowspan=2)
-    ax_enst_mf = plt.subplot2grid(gridshape, (3, 3), colspan=2, rowspan=2)
-
-    ax_ux_mf = plt.subplot2grid(gridshape, (5, 0), colspan=2, rowspan=2)
-    ax_uy_mf = plt.subplot2grid(gridshape, (5, 2), colspan=2, rowspan=2)
-    ax_omega_mf = plt.subplot2grid(gridshape, (5, 4), colspan=2, rowspan=2)
-
-    mask = np.empty(udata.shape[-1])
-    for i in range(len(mask)):
-        if (i - tau0) % tau_p < tau1:
-            mask[i] = True
-        else:
-            mask[i] = False
-    mask = mask.astype('bool')
-
-    # Compute quantities
-    ## spacing
-    dx = np.abs(xx[0, 1] - xx[0, 0])
-    dy = np.abs(yy[1, 0] - yy[0, 0])
-    ## time average using all data
-    udata_m_all, udata_t_all = reynolds_decomposition(udata)
-    e_avg_all, _ = get_spatial_avg_energy(udata, x0=n, x1=-n, y0=n, y1=-n)
-    e_t_avg_all, _ = get_spatial_avg_energy(udata_t_all, x0=n, x1=-n, y0=n, y1=-n)
-    enst_avg_all, _ = get_spatial_avg_enstrophy(udata, x0=n, x1=-n, y0=n, y1=-n, dx=dx, dy=dy)
-
-    ## Reynolds decomposition (For a specified region)
-    udata_m, udata_t = reynolds_decomposition(udata[..., mask])
-    ## energy / enstrophy
-    time = np.arange(udata.shape[-1]) / (fps / data_spacing)
-    e_t_avg, _ = get_spatial_avg_energy(udata_t, x0=n, x1=-n, y0=n, y1=-n)
-
-    energy = get_energy(udata[..., mask])
-    enstrophy = get_enstrophy(udata[..., mask], dx=dx, dy=dy, xx=None, yy=None)
-
-    e = np.nanmean(energy, axis=2)
-    enst = np.nanmean(enstrophy, axis=2)
-    energy_m = get_energy(udata_m)
-    omega_m = curl(udata_m, dx=dx, dy=dy)
-    enst_m = omega_m ** 2
-
-    # PLOT
-    # E vs t
-    l_e = ax_evst.plot(time, e_avg_all, label='$\langle E \\rangle_{space}$', alpha=0.8)
-    l_k = ax_evst.plot(time, e_t_avg_all, label='$\langle k \\rangle_{space}$', alpha=0.8)
-    l_enst = ax_enstvst.plot(time, enst_avg_all, label='$\langle \omega_z^2 \\rangle_{space}$', color='C2',
-                             alpha=0.8)
-    graph.tosemilogy(ax_evst)
-    graph.tosemilogy(ax_enstvst)
-    ax_evst.set_ylim(10 ** 3.5, 10 ** 5)
-    ax_enstvst.set_ylim(10 ** 2.5, 10 ** 4)
-    ax_enstvst.set_xlim(time[0], time[0] + (time[-1] - time[0]) * 1.01)
-    graph.labelaxes(ax_evst, '$t$ ($s$)', '$E, k$ ($mm^2/s^2$)')
-    graph.labelaxes(ax_enstvst, '$t$ ($s$)', '$\langle \omega_z^2 \\rangle$ ($1/s^2$)')
-    ## Vertical Bands
-    t0 = tau0 * data_spacing / fps
-    t1 = t0 + tau1 * data_spacing / fps
-    while t1 < time[-1]:
-        graph.axvband(ax_enstvst, t0, t1, zorder=0)
-        t0 += 1. / f_p
-        t1 += 1. / f_p
-    ## Label
-    lns = l_e + l_k + l_enst
-    labs = [l.get_label() for l in lns]
-    ax_evst.legend(lns, labs, loc=1, ncol=3, facecolor='white', framealpha=1.0, frameon=False)
-
-    # Time-averaged Energy
-    fig, ax_eavg, cc1 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], e[n:-n, n:-n], ax=ax_eavg,
-                                         label='$\\frac{1}{2} \langle U_i   U_i \\rangle$ ($mm^2/s^2$)',
-                                         vmin=0, vmax=10 ** 4.8)
-    # Mean Flow Energy
-    fig, ax_e_mf, cc2 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], energy_m[n:-n, n:-n], ax=ax_e_mf,
-                                         label='$\\frac{1}{2} \langle U_i  \\rangle  \langle U_i  \\rangle$ ($mm^2/s^2$)',
-                                         vmin=0, vmax=10 ** 4.2)
-
-    # Time-averaged Enstrophy
-    fig, ax_enstavg, cc3 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], enst[n:-n, n:-n], ax=ax_enstavg,
-                                            label='$\langle \omega_z^2 \\rangle$ ($1/s^2$)', vmin=0,
-                                            vmax=10 ** 3.7)
-
-    # Mean Flow Enstrophy
-    fig, ax_enst_mf, cc4 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], enst_m[n:-n, n:-n, 0],
-                                            ax=ax_enst_mf, vmin=0, vmax=250,
-                                            label='$\langle \Omega_z  \\rangle  ^2$ ($1/s^2$)')
-
-    # Mean Flow Ux
-    fig, ax_ux_mf, cc5 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], udata_m[0, n:-n, n:-n],
-                                          ax=ax_ux_mf, cmap='bwr',
-                                          label='$\langle U_x \\rangle$ ($mm/s$)', vmin=umin, vmax=umax)
-
-    # Mean Flow Uy
-    fig5, ax_uy_mf, cc6 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], udata_m[1, n:-n, n:-n],
-                                           ax=ax_uy_mf, cmap='bwr',
-                                           label='$\langle U_y \\rangle$ ($mm/s$)', vmin=umin, vmax=umax)
-
-    # Mean Flow Vorticity
-    fig, ax_omega_mf, cc = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], omega_m[n:-n, n:-n, 0],
-                                            ax=ax_omega_mf, cmap='bwr',
-                                            label='$\langle \Omega_z \\rangle$ ($1/s$)', vmin=-20, vmax=20)
-
-    axes_to_add_box = [ax_eavg, ax_e_mf, ax_enstavg, ax_enst_mf, ax_ux_mf, ax_uy_mf, ax_omega_mf]
-    for ax in axes_to_add_box:
-        if ax in [ax_ux_mf, ax_uy_mf, ax_omega_mf]:
-            graph.draw_box(ax, xx, yy, yoffset=yoffset_box, facecolor='white', sb_txtcolor='k', sb_txtloc=(-0.1, 0.4))
-        else:
-            graph.draw_box(ax, xx, yy, yoffset=yoffset_box, sb_txtloc=(-0.1, 0.4))
-    fig.tight_layout()
-
-    axes = [ax_evst, ax_enstvst] + axes_to_add_box
-    return fig, axes
-
-
-def plot_time_avg_energy(udata, xx, yy, x0=0, x1=None, y0=0, y1=None, t0=0, t1=None,
-                         label='$\\frac{1}{2} \langle U_i U_i\\rangle~(mm^2/s^2)$',
-                         xlabel='$x~(mm)$', ylabel='$y~(mm)$', vmin=None, vmax=None, **kwargs):
-    """
-
-    Parameters
-    ----------
-    udata
-    xx
-    yy
-    x0
-    x1
-    y0
-    y1
-    t0
-    t1
-
-    Returns
-    -------
-
-    """
-    energy = get_energy(udata[:, y0:y1, x0:x1, t0:t1])
-    e = np.nanmean(energy, axis=-1)
-    fig, ax, cc = graph.color_plot(xx[y0:y1, x0:x1], yy[y0:y1, x0:x1], e, label=label, vmin=vmin, vmax=vmax, **kwargs)
-    graph.labelaxes(ax, xlabel, ylabel)
-
-    return fig, ax, cc
-
-
-def plot_time_avg_enstrophy(udata, xx, yy, x0=0, x1=None, y0=0, y1=None, t0=0, t1=None,
-                            label='$\\frac{1}{2} \langle \omega_z ^2\\rangle~(1/s^2)$',
-                            xlabel='$x~(mm)$', ylabel='$y~(mm)$', vmin=None, vmax=None, **kwargs):
-    """
-
-    Parameters
-    ----------
-    udata
-    xx
-    yy
-    x0
-    x1
-    y0
-    y1
-    t0
-    t1
-
-    Returns
-    -------
-
-    """
-    enstrophy = get_enstrophy(udata[:, y0:y1, x0:x1, t0:t1], xx=xx, yy=yy)
-    en = np.nanmean(enstrophy, axis=-1)
-    fig, ax, cc = graph.color_plot(xx[y0:y1, x0:x1], yy[y0:y1, x0:x1], en, label=label, vmin=vmin, vmax=vmax, **kwargs)
-    graph.labelaxes(ax, xlabel, ylabel)
-
-    return fig, ax, cc
-
-
-def plot_spatial_avg_energy(udata, time, x0=0, x1=None, y0=0, y1=None, t0=0, t1=None,
-                            ylabel='$\\frac{1}{2} \langle U_i U_i\\rangle~(mm^2/s^2)$',
-                            xlabel='$t~(s)$', xmin=None, xmax=None, ymin=None, ymax=None, **kwargs):
-    """
-
-    Parameters
-    ----------
-    udata
-    xx
-    yy
-    x0
-    x1
-    y0
-    y1
-    t0
-    t1
-
-    Returns
-    -------
-
-    """
-    energy = get_energy(udata[:, y0:y1, x0:x1, t0:t1])
-    e = np.nanmean(energy, axis=(0, 1))
-    fig, ax = graph.plot(time, e)
-    graph.labelaxes(ax, xlabel, ylabel)
-    ax.set_xlim([xmin, xmax])
-    ax.set_ylim([ymin, ymax])
-
-    return fig, ax
+#
+#
+# # plotting usual stuff # REQUIRES graph module. Ask Takumi for details or check out takumi's git on immense
+# def plot_energy_spectra(udata, dx, dy, dz=None, x0=0, x1=None, y0=0, y1=None, window='flattop', epsilon_guess=10**5, nu=1.004, label='',
+#                             plot_e22=False, plot_ek=False, fignum=1, t0=0, legend=True, loc=3):
+#     """
+#     A method to quickly plot the 1D energy spectra
+#     Parameters
+#     ----------
+#     udata
+#     dx
+#     dy
+#     dz
+#     x0
+#     x1
+#     y0
+#     y1
+#     window
+#     epsilon_guess
+#     nu
+#     plot_e22
+#     plot_ek
+#     fignum
+#     t0
+#     legend
+#
+#     Returns
+#     -------
+#     fig1, (ax1, ax2)
+#
+#     """
+#     __fontsize__ = 25
+#     __figsize__ = (16, 8)
+#     # See all available arguments in matplotlibrc
+#     params = {'figure.figsize': __figsize__,
+#               'font.size': __fontsize__,  # text
+#               'legend.fontsize': 18,  # legend
+#               'axes.labelsize': __fontsize__,  # axes
+#               'axes.titlesize': __fontsize__,
+#               'xtick.labelsize': __fontsize__,  # tick
+#               'ytick.labelsize': __fontsize__,
+#               'lines.linewidth': 8,
+#               'axes.titlepad': 10}
+#     graph.update_figure_params(params)
+#
+#     ax1_ylabel = '$E_{11}$ ($mm^3/s^2$)'
+#     ax2_ylabel = '$E_{11} / (\epsilon\\nu^5)^{1/4}$'
+#
+#
+#     eiis, err, k11 = get_1d_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
+#     if epsilon_guess is not None:
+#         e11_s, k11_s = scale_energy_spectrum(eiis[0, ...], k11, epsilon=epsilon_guess, nu=nu)
+#         e22_s, k22_s = scale_energy_spectrum(eiis[1, ...], k11, epsilon=epsilon_guess, nu=nu)
+#         eiis_s = np.stack((e11_s, e22_s))
+#         epsilon = epsilon_guess
+#     else:
+#         eiis_s, _, k11_s = get_1d_rescaled_energy_spectrum(udata, dx=dx, dy=dy, dz=dz, nu=nu)
+#         epsilon = get_epsilon_using_sij(udata, dx, dy, dz, nu=nu)[t0]
+#     fig1, ax1 = graph.plot(k11[1:], kolmogorov_53_uni(k11[1:], epsilon, c=0.5), label='$C_1\epsilon^{2/3}\kappa^{-5/3}$', fignum=1, subplot=121, color='k')
+#     fig1, ax2 = graph.plot_saddoughi(fignum=fignum, subplot=122, color='k', label='Scaled $E_{11}$ (SV 1994)')
+#
+#     fig1, ax1 = graph.plot(k11[1:], eiis[0, 1:, t0], label='$E_{11}$' + label, fignum=fignum, subplot=121)
+#     fig1, ax2 = graph.plot(k11_s[1:], eiis_s[0, 1:, t0], label='Scaled $E_{11}$' + label, fignum=fignum, subplot=122)
+#
+#     if plot_e22:
+#         fig1, ax1 = graph.plot(k11[1:], eiis[1, 1:, t0], label='$E_{22}$' + label, fignum=fignum, subplot=121)
+#         fig1, ax2 = graph.plot(k11_s[1:], eiis_s[1, 1:, t0], label='Scaled $E_{22}$' + label, fignum=fignum, subplot=122)
+#         ax1_ylabel = ax1_ylabel[:-13] + ', $E_{22}$ ($mm^3/s^2$)'
+#         ax2_ylabel = ax2_ylabel + ', $E_{22} / (\epsilon\\nu^5)^{1/4}$'
+#
+#     if plot_ek:
+#         ek, _, kk = get_energy_spectrum(udata, dx=dx, dy=dy, dz=dz, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
+#         ek_s, kk_s = scale_energy_spectrum(ek, kk, epsilon=epsilon, nu=nu)
+#         fig1, ax1 = graph.plot(kk[:, t0], ek[:, t0], label='$E$' + label, fignum=fignum, subplot=121)
+#         fig1, ax2 = graph.plot(kk_s[:, t0], ek_s[:, t0], label='Scaled $E$' + label, fignum=fignum, subplot=122)
+#
+#         ax1_ylabel = ax1_ylabel[:-13] + ', $E$ ($mm^3/s^2$)'
+#         ax2_ylabel = ax2_ylabel + ', $E / (\epsilon\\nu^5)^{1/4}$'
+#
+#     graph.tologlog(ax1)
+#     graph.tologlog(ax2)
+#     if legend:
+#         ax1.legend(loc=loc)
+#         ax2.legend(loc=loc)
+#
+#     graph.labelaxes(ax1, '$\kappa$ ($mm^{-1}$)', ax1_ylabel)
+#     graph.labelaxes(ax2, '$\kappa \eta $ ', ax2_ylabel)
+#
+#     # graph.setaxes(ax1, 10 ** -1.5, 10 ** 0.8, 10 ** 0.3, 10 ** 5.3)
+#     graph.setaxes(ax2, 10 ** -3.8, 2, 10 ** -3.5, 10 ** 6.5)
+#
+#     fig1.tight_layout(rect=[0, 0.03, 1, 0.95])
+#     return fig1, (ax1, ax2)
+#
+# def plot_energy_spectra_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=None, y0=0, y1=None, window='flattop', epsilon_guess=10**5, nu=1.004, label='',
+#                             plot_e22=False, plot_ek=False, fignum=1, t0=0, legend=True, loc=3, crop_edges=5, yoffset_box=20, sb_txtloc=(-0.1, 0.4),
+#                                          vmax=10**4.8):
+#     """
+#     A method to quickly plot the energy spectra (snapshot) and time-averaged energy
+#
+#     Parameters
+#     ----------
+#     udata
+#     dx
+#     dy
+#     dz
+#     x0
+#     x1
+#     y0
+#     y1
+#     window
+#     epsilon_guess
+#     nu
+#     label
+#     plot_e22
+#     plot_ek
+#     fignum
+#     t0
+#     legend
+#     loc
+#     crop_edges
+#     yoffset_box
+#     sb_txtloc
+#
+#     Returns
+#     -------
+#
+#     """
+#     __fontsize__ = 20
+#     __figsize__ = (24, 8)
+#     # See all available arguments in matplotlibrc
+#     params = {'figure.figsize': __figsize__,
+#               'font.size': __fontsize__,  # text
+#               'legend.fontsize': 18,  # legend
+#               'axes.labelsize': __fontsize__,  # axes
+#               'axes.titlesize': __fontsize__,
+#               'xtick.labelsize': __fontsize__,  # tick
+#               'ytick.labelsize': __fontsize__,
+#               'lines.linewidth': 5,
+#               'axes.titlepad': 10}
+#     graph.update_figure_params(params)
+#
+#     dim = udata.shape[0]
+#     n = crop_edges
+#     if x1 is None:
+#         x1 = udata.shape[2]-1
+#     if y1 is None:
+#         y1 = udata.shape[1]-1
+#
+#     ax2_ylabel = '$E_{11}$ ($mm^3/s^2$)'
+#     ax3_ylabel = '$E_{11} / (\epsilon\\nu^5)^{1/4}$'
+#
+#     # Compute energy heatmap and draw rectangle
+#     energy_avg = np.nanmean(get_energy(udata), axis=dim)
+#     xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+#     # Time-averaged Energy
+#     fig1, ax1, cc1 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], energy_avg[n:-n, n:-n],
+#                                          label='$\\frac{1}{2} \langle U_i   U_i \\rangle$ ($mm^2/s^2$)',
+#                                          vmin=0, vmax=vmax, fignum=fignum, subplot=131)
+#     graph.draw_box(ax1, xx, yy, yoffset=yoffset_box, sb_txtloc=sb_txtloc)
+#     graph.draw_rectangle(ax1, xx[y0, x0], yy[y0, x0], np.abs(xx[y0, x1]-xx[y0, x0]), np.abs(yy[y1, x0]-yy[y0, x0]), edgecolor='C0', linewidth=5)
+#
+#     # Coompute energy spectra
+#     eiis, err, k11 = get_1d_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
+#     if epsilon_guess is not None:
+#         e11_s, k11_s = scale_energy_spectrum(eiis[0, ...], k11, epsilon=epsilon_guess, nu=nu)
+#         e22_s, k22_s = scale_energy_spectrum(eiis[1, ...], k11, epsilon=epsilon_guess, nu=nu)
+#         eiis_s = np.stack((e11_s, e22_s))
+#         epsilon = epsilon_guess
+#     else:
+#         eiis_s, _, k11_s = get_1d_rescaled_energy_spectrum(udata, dx=dx, dy=dy, dz=dz, nu=nu)
+#         epsilon = get_epsilon_using_sij(udata, dx, dy, dz, nu=nu)[t0]
+#     fig1, ax2 = graph.plot(k11[1:], kolmogorov_53_uni(k11[1:], epsilon, c=0.5), label='$C_1\epsilon^{2/3}\kappa^{-5/3}$', fignum=fignum, subplot=132, color='k')
+#     fig1, ax3 = graph.plot_saddoughi(fignum=fignum, subplot=133, color='k', label='Scaled $E_{11}$ (SV 1994)')
+#
+#     fig1, ax2 = graph.plot(k11[1:], eiis[0, 1:, t0], label='$E_{11}$' + label, fignum=fignum, subplot=132)
+#     fig1, ax3 = graph.plot(k11_s[1:], eiis_s[0, 1:, t0], label='Scaled $E_{11}$' + label, fignum=fignum, subplot=133)
+#
+#     if plot_e22:
+#         fig1, ax2 = graph.plot(k11[1:], eiis[1, 1:, t0], label='$E_{22}$' + label, fignum=fignum, subplot=132)
+#         fig1, ax3 = graph.plot(k11_s[1:], eiis_s[1, 1:, t0], label='Scaled $E_{22}$' + label, fignum=fignum, subplot=133)
+#         ax2_ylabel = ax2_ylabel[:-13] + ', $E_{22}$ ($mm^3/s^2$)'
+#         ax3_ylabel = ax3_ylabel + ', $E_{22} / (\epsilon\\nu^5)^{1/4}$'
+#
+#     if plot_ek:
+#         ek, _, kk = get_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
+#         ek_s, kk_s = scale_energy_spectrum(ek, kk, epsilon=epsilon, nu=nu)
+#         fig1, ax2 = graph.plot(kk, ek[:, t0], label='$E$' + label, fignum=fignum, subplot=132)
+#         fig1, ax3 = graph.plot(kk_s, ek_s[:, t0], label='Scaled $E$' + label, fignum=fignum, subplot=133)
+#
+#         ax2_ylabel = ax2_ylabel[:-13] + ', $E$ ($mm^3/s^2$)'
+#         ax3_ylabel = ax3_ylabel + ', $E / (\epsilon\\nu^5)^{1/4}$'
+#
+#     graph.tologlog(ax2)
+#     graph.tologlog(ax3)
+#     if legend:
+#         ax2.legend(loc=loc)
+#         ax3.legend(loc=loc)
+#
+#     graph.labelaxes(ax2, '$\kappa$ ($mm^{-1}$)', ax2_ylabel)
+#     graph.labelaxes(ax3, '$\kappa \eta $ ', ax3_ylabel)
+#
+#     # graph.setaxes(ax1, 10 ** -1.5, 10 ** 0.8, 10 ** 0.3, 10 ** 5.3)
+#     graph.setaxes(ax3, 10 ** -3.8, 2, 10 ** -3.5, 10 ** 6.5)
+#
+#     fig1.tight_layout(rect=[0, 0.03, 1, 0.95])
+#     return fig1, (ax1, ax2, ax3)
+#
+#
+#
+# def plot_energy_spectra_avg_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=None, y0=0, y1=None, window='flattop',
+#                                          epsilon_guess=10 ** 5, nu=1.004, label='',
+#                                          plot_e11=True, plot_e22=False, plot_ek=False, plot_kol=False, plot_sv=True,
+#                                          color_ref='k', alpha_ref=0.6,
+#                                          fignum=1, legend=True, loc=3,
+#                                          crop_edges=5, yoffset_box=20, sb_txtloc=(-0.1, 0.4), errorfill=True,
+#                                          vmin=0, vmax=10**5,
+#                                          figparams=None):
+#     """
+#     A method to quickly plot the energy spectra (Time-averaged) and time-averaged energy
+#
+#     Parameters
+#     ----------
+#     udata
+#     dx
+#     dy
+#     dz
+#     x0
+#     x1
+#     y0
+#     y1
+#     window
+#     epsilon_guess
+#     nu
+#     label
+#     plot_e22
+#     plot_ek
+#     fignum
+#     t0
+#     legend
+#     loc
+#     crop_edges
+#     yoffset_box
+#     sb_txtloc
+#
+#     Returns
+#     -------
+#
+#     """
+#     if figparams is None:
+#         __fontsize__ = 20
+#         __figsize__ = (24, 8)
+#         # See all available arguments in matplotlibrc
+#         params = {'figure.figsize': __figsize__,
+#                   'font.size': __fontsize__,  # text
+#                   'legend.fontsize': 18,  # legend
+#                   'axes.labelsize': __fontsize__,  # axes
+#                   'axes.titlesize': __fontsize__,
+#                   'xtick.labelsize': __fontsize__,  # tick
+#                   'ytick.labelsize': __fontsize__,
+#                   'lines.linewidth': 5,
+#                   'axes.titlepad': 10
+#                   }
+#     else:
+#         params = figparams
+#     graph.update_figure_params(params)
+#
+#     dim = udata.shape[0]
+#     n = crop_edges
+#
+#     ax2_ylabel = '$E_{11}$ ($mm^3/s^2$)'
+#     ax3_ylabel = '$E_{11} / (\epsilon\\nu^5)^{1/4}$'
+#
+#     # Compute energy heatmap and draw rectangle
+#     energy_avg = np.nanmean(get_energy(udata), axis=dim)
+#     xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+#     # Time-averaged Energy
+#     fig1, ax1, cc1 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], energy_avg[n:-n, n:-n],
+#                                       label='$\\frac{1}{2} \langle U_i   U_i \\rangle$ ($mm^2/s^2$)',
+#                                       vmin=vmin, vmax=vmax, fignum=fignum, subplot=131)
+#     graph.draw_box(ax1, xx, yy, yoffset=yoffset_box, sb_txtloc=sb_txtloc)
+#     graph.draw_rectangle(ax1, xx[y0, x0], yy[y0, x0], np.abs(xx[y0, x1] - xx[y0, x0]), np.abs(yy[y1, x0] - yy[y0, x0]),
+#                          edgecolor='C0', linewidth=5)
+#
+#     # Coompute energy spectra
+#     eiis_raw, err, k11 = get_1d_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
+#     eiis = np.nanmean(eiis_raw, axis=2)
+#     eii_errs = np.nanstd(eiis_raw, axis=2)/2.
+#     if epsilon_guess is not None:
+#         e11_s, k11_s = scale_energy_spectrum(eiis_raw[0, ...], k11, epsilon=epsilon_guess, nu=nu)
+#         e22_s, k22_s = scale_energy_spectrum(eiis_raw[1, ...], k11, epsilon=epsilon_guess, nu=nu)
+#         eiis_s = np.stack((np.nanmean(e11_s, axis=1), np.nanmean(e22_s, axis=1)))
+#         eii_errs_s = np.stack((np.nanstd(e11_s, axis=1), np.nanstd(e22_s, axis=1)))/2.
+#         epsilon = epsilon_guess
+#     else:
+#         eiis_s_raw, _, k11_s = get_1d_rescaled_energy_spectrum(udata, dx=dx, dy=dy, dz=dz, nu=nu)
+#         eiis_s = np.nanmean(eiis_s_raw, axis=2)
+#         eii_errs_s = np.nanstd(eiis_s_raw, axis=2)
+#         epsilon = np.nanmean(get_epsilon_using_sij(udata, dx, dy, dz, nu=nu))
+#     if plot_kol:
+#         fig1, ax2 = graph.plot(k11[1:], kolmogorov_53_uni(k11[1:], epsilon, c=0.5),
+#                                label='$C_1\epsilon^{2/3}\kappa^{-5/3}$',
+#                                fignum=fignum, subplot=132,
+#                                color=color_ref, alpha=alpha_ref, lw=params['lines.linewidth']*0.6)
+#     if plot_sv:
+#         fig1, ax3 = graph.plot_saddoughi(fignum=fignum, subplot=133,
+#                                          color=color_ref, alpha=alpha_ref, lw=params['lines.linewidth']*0.6,
+#                                          label='Scaled $E_{11}$ (SV 1994)')
+#     if plot_e11:
+#         if not errorfill:
+#             fig1, ax2 = graph.plot(k11[1:], eiis[0, 1:], label='$E_{11}$' + label, fignum=fignum, subplot=132, linewidth=10)
+#             fig1, ax3 = graph.plot(k11_s[1:], eiis_s[0, 1:], label='Scaled $E_{11}$' + label, fignum=fignum, subplot=133, linewidth=10)
+#         else:
+#             fig1, ax2, _ = graph.errorfill(k11[1:], eiis[0, 1:], eii_errs[0, 1:], label='$E_{11}$' + label, fignum=fignum, subplot=132)
+#             fig1, ax3, _ = graph.errorfill(k11_s[1:], eiis_s[0, 1:], eii_errs_s[0, 1:], label='Scaled $E_{11}$' + label, fignum=fignum, subplot=133)
+#
+#
+#     if plot_e22:
+#         if not errorfill:
+#             fig1, ax2 = graph.plot(k11[1:], eiis[1, 1:], label='$E_{22}$' + label, fignum=fignum, subplot=132)
+#             fig1, ax3 = graph.plot(k11_s[1:], eiis_s[1, 1:], label='Scaled $E_{22}$' + label, fignum=fignum, subplot=133)
+#         else:
+#             fig1, ax2, _ = graph.errorfill(k11[1:], eiis[1, 1:], eii_errs[1, 1:],label='$E_{22}$' + label, fignum=fignum, subplot=132)
+#             fig1, ax3, _ = graph.errorfill(k11_s[1:], eiis_s[1, 1:], eii_errs_s[1, 1:],label='Scaled $E_{22}$' + label, fignum=fignum, subplot=133)
+#         ax2_ylabel = ax2_ylabel[:-13] + ', $E_{22}$ ($mm^3/s^2$)'
+#         ax3_ylabel = ax3_ylabel + ', $E_{22} / (\epsilon\\nu^5)^{1/4}$'
+#
+#     if plot_ek:
+#         ek_raw, _, kk = get_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, y0=y0, x1=x1, y1=y1, window=window)
+#         ek_s_raw, kk_s = scale_energy_spectrum(ek_raw, kk, epsilon=epsilon, nu=nu)
+#
+#         ek, ek_s = np.nanmean(ek_raw, axis=1), np.nanmean(ek_s_raw, axis=1)
+#         ek_err, ek_s_err = np.nanstd(ek_raw, axis=1), np.nanstd(ek_s_raw, axis=1)
+#         if not errorfill:
+#             fig1, ax2 = graph.plot(kk[:, 0], ek, label='$E$' + label, fignum=fignum, subplot=132, color='b', linestyle='--', linewidth=10)
+#             fig1, ax3 = graph.plot(kk_s[:, 0], ek_s, label='Scaled $E$' + label, fignum=fignum, subplot=133, color='b', linestyle='--', linewidth=10)
+#         else:
+#             fig1, ax2, _ = graph.errorfill(kk[:, 0], ek, ek_err, label='$E$' + label, fignum=fignum, subplot=132)
+#             fig1, ax3, _ = graph.errorfill(kk_s[:, 0], ek_s, ek_s_err, label='Scaled $E$' + label, fignum=fignum, subplot=133)
+#
+#
+#         ax2_ylabel = ax2_ylabel[:-13] + ', $E$ ($mm^3/s^2$)'
+#         ax3_ylabel = ax3_ylabel + ', $E / (\epsilon\\nu^5)^{1/4}$'
+#
+#     graph.tologlog(ax2)
+#     graph.tologlog(ax3)
+#     if legend:
+#         ax2.legend(loc=loc)
+#         ax3.legend(loc=loc)
+#
+#     graph.labelaxes(ax2, '$\kappa$ ($mm^{-1}$)', ax2_ylabel)
+#     graph.labelaxes(ax3, '$\kappa \eta $ ', ax3_ylabel)
+#
+#     # graph.setaxes(ax1, 10 ** -1.5, 10 ** 0.8, 10 ** 0.3, 10 ** 5.3)
+#     graph.setaxes(ax3, 10 ** -3.8, 2, 10 ** -3.5, 10 ** 6.5)
+#
+#     fig1.tight_layout(rect=[0, 0.03, 1, 0.95])
+#
+#     return fig1, (ax1, ax2, ax3)
+#
+#
+# def plot_mean_flow(udata, xx, yy, f_p=5., crop_edges=4, fps=1000., data_spacing=1, umin=-200, umax=200, tau0=0, tau1=10, yoffset_box=20.):
+#     """
+#     A method to quickly plot the mean flow
+#     ... dependencies: takumi.library.graph
+#     ... graph is Takumi's plotting module which mainly utilizes matplotlib.
+#     ... graph can be found under library/display her: https://github.com/tmatsuzawa/library
+#
+#
+#     Parameters
+#     ----------
+#     udata
+#     xx
+#     yy
+#     f_p
+#     crop_edges
+#     fps
+#     data_spacing
+#     umin
+#     umax
+#     tau0
+#     tau1
+#     yoffset_box
+#
+#     Returns
+#     -------
+#
+#     """
+#     __figsize__, __fontsize__ = (24, 20), 16
+#     params = {'figure.figsize': __figsize__,
+#               'font.size': __fontsize__,  # text
+#               'legend.fontsize': 16,  # legend
+#               'axes.labelsize': __fontsize__,  # axes
+#               'axes.titlesize': __fontsize__,
+#               'xtick.labelsize': __fontsize__,  # tick
+#               'ytick.labelsize': __fontsize__,
+#               'axes.edgecolor': 'black',
+#               'axes.linewidth': 0.8,
+#               'lines.linewidth': 5.}
+#     graph.update_figure_params(params)
+#     # Forcing Period
+#     tau_p = int(1. / f_p * fps / data_spacing)  # 1/f *(fps/data_spacing) in frames
+#     # no. of pixels to ignore at the edge
+#     n = crop_edges
+#
+#     # PLOTTING
+#     gridshape = (7, 6)
+#     ax_evst = plt.subplot2grid(gridshape, (0, 0), colspan=6)
+#     ax_enstvst = ax_evst.twinx()
+#
+#     ax_eavg = plt.subplot2grid(gridshape, (1, 1), colspan=2, rowspan=2)
+#     ax_e_mf = plt.subplot2grid(gridshape, (1, 3), colspan=2, rowspan=2)
+#
+#     ax_enstavg = plt.subplot2grid(gridshape, (3, 1), colspan=2, rowspan=2)
+#     ax_enst_mf = plt.subplot2grid(gridshape, (3, 3), colspan=2, rowspan=2)
+#
+#     ax_ux_mf = plt.subplot2grid(gridshape, (5, 0), colspan=2, rowspan=2)
+#     ax_uy_mf = plt.subplot2grid(gridshape, (5, 2), colspan=2, rowspan=2)
+#     ax_omega_mf = plt.subplot2grid(gridshape, (5, 4), colspan=2, rowspan=2)
+#
+#     mask = np.empty(udata.shape[-1])
+#     for i in range(len(mask)):
+#         if (i - tau0) % tau_p < tau1:
+#             mask[i] = True
+#         else:
+#             mask[i] = False
+#     mask = mask.astype('bool')
+#
+#     # Compute quantities
+#     ## spacing
+#     dx = np.abs(xx[0, 1] - xx[0, 0])
+#     dy = np.abs(yy[1, 0] - yy[0, 0])
+#     ## time average using all data
+#     udata_m_all, udata_t_all = reynolds_decomposition(udata)
+#     e_avg_all, _ = get_spatial_avg_energy(udata, x0=n, x1=-n, y0=n, y1=-n)
+#     e_t_avg_all, _ = get_spatial_avg_energy(udata_t_all, x0=n, x1=-n, y0=n, y1=-n)
+#     enst_avg_all, _ = get_spatial_avg_enstrophy(udata, x0=n, x1=-n, y0=n, y1=-n, dx=dx, dy=dy)
+#
+#     ## Reynolds decomposition (For a specified region)
+#     udata_m, udata_t = reynolds_decomposition(udata[..., mask])
+#     ## energy / enstrophy
+#     time = np.arange(udata.shape[-1]) / (fps / data_spacing)
+#     e_t_avg, _ = get_spatial_avg_energy(udata_t, x0=n, x1=-n, y0=n, y1=-n)
+#
+#     energy = get_energy(udata[..., mask])
+#     enstrophy = get_enstrophy(udata[..., mask], dx=dx, dy=dy, xx=None, yy=None)
+#
+#     e = np.nanmean(energy, axis=2)
+#     enst = np.nanmean(enstrophy, axis=2)
+#     energy_m = get_energy(udata_m)
+#     omega_m = curl(udata_m, dx=dx, dy=dy)
+#     enst_m = omega_m ** 2
+#
+#     # PLOT
+#     # E vs t
+#     l_e = ax_evst.plot(time, e_avg_all, label='$\langle E \\rangle_{space}$', alpha=0.8)
+#     l_k = ax_evst.plot(time, e_t_avg_all, label='$\langle k \\rangle_{space}$', alpha=0.8)
+#     l_enst = ax_enstvst.plot(time, enst_avg_all, label='$\langle \omega_z^2 \\rangle_{space}$', color='C2',
+#                              alpha=0.8)
+#     graph.tosemilogy(ax_evst)
+#     graph.tosemilogy(ax_enstvst)
+#     ax_evst.set_ylim(10 ** 3.5, 10 ** 5)
+#     ax_enstvst.set_ylim(10 ** 2.5, 10 ** 4)
+#     ax_enstvst.set_xlim(time[0], time[0] + (time[-1] - time[0]) * 1.01)
+#     graph.labelaxes(ax_evst, '$t$ ($s$)', '$E, k$ ($mm^2/s^2$)')
+#     graph.labelaxes(ax_enstvst, '$t$ ($s$)', '$\langle \omega_z^2 \\rangle$ ($1/s^2$)')
+#     ## Vertical Bands
+#     t0 = tau0 * data_spacing / fps
+#     t1 = t0 + tau1 * data_spacing / fps
+#     while t1 < time[-1]:
+#         graph.axvband(ax_enstvst, t0, t1, zorder=0)
+#         t0 += 1. / f_p
+#         t1 += 1. / f_p
+#     ## Label
+#     lns = l_e + l_k + l_enst
+#     labs = [l.get_label() for l in lns]
+#     ax_evst.legend(lns, labs, loc=1, ncol=3, facecolor='white', framealpha=1.0, frameon=False)
+#
+#     # Time-averaged Energy
+#     fig, ax_eavg, cc1 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], e[n:-n, n:-n], ax=ax_eavg,
+#                                          label='$\\frac{1}{2} \langle U_i   U_i \\rangle$ ($mm^2/s^2$)',
+#                                          vmin=0, vmax=10 ** 4.8)
+#     # Mean Flow Energy
+#     fig, ax_e_mf, cc2 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], energy_m[n:-n, n:-n], ax=ax_e_mf,
+#                                          label='$\\frac{1}{2} \langle U_i  \\rangle  \langle U_i  \\rangle$ ($mm^2/s^2$)',
+#                                          vmin=0, vmax=10 ** 4.2)
+#
+#     # Time-averaged Enstrophy
+#     fig, ax_enstavg, cc3 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], enst[n:-n, n:-n], ax=ax_enstavg,
+#                                             label='$\langle \omega_z^2 \\rangle$ ($1/s^2$)', vmin=0,
+#                                             vmax=10 ** 3.7)
+#
+#     # Mean Flow Enstrophy
+#     fig, ax_enst_mf, cc4 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], enst_m[n:-n, n:-n, 0],
+#                                             ax=ax_enst_mf, vmin=0, vmax=250,
+#                                             label='$\langle \Omega_z  \\rangle  ^2$ ($1/s^2$)')
+#
+#     # Mean Flow Ux
+#     fig, ax_ux_mf, cc5 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], udata_m[0, n:-n, n:-n],
+#                                           ax=ax_ux_mf, cmap='bwr',
+#                                           label='$\langle U_x \\rangle$ ($mm/s$)', vmin=umin, vmax=umax)
+#
+#     # Mean Flow Uy
+#     fig5, ax_uy_mf, cc6 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], udata_m[1, n:-n, n:-n],
+#                                            ax=ax_uy_mf, cmap='bwr',
+#                                            label='$\langle U_y \\rangle$ ($mm/s$)', vmin=umin, vmax=umax)
+#
+#     # Mean Flow Vorticity
+#     fig, ax_omega_mf, cc = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], omega_m[n:-n, n:-n, 0],
+#                                             ax=ax_omega_mf, cmap='bwr',
+#                                             label='$\langle \Omega_z \\rangle$ ($1/s$)', vmin=-20, vmax=20)
+#
+#     axes_to_add_box = [ax_eavg, ax_e_mf, ax_enstavg, ax_enst_mf, ax_ux_mf, ax_uy_mf, ax_omega_mf]
+#     for ax in axes_to_add_box:
+#         if ax in [ax_ux_mf, ax_uy_mf, ax_omega_mf]:
+#             graph.draw_box(ax, xx, yy, yoffset=yoffset_box, facecolor='white', sb_txtcolor='k', sb_txtloc=(-0.1, 0.4))
+#         else:
+#             graph.draw_box(ax, xx, yy, yoffset=yoffset_box, sb_txtloc=(-0.1, 0.4))
+#     fig.tight_layout()
+#
+#     axes = [ax_evst, ax_enstvst] + axes_to_add_box
+#     return fig, axes
+#
+#
+# def plot_time_avg_energy(udata, xx, yy, x0=0, x1=None, y0=0, y1=None, t0=0, t1=None,
+#                          label='$\\frac{1}{2} \langle U_i U_i\\rangle~(mm^2/s^2)$',
+#                          xlabel='$x~(mm)$', ylabel='$y~(mm)$', vmin=None, vmax=None, **kwargs):
+#     """
+#
+#     Parameters
+#     ----------
+#     udata
+#     xx
+#     yy
+#     x0
+#     x1
+#     y0
+#     y1
+#     t0
+#     t1
+#
+#     Returns
+#     -------
+#
+#     """
+#     energy = get_energy(udata[:, y0:y1, x0:x1, t0:t1])
+#     e = np.nanmean(energy, axis=-1)
+#     fig, ax, cc = graph.color_plot(xx[y0:y1, x0:x1], yy[y0:y1, x0:x1], e, label=label, vmin=vmin, vmax=vmax, **kwargs)
+#     graph.labelaxes(ax, xlabel, ylabel)
+#
+#     return fig, ax, cc
+#
+#
+# def plot_time_avg_enstrophy(udata, xx, yy, x0=0, x1=None, y0=0, y1=None, t0=0, t1=None,
+#                             label='$\\frac{1}{2} \langle \omega_z ^2\\rangle~(1/s^2)$',
+#                             xlabel='$x~(mm)$', ylabel='$y~(mm)$', vmin=None, vmax=None, **kwargs):
+#     """
+#
+#     Parameters
+#     ----------
+#     udata
+#     xx
+#     yy
+#     x0
+#     x1
+#     y0
+#     y1
+#     t0
+#     t1
+#
+#     Returns
+#     -------
+#
+#     """
+#     enstrophy = get_enstrophy(udata[:, y0:y1, x0:x1, t0:t1], xx=xx, yy=yy)
+#     en = np.nanmean(enstrophy, axis=-1)
+#     fig, ax, cc = graph.color_plot(xx[y0:y1, x0:x1], yy[y0:y1, x0:x1], en, label=label, vmin=vmin, vmax=vmax, **kwargs)
+#     graph.labelaxes(ax, xlabel, ylabel)
+#
+#     return fig, ax, cc
+#
+#
+# def plot_spatial_avg_energy(udata, time, x0=0, x1=None, y0=0, y1=None, t0=0, t1=None,
+#                             ylabel='$\\frac{1}{2} \langle U_i U_i\\rangle~(mm^2/s^2)$',
+#                             xlabel='$t~(s)$', xmin=None, xmax=None, ymin=None, ymax=None, **kwargs):
+#     """
+#
+#     Parameters
+#     ----------
+#     udata
+#     xx
+#     yy
+#     x0
+#     x1
+#     y0
+#     y1
+#     t0
+#     t1
+#
+#     Returns
+#     -------
+#
+#     """
+#     energy = get_energy(udata[:, y0:y1, x0:x1, t0:t1])
+#     e = np.nanmean(energy, axis=(0, 1))
+#     fig, ax = graph.plot(time, e)
+#     graph.labelaxes(ax, xlabel, ylabel)
+#     ax.set_xlim([xmin, xmax])
+#     ax.set_ylim([ymin, ymax])
+#
+#     return fig, ax
 
 
 # movie
@@ -9118,7 +9298,7 @@ def make_movie(imgname=None, imgdir=None, movname=None, indexsz='05', framerate=
 
 
 # convenient tools
-def get_binned_stats(arg, var, n_bins=100, mode='linear', bin_center=True):
+def get_binned_stats(arg, var, n_bins=100, mode='linear', bin_center=True, return_std=False):
     """
     Make a histogram out of a pair of 1d arrays.
     ... Returns arg_bins, var_mean, var_err
@@ -9133,7 +9313,8 @@ def get_binned_stats(arg, var, n_bins=100, mode='linear', bin_center=True):
         If 'linear', var will be sorted to equally spaced bins. i.e. bin centers increase linearly.
         If 'log', the bins will be not equally spaced. Instead, they will be equally spaced in log.
         ... bin centers will be like... 10**0, 10**0.5, 10**1.0, 10**1.5, ..., 10**9
-
+    return_std: bool
+        If True, it returns the STD of the statistics instead of the error = STD / np.sqrt(N-1)
     Returns
     -------
     arg_bins: 1d array, bin centers
@@ -9218,8 +9399,10 @@ def get_binned_stats(arg, var, n_bins=100, mode='linear', bin_center=True):
     else:
         arg_bins, var_mean = sort2arr(arg_means, var_mean)
         arg_bins, var_err = sort2arr(arg_means, var_err)
-
-    return arg_bins, var_mean, var_err / np.sqrt(counts)
+    if return_std:
+        return arg_bins, var_mean, var_err
+    else:
+        return arg_bins, var_mean, var_err / np.sqrt(counts)
 
 
 def get_binned_stats2d(x, y, var, n_bins=100, nx_bins=None, ny_bins=None, bin_center=True,
@@ -9511,7 +9694,7 @@ def get_udata_from_path_nested(udatapath, ind=0,
                                reverse_x=False, reverse_y=False, reverse_z=False):
     """
     A function to read udata from a hdf5 file
-    ... This function is suited for a nested structure Takumi used temporaly.
+    ... This function is suited for a nested structure Takumi used temporarily.
         This format stores udata generated by multiple PIV settings
         (different Dt, interrogation window size, etc) on the same movie
 
@@ -9678,7 +9861,10 @@ def get_udata_from_path_nested(udatapath, ind=0,
 # Spatial Pofile
 def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=None, n=50,
                         return_center=False,
-                        zz=None, z0=0, z1=None):
+                        zz=None, zc=None, z0=0, z1=None,
+                        method=None, # if qty contains nan, choose how to clean the array
+                        cutoff=np.inf,
+                        ):
     """
     Returns a spatial profile (radial histogram) of 3D object with shape (height, width, duration)
     ... Computes a histogram of a given quantity as a function of distance from the center (xc, yc)
@@ -9711,16 +9897,31 @@ def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=N
     qty_errs: 2d numpy array
     ... std of the quantity between r and r+dr with shape (n, duration)
     """
-    duration = qty.shape[-1]
+
+    if not np.isinf(cutoff):
+        qty[qty > cutoff] = np.nan
+
+    if method is not None:
+        print('vel.get_spatial_profile:')
+        print('... clean the input quantity (replace np.nans)')
+        print('... Cleaning method: ', method)
+        qty = clean_data(qty, method=method, fill_value=0)
 
     if zz is None:
         x, y = xx[y0:y1, x0:x1], yy[y0:y1, x0:x1]
+        if len(qty.shape) == 2:
+            qty = qty.reshape(qty.shape + (1,))
         qty_local = qty[y0:y1, x0:x1, ...]
+
+        duration = qty.shape[-1]
+
         if xc is None or yc is None:
             # find a center of the mass from the initial image
             yc_i, xc_i = ndimage.measurements.center_of_mass(qty_local[..., 0])
             yc, xc = y[int(np.round(yc_i)), int(np.round(xc_i))], x[int(np.round(yc_i)), int(np.round(xc_i))]
             print('spatial_profile: (xc, yc)=(%.2f, %.2f)' % (xc, yc))
+
+
         elif xc is None and yc is None:
             xc, yc = 0, 0
         r, theta = cart2pol(x - xc, y - yc)
@@ -9732,13 +9933,23 @@ def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=N
         for t in tqdm(list(range(duration))):
             rs[:, t], qty_ms[:, t], qty_errs[:, t] = get_binned_stats(r.flatten(),
                                                                       qty_local[..., t].flatten(),
-                                                                      n_bins=n)
+                                                                      n_bins=n,
+                                                                      return_std=True)
     else:
         x, y, z = xx[y0:y1, x0:x1, z0:z1], yy[y0:y1, x0:x1, z0:z1], zz[y0:y1, x0:x1, z0:z1],
+        if len(qty.shape) == 3:
+            qty = qty.reshape(qty.shape + (1,))
         qty_local = qty[y0:y1, x0:x1, z0:z1, ...]
+
+        duration = qty.shape[-1]
+
         if xc is None or yc is None:
             # find a center of the mass from the initial image
             yc_i, xc_i, zc_i = ndimage.measurements.center_of_mass(qty_local[..., 0])
+
+            # xc = np.nanmean(qty_local[..., 0] * x) / np.nanmean(qty_local[..., 0])
+            # yc = np.nanmean(qty_local[..., 0] * y) / np.nanmean(qty_local[..., 0])
+            # zc = np.nanmean(qty_local[..., 0] * z) / np.nanmean(qty_local[..., 0])
 
             xc = x[int(np.round(yc_i)), int(np.round(xc_i)), int(np.round(zc_i))]
             yc = y[int(np.round(yc_i)), int(np.round(xc_i)), int(np.round(zc_i))]
@@ -9755,12 +9966,15 @@ def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=N
         for t in tqdm(list(range(duration))):
             rs[:, t], qty_ms[:, t], qty_errs[:, t] = get_binned_stats(r.flatten(),
                                                                       qty_local[..., t].flatten(),
-                                                                      n_bins=n)
+                                                                      n_bins=n,
+                                                                      return_std=True)
     if not return_center:
         return rs, qty_ms, qty_errs
     else:
-        return rs, qty_ms, qty_errs, np.asarray([xc, yc])
-
+        if zz is None:
+            return rs, qty_ms, qty_errs, np.asarray([xc, yc])
+        else:
+            return rs, qty_ms, qty_errs, np.asarray([xc, yc, zc])
 
 ########## Helpers ###########
 
@@ -9893,7 +10107,7 @@ def get_equally_spaced_grid(udata, spacing=1):
     elif dim == 3:
         height, width, depth, duration = udata[0].shape
         x, y, z = list(range(width)), list(range(height)), list(range(depth))
-        xx, yy, zz = np.meshgrid(y, x, z)
+        xx, yy, zz = np.meshgrid(x, y, z)
         return xx * spacing, yy * spacing, zz * spacing
 
 
@@ -10491,6 +10705,52 @@ def get_running_avg_1d(x, t, notebook=True):
             print('Using tqdm_notebook. If this is a mistake, set notebook=False')
         else:
             from tqdm import tqdm
+def get_running_avg_1d(x, t, notebook=True):
+    """
+    Returns a running average of 1D array x. The number of elements to average over is specified by t.
+    """
+    if t == 1:
+        return x
+    else:
+        if notebook:
+            from tqdm import tqdm_notebook as tqdm
+            print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+        else:
+            from tqdm import tqdm
+
+        y = np.zeros(len(x) - t)
+        for i in tqdm(list(range(t))):
+            y += np.roll(x, -i)[:-t]
+        y /= float(t)
+
+        if notebook:
+            from tqdm import tqdm
+        return y
+
+
+def get_running_avg_nd(udata, t, axis=-1, notebook=True):
+    """
+    Returns a running average of nD array x. The number of elements to average over is specified by t.
+    """
+    if t == 1:
+        return udata
+    else:
+        if notebook:
+            from tqdm import tqdm_notebook as tqdm
+            print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+        else:
+            from tqdm import tqdm
+        shape = udata.shape
+        newshape = tuple(list(shape)[:-1] + [shape[-1] - t])
+        vdata = np.zeros(newshape)
+        for i in tqdm(list(range(t)), desc='Computing running average (nd)'):
+            # if array contains nan, nans will be replaced by 0.
+            vdata += np.nan_to_num(np.roll(udata, -i, axis=axis)[..., :-t])
+        vdata /= float(t)
+
+        if notebook:
+            from tqdm import tqdm
+        return vdata
 
         y = np.zeros(len(x) - t)
         for i in tqdm(list(range(t))):
@@ -12038,6 +12298,321 @@ def get_streamfunction_thin_cored_vring(xx, yy, x0=0, y0=0, gamma=1, R=1,
     else:
         return psi_cylindrical
 
+# 3D streamlines
+## Sample n streamlines (randomly)
+def sample_streamlines(udata, xx, yy, zz, npt=1,
+                       xmin=0, xmax=None, ymin=0, ymax=None, zmin=0, zmax=None,
+                       t0=0, t1=None, dt=0.01):
+    """
+    Returns n streamlines which go through n randomly chosen points inside xx, yy, zz
+    ... How this works: Basically, seed particles at the instant of time, and track how they move by the instantaneous vel field.
+    ... Streamlines are a family of curves that are instantaneously tangent to the velocity vector of the flow.
+
+    Parameters
+    ----------
+    udata
+    xx
+    yy
+    zz
+    npt: float, number of streamlines
+        ... to be precise, this is the number of points through which streamlines are drawn.
+    xmin: int
+        ... The initial points were taken from inside the box whose diagonal vertices are
+            (xx[ymin, xmin, zmin], yy[ymin, xmin, zmin], zz[ymin, xmin, zmin])
+            and
+            (xx[ymax, xmax, zmax], yy[ymax, xmax, zmax], zz[ymax, xmax, zmax])
+    xmax: int
+    ymin: int
+    ymax: int
+    zmin: int
+    zmax: int
+    t0: int
+    t1: int
+    dt:
+
+    Returns
+    -------
+    strmlines_master: list
+        ... length of the list is duration (t1-t0)
+        ...... strmlines_master[10] are a collection of n streamlines at frame 10
+        ... If t1-t0 == 1 (given udata is a snapshot of the velocity field):
+            it returns strmlines_master[0]
+
+    """
+    def create_a_streamline(x0, y0, z0, funcs, xx, yy, zz,
+                            dt=0.01, nmax=1000,
+                            translations=[0, 0, 0],
+                            spacing=1.):
+        """
+        Create a streamline when point coordinates are given
+        All computations are done in the index space not physical space.
+        Hence, input positions, velocity functions, spatial grids must be in the index space
+        """
+
+        def insideBox(x, y, z, xx, yy, zz):
+            xmin, xmax = np.nanmin(xx), np.nanmax(xx)
+            ymin, ymax = np.nanmin(yy), np.nanmax(yy)
+            zmin, zmax = np.nanmin(zz), np.nanmax(zz)
+            w, h, d = xmax - xmin, ymax - ymin, zmax - zmin
+            return x > xmin and x < xmax and y > ymin and y < ymax and z > zmin and z < zmax
+
+        def sort_two_arrays_using_order_of_first_array(arr1, arr2):
+            """
+            Sort arr1 and arr2 using the order of arr1
+            e.g. a=[2,1,3], b=[4,1,9]-> a[1,2,3], b=[1,4,9]
+            Parameters
+            ----------
+            arr1
+            arr2
+
+            Returns
+            -------
+
+            """
+            arr1, arr2 = list(zip(*sorted(zip(arr1, arr2))))
+
+            return np.asarray(arr1), np.asarray(arr2)
+
+        step = 0
+        f, g, h = funcs
+        xs, ys, zs = [x0], [y0], [z0]
+        steps = [step]
+        while insideBox(x0, y0, z0, xx, yy, zz) and step < nmax:
+            # Compute the position at the next time step
+            ux, uy, uz = f([y0, x0, z0])[0], g([y0, x0, z0])[0], h([y0, x0, z0])[0]
+            dx, dy, dz = ux * dt, uy * dt, uz * dt
+            x1, y1, z1 = x0 + dx, y0 + dy, z0 + dz
+
+            # Insert data
+            xs.append(x1)
+            ys.append(y1)
+            zs.append(z1)
+            steps.append(step + 1)
+
+            # Update x0, y0, z0
+            x0, y0, z0 = x1, y1, z1
+            step += 1
+
+        # Now go back in time
+        x0, y0, z0 = xs[0], ys[0], zs[0]
+        step = 0
+        while insideBox(x0, y0, z0, xx, yy, zz) and np.abs(step) < nmax:
+            # Compute the position at the next time step
+            ux, uy, uz = f([y0, x0, z0])[0], g([y0, x0, z0])[0], h([y0, x0, z0])[0]
+            dx, dy, dz = -ux * dt, -uy * dt, -uz * dt
+            x1, y1, z1 = x0 + dx, y0 + dy, z0 + dz
+
+            # Insert data
+            xs.append(x1)
+            ys.append(y1)
+            zs.append(z1)
+            steps.append(step - 1)
+
+            # Update x0, y0, z0
+            x0, y0, z0 = x1, y1, z1
+            step -= 1
+        _, xs = sort_two_arrays_using_order_of_first_array(steps, xs)
+        _, ys = sort_two_arrays_using_order_of_first_array(steps, ys)
+        steps, zs = sort_two_arrays_using_order_of_first_array(steps, zs)
+
+        # alter array shape, and convert index into physical units
+        strmline = np.stack((xs * spacing + translations[0],
+                             ys * spacing + translations[1],
+                             zs * spacing + translations[2]))
+        return strmline
+
+    Xmin, Xmax = np.nanmin(xx), np.nanmax(xx)
+    Ymin, Ymax = np.nanmin(yy), np.nanmax(yy)
+    Zmin, Zmax = np.nanmin(zz), np.nanmax(zz)
+    dx, dy, dz = get_grid_spacing(xx, yy, zz)
+
+    udata = fix_udata_shape(udata)
+    dim, height, width, depth, duration = udata.shape
+
+    yy_i, xx_i, zz_i = get_equally_spaced_grid(udata, spacing=1)  # spatial grid (indices- not in physical units)
+    if xmax is None:
+        xmax = width
+    if ymax is None:
+        ymax = height
+    if zmax is None:
+        zmax = depth
+    if t1 is None:
+        t1 = duration
+
+    # 1D arrays of udata grid (indices)
+    x, y, z = np.arange(width), np.arange(height), np.arange(depth)
+
+    strmlines_master = []
+    x0s_list, y0s_list, z0s_list = [], [], []
+    for t in range(t0, t1):
+        f = RegularGridInterpolator((y, x, z), udata[0, ..., t] / dx)  # ux (px/s)
+        g = RegularGridInterpolator((y, x, z), udata[1, ..., t] / dy)  # uy (px/s)
+        h = RegularGridInterpolator((y, x, z), udata[2, ..., t] / dz)  # uz (px/s)
+
+        # starting positions (indices) of particles
+        x0s = xmin + np.random.random(npt) * (xmax - xmin)
+        y0s = ymin + np.random.random(npt) * (ymax - ymin)
+        z0s = zmin + np.random.random(npt) * (zmax - zmin)
+
+        # get n streamlines every frame
+        strmlines = []
+        for n, (x0, y0, z0) in enumerate(tqdm(zip(x0s, y0s, z0s), total=len(x0s))):
+            strmline = create_a_streamline(x0, y0, z0, [f, g, h], xx_i, yy_i, zz_i,
+                                           dt=dt,
+                                           spacing=dx,
+                                           translations=[Xmin, Ymin, Zmin])
+            strmlines.append(strmline)
+        # strmlines_master stores the all streamlines across frames
+        strmlines_master.append(strmlines)
+
+        x0s_list.append(x0s * dx + Xmin)
+        y0s_list.append(y0s * dy + Ymin)
+        z0s_list.append(z0s * dz + Zmin)
+
+    if len(strmlines_master) == 1:
+        return strmlines_master[0]
+    else:
+        return strmlines_master
+
+
+def get_streamlines(udata, xx, yy, zz, pts=np.asarray([[0, 0, 0]]),
+                    xmin=0, xmax=None, ymin=0, ymax=None, zmin=0, zmax=None,
+                    t0=0, t1=None, dt=0.01):
+    def create_a_streamline(x0, y0, z0, funcs, xx, yy, zz,
+                            dt=0.01, nmax=1000,
+                            translations=[0, 0, 0],
+                            spacing=1.):
+        """
+        Create a streamline when point coordinates are given
+        All computations are done in the index space not physical space.
+        Hence, input positions, velocity functions, spatial grids must be in the index space
+        """
+
+        def insideBox(x, y, z, xx, yy, zz):
+            xmin, xmax = np.nanmin(xx), np.nanmax(xx)
+            ymin, ymax = np.nanmin(yy), np.nanmax(yy)
+            zmin, zmax = np.nanmin(zz), np.nanmax(zz)
+            w, h, d = xmax - xmin, ymax - ymin, zmax - zmin
+            return x > xmin and x < xmax and y > ymin and y < ymax and z > zmin and z < zmax
+
+        def sort_two_arrays_using_order_of_first_array(arr1, arr2):
+            """
+            Sort arr1 and arr2 using the order of arr1
+            e.g. a=[2,1,3], b=[4,1,9]-> a[1,2,3], b=[1,4,9]
+            Parameters
+            ----------
+            arr1
+            arr2
+
+            Returns
+            -------
+
+            """
+            arr1, arr2 = list(zip(*sorted(zip(arr1, arr2))))
+
+            return np.asarray(arr1), np.asarray(arr2)
+
+        step = 0
+        f, g, h = funcs
+        xs, ys, zs = [x0], [y0], [z0]
+        steps = [step]
+        while insideBox(x0, y0, z0, xx, yy, zz) and step < nmax:
+            # Compute the position at the next time step
+            ux, uy, uz = f([y0, x0, z0])[0], g([y0, x0, z0])[0], h([y0, x0, z0])[0]
+            dx, dy, dz = ux * dt, uy * dt, uz * dt
+            x1, y1, z1 = x0 + dx, y0 + dy, z0 + dz
+
+            # Insert data
+            xs.append(x1)
+            ys.append(y1)
+            zs.append(z1)
+            steps.append(step + 1)
+
+            # Update x0, y0, z0
+            x0, y0, z0 = x1, y1, z1
+            step += 1
+
+        # Now go back in time
+        x0, y0, z0 = xs[0], ys[0], zs[0]
+        step = 0
+        while insideBox(x0, y0, z0, xx, yy, zz) and np.abs(step) < nmax:
+            # Compute the position at the next time step
+            ux, uy, uz = f([y0, x0, z0])[0], g([y0, x0, z0])[0], h([y0, x0, z0])[0]
+            dx, dy, dz = -ux * dt, -uy * dt, -uz * dt
+            x1, y1, z1 = x0 + dx, y0 + dy, z0 + dz
+
+            # Insert data
+            xs.append(x1)
+            ys.append(y1)
+            zs.append(z1)
+            steps.append(step - 1)
+
+            # Update x0, y0, z0
+            x0, y0, z0 = x1, y1, z1
+            step -= 1
+        _, xs = sort_two_arrays_using_order_of_first_array(steps, xs)
+        _, ys = sort_two_arrays_using_order_of_first_array(steps, ys)
+        steps, zs = sort_two_arrays_using_order_of_first_array(steps, zs)
+
+        # alter array shape, and convert index into physical units
+        strmline = np.stack((xs * spacing + translations[0],
+                             ys * spacing + translations[1],
+                             zs * spacing + translations[2]))
+        return strmline
+
+    Xmin, Xmax = np.nanmin(xx), np.nanmax(xx)
+    Ymin, Ymax = np.nanmin(yy), np.nanmax(yy)
+    Zmin, Zmax = np.nanmin(zz), np.nanmax(zz)
+
+    dx, dy, dz = get_grid_spacing(xx, yy, zz)
+
+    udata = fix_udata_shape(udata)
+    dim, height, width, depth, duration = udata.shape
+
+    yy_i, xx_i, zz_i = get_equally_spaced_grid(udata, spacing=1)  # spatial grid (indices- not in physical units)
+    if xmax is None:
+        xmax = width
+    if ymax is None:
+        ymax = height
+    if zmax is None:
+        zmax = depth
+    if t1 is None:
+        t1 = duration
+
+    # 1D arrays of udata grid (indices)
+    x, y, z = np.arange(width), np.arange(height), np.arange(depth)
+
+    strmlines_master = []
+    x0s_list, y0s_list, z0s_list = [], [], []
+    for t in range(t0, t1):
+        f = RegularGridInterpolator((y, x, z), udata[0, ..., t] / dx)  # ux (px/s)
+        g = RegularGridInterpolator((y, x, z), udata[1, ..., t] / dy)  # uy (px/s)
+        h = RegularGridInterpolator((y, x, z), udata[2, ..., t] / dz)  # uz (px/s)
+
+        # starting positions (indices) of particles
+        npts = pts.shape[0]
+        x0s = pts[:, 0]
+        y0s = pts[:, 1]
+        z0s = pts[:, 2]
+
+        strmlines = []
+        for n, (x0, y0, z0) in enumerate(tqdm(zip(x0s, y0s, z0s), total=len(x0s))):
+            strmline = create_a_streamline(x0, y0, z0, [f, g, h], xx_i, yy_i, zz_i,
+                                           dt=dt,
+                                           spacing=dx,
+                                           translations=[Xmin, Ymin, Zmin])
+            strmlines.append(strmline)
+        strmlines_master.append(strmlines)
+
+        x0s_list.append(x0s * dx + Xmin)
+        y0s_list.append(y0s * dy + Ymin)
+        z0s_list.append(z0s * dz + Zmin)
+
+    if len(strmlines_master) == 1:
+        return strmlines_master[0]
+    else:
+        return strmlines_master
+
 
 # APPROACH2: Solve a poisson equation (This will not work in general!)
 def get_streamfunction_poisson_solver(udata,
@@ -12307,3 +12882,942 @@ def smooth(x, window_len=11, window='hanning', log=False):
         return y[(window_len//2-1):(window_len//2-1)+len(x)]
     else:
         return np.exp(y[(window_len // 2 - 1):(window_len // 2 - 1) + len(x)])
+
+
+# Coarse-graining a field
+def coarse_grain_udata(udata, nrows_sub, ncolumns_sub, overwrap=0.5, xx=None, yy=None, notebook=True):
+    """
+    Returns a coarse grained udata
+    ... so far, this can handle only 2D udata
+    Parameters
+    ----------
+    udata
+    nrows_sub
+    ncolumns_sub
+    overwrap
+    xx
+    yy
+
+    Returns
+    -------
+
+    """
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+        print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+    else:
+        from tqdm import tqdm
+
+    udata = fix_udata_shape(udata)
+    dim, duration = udata.shape[0], udata.shape[-1]
+    if dim == 3:
+        raise ValueError('coarse_grain_udata: 3D udata is not implemented yet')
+
+    dummy = coarse_grain_2darr_overwrap(udata[0, ..., 0], nrows_sub, ncolumns_sub, overwrap=overwrap)
+    shape = (dim, ) + dummy.shape + (duration, )
+    udata_c = np.empty(shape)
+    for t in tqdm(range(duration)):
+        for d in range(dim):
+            udata_c[d, ..., t] = coarse_grain_2darr_overwrap(udata[d, ..., t], nrows_sub, ncolumns_sub, overwrap=overwrap)
+
+    if xx is not None and yy is not None:
+        xx_c = coarse_grain_2darr_overwrap(xx, nrows_sub, ncolumns_sub, overwrap=overwrap)
+        yy_c = coarse_grain_2darr_overwrap(yy, nrows_sub, ncolumns_sub, overwrap=overwrap)
+
+    if notebook:
+        from tqdm import tqdm
+
+
+    if xx is not None and yy is not None:
+        return udata_c, xx_c, yy_c
+    else:
+        return udata_c
+
+
+
+def coarse_grain_2darr(arr, nrows_sub, ncolumns_sub):
+    """
+    Coarse-grain 2D arrays
+
+    Parameters
+    ----------
+    arr:
+    nrows_sub: int, Number of rows of blocks (over which values are averaged)
+    ncolumns_sub: int, Number of columns of blocks
+
+    Returns
+    -------
+    arr_coarse: coarse-grained 2d arr
+
+    """
+    arr = np.asarray(arr)
+    nrows, ncols = arr.shape
+
+    # If the 2d array cannot be separated into blocks, then extend/pad the 2d array
+    remainder_row = nrows % nrows_sub
+    remainder_column = ncols % ncolumns_sub
+    if not remainder_row == 0 or not remainder_column == 0:
+        print('Shape is not an integer multiple of (nrows_sub, ncolumns_sub)!')
+        print('Will extend the array with np.nan, and average...')
+        nrows = int(np.ceil(arr.shape[0] / float(nrows_sub)) * nrows_sub)
+        ncols = int(np.ceil(arr.shape[1] / float(ncolumns_sub)) * ncolumns_sub)
+        arr = extend_2darray_fill(arr, (nrows, ncols), fill_value='np.nan')
+
+    nrows_coarse, ncolumns_corarse = int(nrows / nrows_sub), int(ncols / ncolumns_sub)
+
+    # make blocks from 2d array (nrows, ncols) -> (nblocks, nrows_sub, ncolumns_sub)
+    arr_blocks = make_blocks_from_2d_array(arr, nrows_sub, ncolumns_sub)
+    # Average inside the blocks, and reshape the array
+    arr_coarse = np.nanmean(arr_blocks, axis=(1, 2)).reshape(nrows_coarse, ncolumns_corarse)
+
+    return arr_coarse
+
+def coarse_grain_2darr_overwrap(arr, nrows_sub, ncolumns_sub, overwrap=0.5):
+    """
+    Coarse-grain 2D arrays with overwrap (mimics how PIVLab processes a velocity field)
+
+arr= [[ 0  1  2  3  4  5]
+     [ 6  7  8  9 10 11]
+     [12 13 14 15 16 17]
+     [18 19 20 21 22 23]
+     [24 25 26 27 28 29]
+     [30 31 32 33 34 35]]
+
+    -> Make a new array. (nrows_sub=4, ncolumns_sub=4, overwrap=0.5)
+array([[  0.,   1.,   2.,   3.,   2.,   3.,   4.,   5.],
+       [  6.,   7.,   8.,   9.,   8.,   9.,  10.,  11.],
+       [ 12.,  13.,  14.,  15.,  14.,  15.,  16.,  17.],
+       [ 18.,  19.,  20.,  21.,  20.,  21.,  22.,  23.],
+       [ 12.,  13.,  14.,  15.,  14.,  15.,  16.,  17.],
+       [ 18.,  19.,  20.,  21.,  20.,  21.,  22.,  23.],
+       [ 24.,  25.,  26.,  27.,  26.,  27.,  28.,  29.],
+       [ 30.,  31.,  32.,  33.,  32.,  33.,  34.,  35.]])
+
+    -> Coarse-grain (output)
+array([[ 10.5,  12.5],
+       [ 22.5,  24.5]])
+
+    Parameters
+    ----------
+    arr:
+    nrows_sub: int, Number of rows of blocks (over which values are averaged)
+    ncolumns_sub: int, Number of columns of blocks
+    overwrap: fraction of overwrap
+
+    Returns
+    -------
+    arr_coarse: coarse-grained 2d arr
+
+    """
+    nrows, ncols = np.array(arr).shape
+    rowstep, colstep = int(nrows_sub * overwrap), int(ncolumns_sub * overwrap)
+    # nrows_new, ncols_new = (nrows-1) * nrows_sub, (ncols-1) * ncolumns_sub
+    # number of overwrapped regions
+    nrow_ow, ncol_ow = int(np.ceil((nrows - nrows_sub) / (nrows_sub * (1 - overwrap)))), int(
+        np.ceil((ncols - ncolumns_sub) / (ncolumns_sub * (1 - overwrap))))
+    # shape of new array
+    nrows_new, ncols_new = nrows_sub * (nrow_ow + 1), ncolumns_sub * (ncol_ow + 1)
+    arr_new = np.empty((nrows_new, ncols_new))
+    arr_new[...] = np.nan
+
+    # Make a new array to coarse grain
+    for i in range(0, nrows_new, nrows_sub):
+        for j in range(0, ncols_new, ncolumns_sub):
+            ii, jj = int(np.ceil(i * (1 - overwrap))), int(np.ceil(j * (1 - overwrap)))
+            if i % nrows_sub == 0 and j % ncolumns_sub == 0:
+                # print (i, j), (ii, jj)
+                # print arr[ii:ii+nrows_sub, jj:jj+ncolumns_sub]
+                try:
+                    arr_new[i:i + nrows_sub, j: j + ncolumns_sub] = arr[ii:ii + nrows_sub, jj:jj + ncolumns_sub]
+                except ValueError:
+                    arr_new[i:i + nrows_sub, j: j + ncolumns_sub] = extend_2darray_fill(
+                        arr[ii:ii + nrows_sub, jj:jj + ncolumns_sub], (nrows_sub, ncolumns_sub))
+            else:
+                # print (i, j), (ii, jj), 'skip'
+                continue
+            # print arr_new
+
+    # Coarse-grain
+    # Make blocks from 2d array (nrows, ncols) -> (nblocks, nrows_sub, ncolumns_sub)
+    arr_blocks = make_blocks_from_2d_array(arr_new, nrows_sub, ncolumns_sub)
+    # Average inside the blocks, and reshape the array
+    nrows_coarse, ncolumns_corarse = int(nrows_new / nrows_sub), int(ncols_new / ncolumns_sub)
+    arr_coarse = np.nanmean(arr_blocks, axis=(1, 2)).reshape(nrows_coarse, ncolumns_corarse)
+
+    return arr_coarse
+
+
+def extend_2darray_fill(arr, newarrshape, fill_value=np.nan):
+    """
+    Resize a 2d array while keeping the physical shape of the original array and fill the rest with something
+    e.g.-
+    arr
+array([[ 0,  1,  2,  3,  4],
+       [ 5,  6,  7,  8,  9],
+       [10, 11, 12, 13, 14],
+       [15, 16, 17, 18, 19]])
+
+    -> arr_ext with newarrshape = (6,6)
+array([[  0.,   1.,   2.,   3.,   4.,  nan],
+       [  5.,   6.,   7.,   8.,   9.,  nan],
+       [ 10.,  11.,  12.,  13.,  14.,  nan],
+       [ 15.,  16.,  17.,  18.,  19.,  nan],
+       [ nan,  nan,  nan,  nan,  nan,  nan],
+       [ nan,  nan,  nan,  nan,  nan,  nan]])
+    Parameters
+    ----------
+    arr: 2d numpy array
+    newarrshape: tuple, new array shape ... (nrows, ncols)
+    fill_value:
+
+    Returns
+    -------
+
+    """
+    arr = np.array(arr)
+    shape = arr.shape
+    arr_ext = np.full(newarrshape, np.nan)
+    arr_ext[0:shape[0], 0:shape[1]] = arr
+    return arr_ext
+
+def make_blocks_from_2d_array(arr, nrows, ncols):
+    """
+    Return an array of shape (n, nrows, ncols) where n * nrows * ncols = arr.size
+    If arr is a 2D array, the returned array should look like n subblocks with
+    each subblock preserving the "physical" layout of arr.
+
+    Parameters
+    ----------
+    arr: M x N list or numpy array
+    nrows:
+    ncols
+
+    Returns
+    -------
+    blocks: numpy array with shape (n, nrows, ncols)
+    """
+
+    arr = np.asarray(arr)
+    h, w = arr.shape
+    blocks = (arr.reshape(h//nrows, nrows, -1, ncols)
+              .swapaxes(1, 2)
+              .reshape(-1, nrows, ncols))
+    return blocks
+
+
+
+# HELPERS FOR Fourier Transform (DFT/FFT and CFT)
+# 1D FFT and CFT
+def fft_1d(gt):
+    """
+    Returns the shifted FFT of a 1D signal
+
+    Parameters
+    ----------
+    gt: 1d array
+
+    Returns
+    -------
+    gf: 1d complex array
+
+    """
+    return np.fft.fftshift(np.fft.fft(gt))
+
+def cft_1d(g, f):
+    """Numerically evaluate the Fourier Transform of g for given frequencies"""
+
+    def complex_quad(g, a, b):
+        """Return definite integral of complex-valued g from a to b,
+        using Simpson's rule"""
+        # 2501: Amount of used samples for the trapezoidal rule
+        t = np.linspace(a, b, 2501)
+        x = g(t)
+        return integrate.simps(y=x, x=t)
+
+    result = np.zeros(len(f), dtype=complex)
+
+    # Loop over all frequencies and calculate integral value
+    for i, ff in enumerate(f):
+        # Evaluate the Fourier Integral for a single frequency ff,
+        # assuming the function is time-limited to abs(t)<5
+        result[i] = complex_quad(lambda t: g(t) * np.exp(-2j * np.pi * ff * t), -5, 5)
+    return result
+
+def FFTOutput2CFTOutput_1d(gf, t):
+    """
+    Approximates the FFT of a 1D signal to the Continuous Fourier Transform (CFT)
+
+    Parameters
+    ----------
+    gf:
+    t
+
+    Returns
+    -------
+
+    """
+    t0 = t[0]
+    dt = t[1] - t[0]
+    n = len(gf)
+    fs = 1 / dt
+
+    f = np.linspace(-fs / 2, fs / 2, n, endpoint=False)
+    gf_cft = gf * np.exp(-2j * np.pi * f * t0) * 1 / fs
+    return gf_cft
+
+def fourier_transform_1d(samples, fs, t0, return_freq=False):
+    """Approximate the Fourier Transform of a time-limited
+    signal by means of the discrete Fourier Transform.
+
+    samples: signal values sampled at the positions t0 + n/Fs
+    Fs: Sampling frequency of the signal
+    t0: starting time of the sampling of the signal
+    """
+    f = np.linspace(-fs / 2, fs / 2, len(samples), endpoint=False)
+    if return_freq:
+        return np.fft.fftshift(np.fft.fft(samples) / fs * np.exp(-2j * np.pi * f * t0)), f
+    else:
+        return np.fft.fftshift(np.fft.fft(samples) / fs * np.exp(-2j * np.pi * f * t0))
+
+
+# ND FFT and ND CFT
+def fft_nd(gx, axes=None):
+    """
+    Conducts FFT along specified axes
+    ... If axes were not given, it FFT along all axes
+    ... Returns shifted FFT output
+        ... FFT is a fast DFT algorithm, meaning that it does computation in Frequency space (1/x)
+        instead of the Angular Frequency (wavenumber) space.
+        ... It is recommended to do the change of variables at the end of the process because it becomes increasingly
+        hard to keep track of the factor of 2pi as the computation becomes more complex.
+
+    Parameters
+    ----------
+    gx: ND-array, Signal
+    axes: array-like,  e.g.- [0, 1]
+        ... axes along which FFT is conducted
+        ... Default is doing FFT along all axes
+        ... If you want to do 1D FFT using a 3D data, you may provide a 3D data with axes=[0] etc.
+    Returns
+    -------
+    np.fft.fftshift(np.fft.fftn(gx, axes=axes))
+    """
+    dim = len(gx.shape)
+    if axes is None:
+        axes = list(range(dim))
+    return np.fft.fftshift(np.fft.fftn(gx, axes=axes))
+
+
+def FFTOutput2CFTOutput_nd(gf, dxs, x0s, axes=None, return_freq=True):
+    """
+    Approximates the DFT output into Continuous Fourier Transform output
+    ... Power -> Spectral Density
+    ... The input "gf" is assumed to be the shifted, raw DFT output of a ND signal.
+        i.e. The variable is frequency not angular frequency (wavenumber)
+
+    Parameters
+    ----------
+    gf: ND array (complex)
+        ... shifted, raw FFT output
+        ... It assumes the output of the function "fft_nd(signal, axes)"
+    dxs: array-like
+        ... Sampling intervals of the signal in the spacial/temporal domain
+            i.e. (x, y, z, t) not (1/Lx, 1/Ly, 1/Lz. 1/T)
+        ... Must have the same length as gf
+    x0s: array-like
+        ... The minimum value of the spatial/temporal domain
+            i.e. X0, Y0, Z0, T0- the edge coordinates of the data and the initial moment when the data was recorded
+        ... Must have the same length as gf
+    axes: array-like,  e.g.- [0, 1]
+        ... axes along which FFT was conducted
+        ... If None, it assumes that FFT was conducted along all axes of gx
+    return_freq: bool, default: True
+        ... If True, it returns a list of the frequencies along the axes FFT was conducted
+
+    Returns
+    -------
+
+    """
+    if axes is None:
+        n = gf.size  # number of samples
+        axes = tuple(range(len(gf.shape)))
+    dim = len(axes)
+    if len(dxs) != dim:
+        raise ValueError('FFTOutput2CFTOutput_nd: dxs must have the same length as gk')
+    if len(x0s) != dim:
+        raise ValueError('FFTOutput2CFTOutput_nd: x0s must have the same length as gk')
+
+    else:
+        n = 1
+        for d in range(dim):
+            if d in axes:
+                n *= gf.shape[d]
+    ns = list(gf.shape)  # number of elements along each axis
+
+    # Sampling Frequency
+    fs = [1 / dx for dx in dxs]
+
+    freqs = []
+    for i, ind in enumerate(axes):
+        newshape = [1] * len(gf.shape)
+        newshape[ind] = ns[ind]
+        # print(ind, dxs[i], x0s[i], fs[i], newshape, gf.shape, ns[ind])
+        f = np.linspace(-fs[i] / 2, fs[i] / 2, ns[ind], endpoint=False).reshape(newshape)
+        gf *= np.exp(-2j * np.pi * f * x0s[i]) * 1 / fs[i]
+        freqs.append(f)
+
+    if return_freq:
+        return gf, freqs
+    else:
+        return gf
+
+def fourier_transform_nd(gx, dxs, x0s, axes=None, return_freq=True, return_in='freq'):
+    """
+    Returns a (Continuous) Fourier Transform of a given signal using FFT (DFT)
+    ... This returns the adjusted values of FFT as approximated CFT of the given signal.
+        If sampling frequency were sufficiently high, there is a simple relation between DFT and CFT of the signal, and
+        DFT can be used to approximate CFT of the signal.
+    ... Since DFT is conveniently defined using Frequency (not angular frequency), this returns the CFT as a function of frequency, f.
+        If one desires to convert the spectral density as a function of omega=2pi*f, you may set return_in='wavenumber'.
+
+    Parameters
+    ----------
+    gx: ND signal
+    dxs: array-like
+        ... Sampling intervals of the signal in the spacial/temporal domain
+            i.e. (y, x, z, t) not (1/Ly, 1/Lx, 1/Lz. 1/T)
+        ... The order is (dy, dx, dz)
+        ... Must have the same length as gf
+    x0s: array-like
+        ... The minimum value of the spatial/temporal domain
+            i.e. Y0, X0, Z0, T0- the edge coordinates of the data and the initial moment when the data was recorded
+        ... The order is (Y0, X0, Z0)
+        ... Must have the same length as gf
+    axes: array-like,  e.g.- [0, 1]
+        ... axes along which FFT was conducted
+        ... If None, it assumes that FFT was conducted along all axes of gx
+    return_freq: bool, default: True
+        ... If True, it returns a list of the frequencies along the axes FFT was conducted
+    return_in: str, Choose from ['freq', 'wavenumber', 'angular frequency', 'ang freq', 'k']
+        ... If return_in in ['wavenumber', 'angular frequency', 'ang freq', 'k'],
+            it returns the CFT as a function of wavenumber instead of frequency (1/x)
+    Returns
+    -------
+    gf_cft: Fourier transform of the signal "gx"
+    freqs: list, corresponding frequencies along the axes
+    """
+    dim = len(gx.shape)
+    if axes is None:
+        axes = tuple(range(dim))
+    gf_dft = fft_nd(gx, axes=axes)
+    gf_cft, freqs = FFTOutput2CFTOutput_nd(gf_dft, dxs, x0s, axes=axes, return_freq=return_freq)
+    if return_in in ['wavenumber', 'angular frequency', 'ang freq', 'k']:
+        freqs = [freq * 2 * np.pi for freq in freqs]
+        gf_cft /= (2 * np.pi) ** (len(axes) / 2)
+    if return_freq:
+        return gf_cft, freqs
+    else:
+        return gf_cft
+
+
+def convertNDto1D(ef_nd, freqs, nkout=None, mode='linear', cc=1.):
+    """
+    Returns a shell-to-shell contribution from ND array
+    Converts ND array into 1D array (primarily used for Energy spectrum computation)
+
+    Parameters
+    ----------
+    ef_nd: ND array, assuming energy density in the frequency space
+    freqs: ND array, frequency grid
+        ... assuming np.stack((fxx, fyy)) or np.stack((fxx, fyy, fzz))
+        ... fxx is a 2D/3D grid of 1/x.
+    nkout: int
+        ... Number of points to be sampled in the radial direction
+    mode: str, ['linear', 'log']
+        ... This determines whether sampling is evenly done in the linear or log scale.
+        ... For energy spectrum computation, one might prefer to get statistics at frequency/wavenumber evenly spaced in the log scale
+    Returns
+    -------
+    fr_binned, ef1d, ef1d_err
+    """
+
+    dim = len(ef_nd.shape)
+
+    # Radial frequency
+    fr = np.zeros_like(freqs[0])
+    for i in range(dim):
+        fr += freqs[i] ** 2
+    fr = np.sqrt(fr)
+
+    # number of bins
+    if nkout is None:
+        nkout = int(max(ef_nd.shape) * 1)
+    fr_binned, efnd_binned, ef1d_err = get_binned_stats(fr.flatten(), ef_nd.flatten(),
+                                                            n_bins=nkout, mode=mode)
+    deltaf = (max(fr_binned) - min(fr_binned)) / (nkout-1)
+
+    if dim == 3:
+        jacobian = 4 * np.pi * fr_binned ** 2
+    elif dim == 2:
+        jacobian = 2 * np.pi * fr_binned
+    deltaf = fr_binned[1] - fr_binned[0]
+    deltaf = 1
+    ef1d = efnd_binned * jacobian * cc
+    ef1d_err = ef1d_err * jacobian * cc
+    return fr_binned, ef1d, ef1d_err
+
+# padding udata
+def square_udata(udata, mode='edge', **kwargs):
+    """
+    Pad zeros to udata to make its spatial dimensions into a square or a cube
+    ... Taking a spectrum of a rectangularly shaped array could cause further aliasing. In order to combat this, one may square/cubidize
+    udata before taking the spectrum by padding zeros around the obtained field.
+    Parameters
+    ----------
+    udata
+    pad_value: float, value used to pad udata
+
+    Returns
+    -------
+    squared_udata_padded_with_zero
+    """
+    udata = fix_udata_shape(udata)
+    dim, duration = udata.shape[0], udata.shape[-1]
+    height, width = udata.shape[1], udata.shape[2]
+    length = max(udata.shape[1:-1])
+
+
+    i, j = int((length - udata.shape[1])/2),  int((length - udata.shape[2])/2)
+    if dim == 3:
+        depth = udata.shape[3]
+        k = int((length - udata.shape[3]) / 2)
+        udata_padded = np.pad(udata, ((0, 0), (i, length-height - i), (j, length-width - j), (k, length-depth - k), (0, 0)),
+                              mode=mode, **kwargs)
+    else:
+        udata_padded = np.pad(udata, ((0, 0), (i, length-height - i), (j, length-width - j), (0, 0)),
+                              mode=mode, **kwargs)
+    return udata_padded
+
+
+### DEVELOPING
+def get_energy_spectrum_nd(udata,
+                               x0=0, x1=None, y0=0, y1=None,
+                               z0=0, z1=None, dx=None, dy=None, dz=None,
+                               window=None, correct_signal_loss=True, return_in='wavenumber',
+                               dealiasing=True, padding_mode='edge', padding_kwargs={}):
+    """
+    Returns ukdata * np.conjugate(ukdata) where ukdata is the ND-Fourier Transform of udata
+    ...
+    Parameters
+    ----------
+    udata
+    x0
+    x1
+    y0
+    y1
+    z0
+    z1
+    dx
+    dy
+    dz
+    window
+    correct_signal_loss
+    return_in
+
+    Returns
+    -------
+    ef_nd, np.asarray([fxx, fyy, fzz])
+        ... If return_in=''wavenumber', it returns norm of ND-CFT of velocity field as a function of wavenumber (2pi/x) instead of frequency (1/x)
+    """
+
+    if dx is None or dy is None:
+        print('ERROR: dx or dy is not provided! dx is grid spacing in real space.')
+        print('... k grid will be computed based on this spacing! Please provide.')
+        raise ValueError
+    if x0 is None:
+        x0 = 0
+    if x1 is None:
+        x1 = udata.shape[2]
+    if y0 is None:
+        y0 = 0
+    if y1 is None:
+        y1 = udata.shape[1]
+
+
+    dim = udata.shape[0]
+    udata = fix_udata_shape(udata)
+    if dim == 2:
+        udata = udata[:, y0:y1, x0:x1, :]
+        volume = (x1 - x0) * dx * (y1 - y0) * dy
+        if dealiasing:
+            udata = square_udata(udata, mode=padding_mode, **padding_kwargs)
+            x0 = y0 = 0
+            x1 = y1 = udata.shape[1]
+            volume = (x1 - x0) * dx * (y1 - y0) * dy# Should the volume be the squared/cubic volume?
+        dxs = [dy, dx]
+
+        height, width, duration = udata[0].shape
+        x0s = [- height / 2 * dy, -width / 2 * dx] # will be used to approximate CFT of a field using DFT (y0, x0)
+
+
+    elif dim == 3:
+        if z1 is None:
+            z1 = udata.shape[2]
+        if dz is None:
+            print('ERROR: dz is not provided! dx is grid spacing in real space.')
+            print('... k grid will be computed based on this spacing! Please provide.')
+            raise ValueError
+        udata = udata[:, y0:y1, x0:x1, z0:z1, :]
+        volume = (x1-x0)*dx * (y1-y0)*dy * (z1-z0)*dz
+        if dealiasing:
+            udata = square_udata(udata, mode=padding_mode, **padding_kwargs)
+            x0 = y0 = z0 = 0
+            x1 = y1 = z1 = udata.shape[1]
+            volume = (x1-x0)*dx * (y1-y0)*dy * (z1-z0)*dz # Should the volume be the squared/cubic volume? This is a choice
+
+        dxs = [dy, dx, dz]
+
+        height, width, depth, duration = udata[0].shape
+        x0s = [- height / 2 * dy, -width / 2 * dx, -depth/2*dz]  # will be used to approximate CFT of a field using DFT (y0, x0, z0)
+    # WINDOWING
+    duration = udata.shape[-1]
+    if window is not None:
+        if dim == 2:
+            xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+            windows = get_window_radial(xx, yy, wtype=window, duration=duration)
+            # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
+            udata_tapered = np.empty_like(udata)
+            for i in range(dim):
+                udata_tapered[i, ...] = udata[i, ...] * windows
+            # udata_tapered = udata * windows
+        elif dim == 3:
+            xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+            windows = get_window_radial(xx, yy, zz, wtype=window, duration=duration)
+            # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
+            udata_tapered = np.empty_like(udata)
+            for i in range(dim):
+                udata_tapered[i, ...] = udata[i, ...] * windows
+            # udata_tapered = udata * windows
+
+        # PERFORM DFT on the windowed field
+        ufdata, freqs = fourier_transform_nd(udata_tapered, dxs, x0s, axes=list(range(1, dim + 1)))
+
+        energy, energy_tapered = get_energy(udata), get_energy(udata_tapered)
+        signal_intensity_losses = np.nanmean(energy_tapered, axis=tuple(range(dim))) / np.nanmean(energy, axis=tuple(
+            range(dim)))
+    else:
+        ufdata, freqs =fourier_transform_nd(udata,  dxs, x0s, axes=list(range(1, dim + 1)))
+        signal_intensity_losses = np.ones(duration)
+
+    ##################################################
+    # compute E(\vec{k})
+    ##################################################
+    ef_nd = np.zeros(ufdata[0].shape)
+
+    for i in range(dim):
+        ef_nd[...] += np.abs(ufdata[i, ...]) ** 2
+    ef_nd /= 2. * volume # Energy spectrum is defined via Energy DENSITY. Divide a whole thing by volume
+
+    if correct_signal_loss:
+        for t in range(duration):
+            # print signal_intensity_losses[t]
+            ef_nd[..., t] = ef_nd[..., t] / signal_intensity_losses[t]
+    if return_in !='freq':
+        # CHANGE OF VARIABLES FROM FREQ TO ANG FREQ (WAVENUMBER)
+        for t in range(duration):
+            ef_nd[..., t] = ef_nd[..., t] / (2*np.pi)**dim
+        freqs = [freq * 2 * np.pi for freq in freqs]
+    if dim == 2:
+        fxx, fyy = np.meshgrid(freqs[1], freqs[0])
+        return ef_nd , np.asarray([fxx, fyy])
+    elif dim == 3:
+        fxx, fyy, fzz = np.meshgrid(freqs[1], freqs[0], freqs[2])
+        return ef_nd, np.asarray([fxx, fyy, fzz])
+
+
+
+def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
+                            z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
+                            window=None, correct_signal_loss=True, remove_undersampled_region=True,
+                            cc=1, notebook=True, mode='linear',
+                            dealiasing=True, padding_mode='edge', padding_kwargs={}):
+        """
+        Returns 1D energy spectrum from velocity field data
+        ... The algorithm implemented in this function is VERY QUICK because it does not use the two-point vel. autorcorrelation tensor.
+        ... Instead, it converts u(kx, ky, kz)u*(kx, ky, kz) into u(kr)u*(kr). (here * dentoes the complex conjugate)
+        ... CAUTION: Must provide udata with aspect ratio ~ 1
+        ...... The conversion process induces unnecessary error IF the dimension of u(kx, ky, kz) is skewed.
+        ...... i.e. Make udata.shape like (800, 800), (1024, 1024), (512, 512) for accurate results.
+        ... KNOWN ISSUES:
+        ...... This function returns a bad result for udata with shape like (800, 800, 2)
+
+
+        Parameters
+        ----------
+        udata: nd array
+        epsilon: nd array or float, default: None
+            dissipation rate used for scaling energy spectrum
+            If not given, it uses the values estimated using the rate-of-strain tensor
+        nu: flaot, viscosity
+        x0: int
+            index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+        x1: int
+            index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+        y0: int
+            index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+        y1: int
+            index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+        t0: int
+            index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+        t1: int
+            index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+        dx: float
+            spacing in x
+        dy: float
+            spacing in y
+        dz: float
+            spacing in z
+        nkout: int, default: None
+            number of bins to compute energy/dissipation spectrum
+        notebook: bool, default: True
+            Use tqdm.tqdm_notebook if True. Use tqdm.tqdm otherwise
+        window: str
+            Windowing reduces undesirable effects due to the discreteness of the data.
+            A wideband window such as 'flattop' is recommended for turbulent energy spectra.
+
+            For the type of applying window function, choose from below:
+            boxcar, triang, blackman, hamming, hann, bartlett, flattop, parzen, bohman, blackmanharris, nuttall, barthann,
+            kaiser (needs beta), gaussian (needs standard deviation), general_gaussian (needs power, width),
+            slepian (needs width), chebwin (needs attenuation), exponential (needs decay scale),
+            tukey (needs taper fraction)
+        correct_signal_loss: bool, default: True
+            If True, it would compensate for the loss of the signals due to windowing.
+            Always recommended to obtain accurate spectral densities.
+        cc: float, default: 1.75
+            A numerical factor to compensate for the signal loss due to approximations.
+            ... cc=1.75 was obtained from the JHTD data.
+        Returns
+        -------
+        e_k: numpy array
+            Energy spectrum with shape (number of data points, duration)
+        e_k_err: numpy array
+            Energy spectrum error with shape (number of data points, duration)
+        kk: numpy array
+            Wavenumber with shape (number of data points, duration)
+
+        """
+        if notebook:
+            from tqdm import tqdm_notebook as tqdm
+            print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+        else:
+            from tqdm import tqdm
+
+        def convert_nd_spec_to_1d(e_ks, ks, nkout=nkout, cc=cc, mode='linear'):
+            dim, duration = len(ks.shape), e_ks.shape[-1]
+            if nkout is None:
+                nkout = int( max(ks[0].shape) * 0.8)
+            shape = (nkout, duration)
+            e_k, e_k_err, kk = np.empty(shape), np.empty(shape), np.empty(nkout)
+            for t in range(duration):
+                kk, e_k[:, t], e_k_err[:, t] = convertNDto1D(e_ks[..., t], ks, nkout=nkout, mode=mode, cc=cc)
+            return e_k, e_k_err, kk
+        e_ks, ks = get_energy_spectrum_nd(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz,
+                                          window=window, correct_signal_loss=correct_signal_loss, return_in='wavenumber',
+                                              dealiasing=dealiasing, padding_mode=padding_mode, padding_kwargs=padding_kwargs)
+        e_k, e_k_err, kk = convert_nd_spec_to_1d(e_ks, ks, nkout=nkout, cc=cc, mode=mode)
+
+        if notebook:
+            from tqdm import tqdm as tqdm
+
+        return e_k, e_k_err, kk
+
+
+# def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
+#                            z0=0, z1=None, dx=None, dy=None, dz=None,
+#                            window=None, correct_signal_loss=True, debug=False):
+#     """
+#     Returns 1D energy spectrum from velocity field data
+#
+#     Parameters
+#     ----------
+#     udata: nd array
+#     k: str, default: 'kx'
+#         string to specify the direction along which the given velocity field is Fourier-transformed
+#     x0: int
+#         index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+#     x1: int
+#         index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+#     y0: int
+#         index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+#     y1: int
+#         index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+#     t0: int
+#         index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+#     t1: int
+#         index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+#     dx: float
+#         spacing in x
+#     dy: float
+#         spacing in y
+#     dz: float
+#         spacing in z
+#     window: str
+#         Windowing reduces undesirable effects due to the discreteness of the data.
+#         A wideband window such as 'flattop' is recommended for turbulent energy spectra.
+#
+#         For the type of available window function, choose from below:
+#         boxcar, triang, blackman, hamming, hann, bartlett, flattop, parzen, bohman, blackmanharris, nuttall, barthann,
+#         kaiser (needs beta), gaussian (needs standard deviation), general_gaussian (needs power, width),
+#         slepian (needs width), chebwin (needs attenuation), exponential (needs decay scale),
+#         tukey (needs taper fraction)
+#     correct_signal_loss: bool
+#         If True, it would compensate for the loss of the signals due to windowing.
+#         Always recommended to obtain accurate spectral densities.
+#
+#     Returns
+#     -------
+#     eiis: numpy array
+#         eiis[0] = E11, eiis[1] = E22
+#         ... 1D energy spectra with argument k="k" (kx by default)
+#     eii_errs: numpy array:
+#         eiis[0] = E11_error, eiis[1] = E22_error
+#     k: 1d numpy array
+#         Wavenumber with shape (number of data points, )
+#         ... Unlike get_energy_spectrum(...), this method NEVER outputs the wavenumber array with shape (number of data points, duration)
+#     """
+#     if x0 is None:
+#         x0 = 0
+#     if y0 is None:
+#         y0 = 0
+#     if x1 is None:
+#         x1 = udata[0].shape[1]
+#     if y1 is None:
+#         y1 = udata[0].shape[0]
+#
+#     udata = fix_udata_shape(udata)
+#     dim, duration = len(udata), udata.shape[-1]
+#     if dim == 2:
+#         ux, uy = udata[0, y0:y1, x0:x1, :], udata[1, y0:y1, x0:x1, :]
+#         height, width, duration = ux.shape
+#         udata_tmp = udata[:, y0:y1, x0:x1, :]
+#     elif dim == 3:
+#         ux, uy, uz = udata[0, y0:y1, x0:x1, z0:z1, :], udata[1, y0:y1, x0:x1, z0:z1, :], udata[2, y0:y1, x0:x1, z0:z1,:]
+#         height, width, depth, duration = ux.shape
+#         udata_tmp = udata[:, y0:y1, x0:x1, z0:z1, :]
+#     else:
+#         raise ValueError('... Error: Invalid dimension is given. Use 2 or 3 for the number of spatial dimensions. ')
+#
+#
+#     if k == 'kx':
+#         ax_ind = 1  # axis number to take 1D DFT
+#         n = width
+#         d = dx
+#         if dim == 2:
+#             ax_ind_for_avg = 0  # axis number(s) to take statistics (along y)
+#         elif dim == 3:
+#             ax_ind_for_avg = (0, 2)  # axis number(s) to take statistics  (along y and z)
+#     elif k == 'ky':
+#         ax_ind = 0  # axis number to take 1D DFT
+#         n = height
+#         d = dy
+#         if dim == 2:
+#             ax_ind_for_avg = 1  # axis number(s) to take statistics  (along x)
+#         elif dim == 3:
+#             ax_ind_for_avg = (1, 2)  # axis number(s) to take statistics  (along x and z)
+#     elif k == 'kz':
+#         ax_ind = 2  # axis number to take 1D DFT
+#         n = depth
+#         d = dz
+#         ax_ind_for_avg = (0, 1)  # axis number(s) along which statistics is computed  (along x and y)
+#     freq = np.fft.fftshift(np.fft.fftfreq(n, d=d))
+#     deltaf = freq[1] - freq[0]
+#     n_samples = ux.shape[ax_ind]
+#
+#     # Apply a hamming window to get lean FFT spectrum for aperiodic signals
+#     if window is not None:
+#         duration = udata.shape[-1]
+#         if dim == 2:
+#             xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+#             windows = get_window_radial(xx, yy, wtype=window, duration=duration, x0=x0, x1=x1, y0=y0, y1=y1)
+#             udata_tapered = np.empty_like(udata_tmp)
+#             for i in range(dim):
+#                 udata_tapered[i, ...] = udata_tmp[i, ...] * windows
+#             ux, uy = udata_tapered
+#         elif dim == 3:
+#             xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+#             windows = get_window_radial(xx, yy, zz, wtype=window, duration=duration, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0,
+#                                         z1=z1)
+#             udata_tapered = np.empty_like(udata_tmp)
+#             for i in range(dim):
+#                 udata_tapered[i, ...] = udata_tmp[i, ...] * windows
+#             ux, uy, uz = udata_tapered
+#
+#     if correct_signal_loss:
+#         if window is not None:
+#             if dim == 2:
+#                 xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+#                 window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
+#                 signal_intensity_loss = np.nanmean(window_arr)
+#             elif dim == 3:
+#                 xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+#                 window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
+#                 signal_intensity_loss = np.nanmean(window_arr)
+#         else:
+#             signal_intensity_loss = 1.
+#     print('deltaf, nsamples, d', deltaf, n_samples, d)
+#     print('dx, 1/deltaf/n', d, 1/deltaf/n_samples)
+#     # E11
+#     ux_f = fft_nd(ux, axes=ax_ind)
+#     FFTOutput2CFTOutput_nd(ux_f,  [d], [], axes=ax_ind, return_freq='wavenumber')
+#
+#     ux_k = np.fft.fftshift(np.fft.fft(ux, axis=ax_ind))
+#
+#     print('Parseval', np.nansum(ux**2)/(np.nansum(np.abs(ux_k * np.conj(ux_k)) * 2) / n_samples))
+#     ux_k /= 2 * np.pi * deltaf * n_samples# convert to spectral density (Power per wavenumber)
+#     e11_nd = np.abs(ux_k * np.conj(ux_k)) * 2 # e11 is defined as twice as the square of the 1D FT of u1
+#     e11 = np.nanmean(e11_nd, axis=ax_ind_for_avg)
+#     e11_err = np.nanstd(e11_nd, axis=ax_ind_for_avg)
+#
+#     # E22
+#     uy_k = np.fft.fftshift(np.fft.fft(uy, axis=ax_ind))
+#     uy_k /= 2 * np.pi * deltaf * n_samples # convert to spectral density
+#     e22_nd = np.abs(uy_k * np.conj(uy_k)) * 2 # e22 is defined as twice as the square of the 1D FT of u2
+#     e22 = np.nanmean(e22_nd, axis=ax_ind_for_avg)
+#     e22_err = np.nanstd(e22_nd, axis=ax_ind_for_avg)
+#
+#
+#     # Get an array for wavenumber
+#     k = np.fft.fftfreq(n, d=d) * 2 * np.pi  # shape=(n, duration)
+#     k = np.fft.fftshift(k)
+#     deltak = k[1] - k[0]
+#     if dim == 3:
+#         # E33
+#         uz_k = np.fft.fftshift(np.fft.fft(uz, axis=ax_ind))
+#         uz_k /= 2 * np.pi *deltaf * n_samples  # convert to spectral density
+#         e33_nd = np.abs(uz_k * np.conj(uz_k)) * 2 # e33 is defined as twice as the square of the 1D FT of u3
+#         e33 = np.nanmean(e33_nd, axis=ax_ind_for_avg)
+#         e33_err = np.nanstd(e33_nd, axis=ax_ind_for_avg)
+#
+#         # Must divide by 2pi because np.fft.fft() performs in the frequency space (NOT angular frequency space)
+#         eiis, eii_errs = np.array([e11, e22, e33]), np.array([e11_err, e22_err, e33_err])
+#     elif dim == 2:
+#         # Must divide by 2pi^2 because np.fft.fft() performs in the frequency space (NOT angular frequency space)
+#         eiis, eii_errs = np.array([e11, e22]), np.array([e11_err, e22_err])
+#     else:
+#         raise ValueError('... 1d spectrum: Check the dimension of udata! It must be 2 or 3!')
+#
+#
+#     # Windowing causes the loss of the signal (energy.)
+#     # ... This compensates for the loss.
+#     if correct_signal_loss:
+#         for i in range(dim):
+#             eiis[i] /= signal_intensity_loss
+#             eii_errs[i] /= signal_intensity_loss
+#     if debug:
+#         print('get_1d_energy_spectrum(): debug is set True. It will check the property \int_0^\infty Eii = 2 <ui ui>' )
+#         for i in range(dim):
+#             ui2_tavg = np.nanmean(udata[i, ...]**2, axis=tuple(range(dim)))[0]
+#             k_i, eiis_i = clean_data_interp1d(eiis[i, ..., 0], k)
+#             integral_i = np.trapz(eiis_i[..., 0], x=k_i[:, 0], axis=0)
+#             print('...Frame0: <u%d squared> / integral of E_%d%d: ' % (i+1, i+1, i+1), ui2_tavg / integral_i )
+#     return eiis, eii_errs, k
