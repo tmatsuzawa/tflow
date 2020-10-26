@@ -1401,7 +1401,7 @@ def get_energy_spectrum_old(udata, x0=0, x1=None, y0=0, y1=None,
 
     dim, duration = len(udata), udata.shape[-1]
 
-    e_ks, ks = get_energy_spectrum_nd(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz,
+    e_ks, ks = get_energy_spectrum_nd_old(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz,
                                       window=window, correct_signal_loss=correct_signal_loss)
     e_k, e_k_err, kk = convert_nd_spec_to_1d(e_ks, ks, nkout=nkout, cc=cc)
 
