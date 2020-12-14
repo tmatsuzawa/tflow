@@ -201,7 +201,7 @@ def plotfunc(func, x, param, fignum=1, subplot=111, ax = None, label=None, color
     return fig, ax
 
 def plot(x, y=None, fignum=1, figsize=None, label='', color=None, subplot=None, legend=False,
-         fig=None, ax=None, maskon=False, thd=1, xmax=None, **kwargs):
+         fig=None, ax=None, maskon=False, thd=1, xmin=None, xmax=None, set_bottom_zero=False, **kwargs):
     """
     plot a graph using given x,y
     fignum can be specified
@@ -237,6 +237,8 @@ def plot(x, y=None, fignum=1, figsize=None, label='', color=None, subplot=None, 
         keep = [True] * len(x)
     if xmax is not None:
         keep *= x < xmax
+    if xmin is not None:
+        keep *= x >= xmin
     if color is None:
         ax.plot(x[keep], y[keep], label=label, **kwargs)
     else:
@@ -244,6 +246,9 @@ def plot(x, y=None, fignum=1, figsize=None, label='', color=None, subplot=None, 
 
     if legend:
         ax.legend()
+
+    if set_bottom_zero:
+        ax.set_ylim(bottom=0)
     return fig, ax
 
 
@@ -308,6 +313,125 @@ def plot_multicolor(x, y=None, colored_by=None, cmap='viridis',
     lc.set_array(colored_by)
     lc.set_linewidth(linewidth)
     line = ax.add_collection(lc)
+
+    # autoscale does not work for collection => manually set x/y limits
+    ax.set_xlim(x.min(), x.max())
+    ax.set_ylim(y.min(), y.max())
+
+    return fig, ax
+
+
+def plot_with_varying_alphas(x, y=None, color=next(__color_cycle__), alphas=None,
+                    fignum=1, figsize=None,
+                    subplot=None,
+                    fig=None, ax=None,
+                    xmin=None, xmax=None,
+                    maskon=False, thd=1, # Filter out erroneous data by threasholding
+                    linewidth=2, **kwargs):
+    """
+    Plots a curve with varying alphas (e.g. fading curves)
+    ... plt.plot(x, y, alpha=alpha) does not allow varying alpha.
+    ... A workaround for this is to use LineCollection. i.e. create lines for each segment, then assign different alpha values
+
+    Parameters
+    ----------
+    x
+    y
+    color: color of the line
+    alphas: list/array with the same length as x and y
+        ... default:  alphas = 1 - np.linspace(0, 1, len(x))  (linearly fade)
+
+    Parameters
+    ----------
+    x
+    y
+    color
+    alphas
+    fignum
+    figsize
+    subplot
+    fig
+    ax
+    xmin
+    xmax
+    maskon
+    thd
+    linewidth
+    kwargs
+
+    Returns
+    -------
+
+    """
+
+    if fig is None and ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    elif fig is None:
+        fig = plt.gcf()
+    elif ax is None:
+        ax = plt.gca()
+
+    if y is None:
+        y = copy.deepcopy(x)
+        # x = np.arange(len(x))
+    if alphas is None:
+        alphas = 1 - np.linspace(0, 1, len(x)) # default alphas
+    alphas[alphas < 0] = 0
+    alphas[alphas > 1] = 1
+    alphas[np.isnan(alphas)] = 0
+
+    # Make sure x and y are np.array
+    x, y, alphas = np.asarray(x), np.asarray(y), np.asarray(alphas)
+
+    if len(x) > len(y):
+        print("Warning : x and y data do not have the same length")
+        x = x[:len(y)]
+    elif len(y) > len(x):
+        print("Warning : x and y data do not have the same length")
+        y = y[:len(x)]
+    if maskon:
+        mask = get_mask4erroneous_pts(x, y, thd=thd)
+    else:
+        mask = [True] * len(x)
+    if xmin is not None:
+        cond = x > xmin
+        mask = mask * cond
+    if xmax is not None:
+        cond = x < xmax
+        mask = mask * cond
+
+
+    x, y, alphas= x[mask], y[mask], alphas[mask]
+    # Create a set of line segments so that we can color them individually
+    # This creates the points as a N x 1 x 2 array so that we can stack points
+    # together easily to get the segments. The segments array for line collection
+    # needs to be (numlines) x (points per line) x 2 (for x and y)
+    points = np.array([x, y]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+    # Get RGBA values of the specified color
+    if type(color) == str:
+        try:
+            rgb = hex2rgb(cname2hex(color))
+        except:
+            rgb = hex2rgb(color) # Returned values are [0-255, 0-255, 0-255]
+        rgba = np.append(rgb/255, 1).astype(float) # RGBA values must be between 0-1
+        # Prepare an array to specify a color for each segment
+        colors = np.tile(rgba, (len(x), 1))
+    elif type(color) in [tuple, list, np.array]:
+        if len(color) == 3:
+            colors = np.tile(np.append(color, 1), (len(x), 1))
+        elif len(color) == 4:
+            colors = np.tile(color, (len(x), 1))
+        else:
+            raise ValueError('plot_with_varying_alphas: color must be a tuple/list/1d array with 3 or 4 elements (rgb or rgba)')
+    # Insert the alphas specified by users
+    colors[:, -1] = alphas
+    # Create a line collection instead of a single line
+    lc = LineCollection(segments, color=colors)
+
+    lc.set_linewidth(linewidth)
+    lines = ax.add_collection(lc)
 
     # autoscale does not work for collection => manually set x/y limits
     ax.set_xlim(x.min(), x.max())
@@ -869,34 +993,51 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
 ## 2D plotsFor the plot you showed at group meeting of lambda converging with resolution, can you please make a version with two x axes (one at the top, one below) one pixel spacing, other PIV pixel spacing, and add a special tick on each for the highest resolution point.
 # (pcolormesh)
 def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None, vmax=None, log10=False, label=None,
-               cbar=True, cmap='magma', symmetric=False, aspect='equal', option='scientific', ntick=5, tickinc=None, **kwargs):
-    """  Color plot of 2D array
+               cbar=True, cmap='magma', symmetric=False, aspect='equal', option='scientific', ntick=5, tickinc=None,
+               crop=None,
+               **kwargs):
+    """
+
     Parameters
     ----------
-    x 2d array eg. x = np.mgrid[slice(1, 5, dx), slice(1, 5, dy)]
-    y 2dd array
-    z 2d array
-    subplot
+    x: 2d array
+    y: 2d array
+    z: 2d array
+    subplot: int, default is 111
     fignum
+    figsize
+    ax
     vmin
     vmax
     log10
-    show
+    label
     cbar
     cmap
+    symmetric
+    aspect: str, 'equal' or 'auto
+    option
+    ntick
+    tickinc
+    crop
+    kwargs
 
     Returns
     -------
-    fig
-    ax
-    cc QuadMesh class object
-
+    fig:
+    ax:
+    cc: QuadMesh object
     """
+
     if ax is None:
         fig, ax = set_fig(fignum, subplot, figsize=figsize)
     else:
         fig = plt.gcf()
         # fig, ax = set_fig(fignum, subplot, figsize=figsize, aspect=aspect)
+    if crop is not None:
+        x = x[crop:-crop, crop:-crop]
+        y = y[crop:-crop, crop:-crop]
+        z = z[crop:-crop, crop:-crop]
+
 
     if log10:
         z = np.log10(z)
@@ -3269,3 +3410,89 @@ def smooth(x, window_len=11, window='hanning', log=False):
         return y[(window_len//2-1):(window_len//2-1)+len(x)]
     else:
         return np.exp(y[(window_len // 2 - 1):(window_len // 2 - 1) + len(x)])
+
+def add_secondary_xaxis(ax, functions=None, loc='top', label='', log=False, **kwargs):
+    """
+    Adds a secondary x-axis at the top
+    ... Must pass a pair of mapping functions between a current x and a new x
+
+    e.g.
+        def deg2rad(x):
+            return x * np.pi / 180
+        def rad2deg(x):
+            return x * 180 / np.pi
+        add_secondary_xaxis(ax, functions=(deg2rad, rad2deg))
+
+    Parameters
+    ----------
+    ax
+    functions
+
+    Returns
+    -------
+    secax
+
+    """
+    if functions is None:
+        print('add_secondary_xaxis: supply a mapping function (Current X to New X) and its inverse function')
+        print('... e.g. (deg2rad, rad2deg)')
+
+        def f1(x):
+            return 2 * x
+
+        def f2(x):
+            return x / 2
+
+        functions = (f1, f2)
+    secax = ax.secondary_xaxis(location=loc, functions=functions)
+    secax.set_xlabel(label, **kwargs)
+    if log:
+        secax.set_xscale("log")
+    return secax
+
+def add_secondary_yaxis(ax, functions=None, loc='right', label='', log=False, **kwargs):
+    """
+    Adds a secondary yaxis at the top
+    ... Must pass a pair of mapping functions between a current x and a new x
+
+    e.g.
+        def deg2rad(y):
+            return x * np.pi / 180
+        def rad2deg(y):
+            return x * 180 / np.pi
+        add_secondary_yaxis(ax, functions=(deg2rad, rad2deg))
+
+    Parameters
+    ----------
+    ax
+    functions
+
+    Returns
+    -------
+    secax
+
+    """
+    if functions is None:
+        print('add_secondary_xaxis: supply a mapping function (Current X to New X) and its inverse function')
+        print('... e.g. (deg2rad, rad2deg)')
+
+        def f1(x):
+            return 2 * x
+
+        def f2(x):
+            return x / 2
+
+        functions = (f1, f2)
+    secax = ax.secondary_yaxis(location=loc, functions=functions)
+    secax.set_ylabel(label, **kwargs)
+    if log:
+        secax.set_yscale("log")
+    return secax
+
+
+def use_symmetric_ylim(ax):
+    bottom, top = ax.get_ylim()
+    if bottom * top < 0:
+        bottom, top = -np.max([-bottom, top]), np.max([-bottom, top])
+        ax.set_ylim(bottom=bottom, top=top)
+    return ax
