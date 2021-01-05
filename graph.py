@@ -573,6 +573,12 @@ def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None,
                    color='k', alpha=0.6, subplot=None, cc=1, legend=False, **kwargs):
     """
     plot universal 1d energy spectrum (Saddoughi, 1992)
+
+    E(k)=C epsilon^(2/3)k^(-5/3), E11(k)=C1 epsilon^(2/3)k^(-5/3)
+    # # In iso, homo, turbulence, C1 = 18/55 C. (Pope 6.242)
+    # c = 1.6
+    # c1 = 18. / 55. * c
+
     """
     if fig is None and ax is None:
         fig, ax = set_fig(fignum, subplot, figsize=figsize)
@@ -1121,6 +1127,8 @@ def imshow(griddata, xmin=0, xmax=1, ymin=0, ymax=1, cbar=True, vmin=0, vmax=0, 
                    interpolation=interpolation, cmap=cmap, vmin=vmin, vmax=vmax)
     if cbar:
         cc = fig.colorbar(cax, scale=1.0)
+    else:
+        cc = None
     return fig, ax, cax, cc
 
 
@@ -2543,6 +2551,7 @@ def get_color_list_gradient(color1='greenyellow', color2='darkgreen', color3=Non
     """
     Returns a list of colors in RGB between color1 and color2
     Input (color1 and color2) can be RGB or color names set by matplotlib
+
     Parameters
     ----------
     color1
