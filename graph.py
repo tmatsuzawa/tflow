@@ -542,9 +542,10 @@ def plot_surface(x, y, z, shade=True, fig=None, ax=None, fignum=1, subplot=None,
                  azdeg=0, altdeg=65):
     """
     plot_surface for the graph module
-        ... By default, it enables the shading feature
+    ... By default, it enables the shading feature
 
     Source: https://stackoverflow.com/questions/28232879/phong-shading-for-shiny-python-3d-surface-plots/31754643
+
     Parameters
     ----------
     x
@@ -584,8 +585,39 @@ def plot_surface(x, y, z, shade=True, fig=None, ax=None, fignum=1, subplot=None,
 
 def plot_isosurface(qty, isovalue, xxx, yyy, zzz, cmap='Spectral',
                     r=None, xc=0, yc=0, zc=0, fill_value=0,
-                    fignum=1, subplot=None,
-                    figsize=(8, 8), labelaxes=True):
+                    fignum=1, subplot=None, lw=1,
+                    figsize=(8, 8), labelaxes=True, **kwargs):
+    """
+    Plots a isosurface given a 3D data, value at which isosurface is defined, 3D grids in Cartesian coordinates)
+    ... the isosurface is extracted by the marching cube algorithm
+
+    Parameters
+    ----------
+    qty: 3D array, a scalar field
+    isovalue: float, the value at which the isosurface is extracted
+    xxx: 3D array, x component of the positional grid
+    yyy: 3D array, y component of the positional grid
+    zzz: 3D array, z component of the positional grid
+    cmap: str, name of the color map used to plot the isosurface
+    r: float,
+    ... If provided, it treats the qty[R > r] = fill_value where R = np.sqrt(xx**2 + yy**2 + zz**2)
+    ... This is used for a simple fitering the problematic outliers near the boundaries
+    xc: float/int, x-coordinate of the origin in case r is not None
+    yc: float/int, y-coordinate of the origin in case r is not None
+    zc: float/int, z-coordinate of the origin in case r is not None
+    fill_value: float/int
+    ... If r is not None, it sets qty[R > r] = fill_value where R = np.sqrt(xx**2 + yy**2 + zz**2)
+    fignum: int, figure number (>=1)
+    subplot: int, e.g. 121, 111, 331, default=None
+    ... the three digit notaton for the matplotlib
+    figsize: tuple, figure size in inches e.g.- (8, 8)
+    labelaxes: bool, default True
+    ... If True, it labels each axis as x(mm), y(mm), z(mm)
+
+    Returns
+    -------
+    fig, ax: matplotlib.figure.Figure instance, matplotlib.axes.Axes instance,
+    """
     def get_grid_spacing(xx, yy, zz=None):
         dim = len(xx.shape)
         if dim == 2:
@@ -607,9 +639,9 @@ def plot_isosurface(qty, isovalue, xxx, yyy, zzz, cmap='Spectral',
 
         Parameters
         ----------
-        x
-        y
-        z
+        x: array / float /int
+        y: array / float /int
+        z: array / float /int
 
         Returns
         -------
@@ -645,7 +677,7 @@ def plot_isosurface(qty, isovalue, xxx, yyy, zzz, cmap='Spectral',
 
     fig, ax = set_fig(fignum, subplot, figsize=figsize, projection='3d')
     ax.plot_trisurf(verts[:, 0], verts[:, 1], faces, verts[:, 2],
-                    cmap=cmap, lw=1)
+                    cmap=cmap, lw=lw, **kwargs)
     set_axes_equal(ax)
     if labelaxes:
         ax.set_xlabel('$x~(mm)$')
@@ -745,23 +777,25 @@ def plot_date(dates, y,
             fig=None, ax=None, set_bottom_zero=False, **kwargs):
     """
     A function to plot values against dates with format "2020-01-01"
+
     Parameters
     ----------
-    dates
-    y
-    fignum
-    figsize
-    label
-    color
-    subplot
-    legend
-    fig
-    ax
-    set_bottom_zero
-    kwargs
+    dates: 1d array-like of dates- each entry must be in the format "YYYY-MM-DD"
+    y: 1d array-like
+    fignum: int, fignure number
+    figsize: tuple, figure size e.g.- (8, 8)
+    label: label kwarg in plt.plot_date
+    color: str,  color kwarg in plt.plot_date
+    subplot: int, 3-digit notation to specify a subplot
+    legend: bool
+    fig: mpl.figure.Figure instance- if given, it will just return this instance at the end
+    ax: mpl.axes.Axes instance- if given, it plots the given inputs on this subplot.
+    set_bottom_zero: bool, if True, it sets the ymin=0
+    kwargs: the keyword arguments will be passed to plt.plot_date()
 
     Returns
     -------
+    fig, ax: matplotlib.figure.Figure instance, matplotlib.axes.Axes instance
 
     """
 
