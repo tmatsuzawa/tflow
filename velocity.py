@@ -24,7 +24,14 @@ warnings.simplefilter('ignore', FutureWarning)
 import matplotlib.pyplot as plt
 import tflow.vector as vec  # irvinelab codes
 import tflow.graph as graph
-import bezier # required to plot bezier curves (not critical)
+
+global bezier_installed
+try:
+    import bezier  # required to plot bezier curves (not critical)
+    bezier_installed = True
+except:
+    bezier_installed = False
+    print('velocity module: bezier is missing iny our environment. Run setup.py or pip install bezier')
 
 path_mod = os.path.abspath(__file__)
 moddirpath = os.path.dirname(path_mod)
@@ -915,6 +922,26 @@ def compute_line_integral(*args, **kwargs):
 def fft_nd(udata, dx=1, dy=1, dz=1,
            x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
            window=None, return_kgrid=True):
+    """
+        Conducts FFT along specified axes
+        ... If axes were not given, it FFT along all axes
+        ... Returns shifted FFT output
+            ... FFT is a fast DFT algorithm, meaning that it does computation in Frequency space (1/x)
+            instead of the Angular Frequency (wavenumber) space.
+            ... It is recommended to do the change of variables at the end of the process because it becomes increasingly
+            hard to keep track of the factor of 2pi as the computation becomes more complex.
+
+        Parameters
+        ----------
+        gx: ND-array, Signal
+        axes: array-like,  e.g.- [0, 1]
+            ... axes along which FFT is conducted
+            ... Default is doing FFT along all axes
+            ... If you want to do 1D FFT using a 3D data, you may provide a 3D data with axes=[0] etc.
+        Returns
+        -------
+        np.fft.fftshift(np.fft.fftn(gx, axes=axes))
+        """
     if dx is None or dy is None:
         print('ERROR: dx or dy is not provided! dx is grid spacing in real space.')
         print('... k grid will be computed based on this spacing! Please provide.')
@@ -15388,7 +15415,7 @@ def read_pickle(filename):
 
 def read_data_from_h5(h5path, keys, return_dict=False):
     """
-    Grubs data in a simply organized h5 file
+    Grabs data in a simply organized h5 file
     ... Return the data stored at /keys[0], ... /keys[1], ...
 
     Parameters
@@ -15843,6 +15870,14 @@ def suggest_name2write(filepath):
     """
     Returns a new filepath with a version number if a file with a given path already exists.
     Otherwise, it returns the given string
+
+    Parameters
+    ----------
+    filepath: str
+
+    Returns
+    -------
+    newfilepath: new filepath with a version number if the file already exists
     """
     pdir, filename = os.path.split(filepath)
     filepaths = glob.glob(os.path.join(pdir, '*'))
