@@ -3,6 +3,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# PyCharm backup files
+.bak
+
+# Mac temp files
+.DS_Store
+
 # C extensions
 *.so
 

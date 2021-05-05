@@ -3,9 +3,6 @@
   <component name="PreferredVcsStorage">
     <preferredVcsName>ApexVCS</preferredVcsName>
   </component>
-  <component name="ProjectDictionaryState">
-    <dictionary name="stephane" />
-  </component>
   <component name="ProjectInspectionProfilesVisibleTreeState">
     <entry key="Project Default">
       <profile-state>
@@ -32,8 +29,5 @@
         <option name="myUseModuleSdk" value="true" />
       </console-settings>
     </option>
-  </component>
-  <component name="SvnConfiguration">
-    <configuration>$USER_HOME$/.subversion</configuration>
   </component>
 </project>
