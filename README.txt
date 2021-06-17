@@ -9,7 +9,7 @@ This package is perhaps more attractive to experimentally obtained velocity fiel
 ## Key modules
 - velocity.py: a core analysis module
 - graph.py: a wrapper of matplotlib to efficiently plot the output of velocity.py
-- davis2hdf5.py: LaVision Inc. offers cutting-edge PIV/PTV software called DaVis. This converts their output to a single hdf5 to store a velocity field data.
+- davis2hdf5.py: LaVision Inc. offers a cutting-edge PIV/PTV software called DaVis. This converts their output to a single hdf5 to store a velocity field data.
 
 ## A typical workflow
 A. Exeperiments
