@@ -136,27 +136,39 @@ default_custom_cycler = {'color': ['r', 'b', 'g', 'y'],
                           'linewidth': [3, 3, 3, 3],
                           'marker': ['o', 'o', 'o', 'o'],
                           's': [0,0,0,0]}
+
 def set_fig(fignum, subplot=111, dpi=100, figsize=None,
             custom_cycler=False, custom_cycler_dict=default_custom_cycler, # advanced features to change a plotting style
             **kwargs):
     """
-    Make a plt.figure instance and makes an axes as an attribute of the figure instance
-    Returns figure and ax
+    Returns Figure and Axes instances
+    ... a short sniplet for
+        plt.figure(fignum, dpi=dpi, figsize=figsize)
+        plt.subplot(subplot, **kwargs)
+
     Parameters
     ----------
-    fignum
-    subplot
-    dpi
-    figsize
-    kwargs
+    fignum: int, figure number
+    subplot: int, A 3-digit integer. The digits are interpreted as if given separately as three single-digit integers, i.e. fig.add_subplot(235) is the same as fig.add_subplot(2, 3, 5). Note that this can only be used if there are no more than 9 subplots.
+    dpi: int,
+    figsize: tuple, figure size
+    custom_cycler: bool, If True, it enables users to customize a plot style (color cycle, marker cycle, linewidth cycle etc.)
+        ... The customized cycler could be passed to custom_cycler_dict.
+    custom_cycler_dict: dict, A summary of a plotting style.
+        ... E.g.- default_custom_cycler = {'color': ['r', 'b', 'g', 'y'],
+                                          'linestyle': ['-', '-', '-', '-'],
+                                          'linewidth': [3, 3, 3, 3],
+                                          'marker': ['o', 'o', 'o', 'o'],
+                                          's': [0,0,0,0]}
+        ... The dictionary is turned into a list of cyclers, and passed to ax.set_prop_cycle(custom_cycler).
+
+    kwargs: Visit plt.subplot(**kwargs) for available kwargs
 
     Returns
     -------
-    fig
-    ax
-
+    fig: Figure instance
+    ax: Axes instance
     """
-
     if fignum == -1:
         if figsize is not None:
             fig = plt.figure(dpi=dpi, figsize=figsize)
@@ -172,8 +184,12 @@ def set_fig(fignum, subplot=111, dpi=100, figsize=None,
             fig = plt.figure(num=fignum, dpi=dpi)
         fig.set_dpi(dpi)
     if subplot is None:
-        subplot=111
-    ax = fig.add_subplot(subplot, **kwargs)
+        subplot = 111
+    # >=matplotlib 3.4: fig.add_subplot() ALWAYS creates a new axes instance
+    # <matplotlib 3.4: fig.add_subplot() returns an existing Axes instance if it existed
+    # ax = fig.add_subplot(subplot, **kwargs, )
+    # >matplotlib 3.4 plt.suplot() continues to reuse an existing Axes with a matching subplot spec and equal kwargs.
+    ax = plt.subplot(subplot, **kwargs, )
 
     if custom_cycler:
         apply_custom_cyclers(ax, **custom_cycler_dict)
@@ -972,6 +988,7 @@ def plot_saddoughi_struc_func(fignum=1, fig=None, ax=None, figsize=None,
 def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
             marker='o', fillstyle='full', label=None, subplot=None, legend=False,
             maskon=False, thd=1,
+            xmin=None, xmax=None, alpha=1.,
             **kwargs):
     """
     plot a graph using given x,y
@@ -995,9 +1012,13 @@ def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
         x = x[:len(y)]
 
     if maskon:
-        mask = get_mask4erroneous_pts(x, y, thd=thd)
+        keep = get_mask4erroneous_pts(x, y, thd=thd)
     else:
-        mask = [True] * len(x)
+        keep = [True] * len(x)
+    if xmax is not None:
+        keep *= x < xmax
+    if xmin is not None:
+        keep *= x >= xmin
 
     if type(marker) == list:
         marker_list = [m for i, m in enumerate(marker) if mask[i]]
@@ -1008,10 +1029,22 @@ def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
     if fillstyle =='none':
         # Scatter plot with open markers
         facecolors = 'none'
-        # ax.scatter(x, y, color=color, label=label, marker=marker, facecolors=facecolors, edgecolors=edgecolors, **kwargs)
-        sc = ax.scatter(x[mask], y[mask], label=label, marker=marker, facecolors=facecolors, **kwargs)
+        if type(alpha) == float or type(alpha) == int:
+            # ax.scatter(x, y, color=color, label=label, marker=marker, facecolors=facecolors, edgecolors=edgecolors, **kwargs)
+            sc = ax.scatter(x[keep], y[keep], label=label, marker=marker, facecolors=facecolors, alpha=alpha, **kwargs)
+        else:
+            for i, alpha_ in enumerate(alpha[keep]):
+                if i != 0:
+                    label=None
+                sc = ax.scatter(x[keep][i], y[keep][i], label=label, marker=marker, facecolors=facecolors, alpha=alpha_, **kwargs)
     else:
-        sc = ax.scatter(x[mask], y[mask], label=label, marker=marker, **kwargs)
+        if type(alpha) == float or type(alpha) == int:
+            sc = ax.scatter(x[keep], y[keep], label=label, marker=marker, alpha=alpha, **kwargs)
+        else:
+            for i, alpha_ in enumerate(alpha[keep]):
+                if i != 0:
+                    label=None
+                sc = ax.scatter(x[keep][i], y[keep][i], label=label, marker=marker, alpha=alpha_, **kwargs)
     if legend:
         plt.legend()
 
@@ -1209,7 +1242,8 @@ def cdf(data, nbins=100, return_data=False, vmax=None, vmin=None,
 
 
 def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', linestyle='None', label=None, mfc='white',
-             subplot=None, legend=False, figsize=None, maskon=False, thd=1, capsize=10, **kwargs):
+             subplot=None, legend=False, figsize=None, maskon=False, thd=1, capsize=10,
+             xmax=None, xmin=None, **kwargs):
     """ errorbar plot
 
     Parameters
@@ -1247,21 +1281,26 @@ def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', lin
     xerr[xerr==0] = np.nan
     yerr[yerr==0] = np.nan
     if maskon:
-        mask = get_mask4erroneous_pts(x, y, thd=thd)
+        keep = get_mask4erroneous_pts(x, y, thd=thd)
     else:
-        mask = [True] * len(x)
+        keep = [True] * len(x)
+    if xmax is not None:
+        keep *= x < xmax
+    if xmin is not None:
+        keep *= x >= xmin
     if fillstyle == 'none':
-        ax.errorbar(x[mask], y[mask], xerr=xerr[mask], yerr=yerr[mask], marker=marker, mfc=mfc, linestyle=linestyle,
+        ax.errorbar(x[keep], y[keep], xerr=xerr[keep], yerr=yerr[keep], marker=marker, mfc=mfc, linestyle=linestyle,
                     label=label, capsize=capsize, **kwargs)
     else:
-        ax.errorbar(x[mask], y[mask], xerr=xerr[mask], yerr=yerr[mask], marker=marker, fillstyle=fillstyle,
+        ax.errorbar(x[keep], y[keep], xerr=xerr[keep], yerr=yerr[keep], marker=marker, fillstyle=fillstyle,
                     linestyle=linestyle, label=label, capsize=capsize,  **kwargs)
     if legend:
         plt.legend()
     return fig, ax
 
 def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax=None, label=None,
-              legend=False, figsize=None, color_cycle=__color_cycle__, maskon=False, thd=1, **kwargs):
+              legend=False, figsize=None, color_cycle=__color_cycle__, maskon=False, thd=1,
+              xmin=None, xmax=None, **kwargs):
 
     if ax is None:
         fig, ax = set_fig(fignum, subplot, figsize=figsize)
@@ -1286,15 +1325,20 @@ def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax
         ymax = y + yerr
 
     if maskon:
-        mask = get_mask4erroneous_pts(x, y, thd=thd)
+        keep = get_mask4erroneous_pts(x, y, thd=thd)
     else:
-        mask = [True] * len(x)
-    mask2removeNans = ~np.isnan(x) * ~np.isnan(y)
-    mask = mask * mask2removeNans
+        keep = [True] * len(x)
+    if xmax is not None:
+        keep *= x < xmax
+    if xmin is not None:
+        keep *= x >= xmin
 
-    p = ax.plot(x[mask], y[mask], color=color, label=label, **kwargs)
+    mask2removeNans = ~np.isnan(x) * ~np.isnan(y)
+    keep = keep * mask2removeNans
+
+    p = ax.plot(x[keep], y[keep], color=color, label=label, **kwargs)
     color = p[0].get_color()
-    ax.fill_between(x[mask], ymax[mask], ymin[mask], color=color, alpha=alpha_fill)
+    ax.fill_between(x[keep], ymax[keep], ymin[keep], color=color, alpha=alpha_fill)
 
     #patch used for legend
     color_patch = mpatches.Patch(color=color, label=label)
@@ -3059,6 +3103,9 @@ def get_first_n_colors_from_color_cycle(n):
         color_list.append(next(__color_cycle__))
     return color_list
 
+def get_first_n_default_colors(n):
+    return __def_colors__[:n]
+
 #
 def apply_custom_cyclers(ax, color=['r', 'b', 'g', 'y'], linestyle=['-', '-', '-', '-'], linewidth=[3, 3, 3, 3],
                          marker=['o', 'o', 'o', 'o'], s=[0,0,0,0], **kwargs):
@@ -3452,7 +3499,8 @@ def draw_rectangle(ax, x, y, width, height, angle=0.0, linewidth=1, edgecolor='r
 def draw_box(ax, xx, yy, w_box=351., h_box=351., xoffset=0, yoffset=0, linewidth=5,
              scalebar=True, sb_length=50., sb_units='$mm$', sb_loc=(0.95, 0.1), sb_txtloc=(0.0, 0.4),
              sb_lw=10, sb_txtcolor='white', fontsize=None,
-             facecolor='k', fluidcolor='skyblue'):
+             facecolor='k', fluidcolor=None,
+             bounding_box=True, bb_lw=1, bb_color='w'):
     """
     Draws a box and fills the surrounding area with color (default: skyblue)
     Adds a scalebar by default
@@ -3510,7 +3558,12 @@ def draw_box(ax, xx, yy, w_box=351., h_box=351., xoffset=0, yoffset=0, linewidth
     xc, yc = xmin + (xmax - xmin) / 2., ymin + (ymax - ymin) / 2.
     x0, y0 = xc - w_box / 2. + xoffset, yc - h_box / 2. + yoffset
     draw_rectangle(ax, x0, y0, w_box, h_box, linewidth=linewidth, facecolor=facecolor, zorder=0)
-    ax.set_facecolor(fluidcolor)
+    if fluidcolor is not None:
+        ax.set_facecolor(fluidcolor)
+
+    if bounding_box:
+        w, h = xmax-xmin, ymax-ymin
+        draw_rectangle(ax, xmin, ymin, width=w, height=h, edgecolor=bb_color, linewidth=bb_lw)
 
     if scalebar:
         dx, dy = np.abs(xx[0, 1] - xx[0, 0]), np.abs(yy[1, 0] - yy[0, 0]) # mm/px
