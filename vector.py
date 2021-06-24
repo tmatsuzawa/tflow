@@ -367,6 +367,8 @@ def get_an_orthonormal_basis(dim, v1=None):
             checker = True
             for i in range(m):
                 checker *= isLinearlyIndependent(r, basis[:, i])
+            if not checker: # if r and any of the basis vectors are linearly dependent to each other, pick a different r and try again
+                r = np.random.random(dim)
         # 3. Construct the next basis vector
         for i in range(m):
             r -= dot(r, basis[:, i]) * basis[:, i]
@@ -464,10 +466,10 @@ def get_rotation_matrix_between_two_vectors(a, b):
     ... rotation matrix R
 
     """
-    a, b = vec.norm(a), vec.norm(b)
-    v = vec.cross(a, b)
-    s = vec.mag1(v)
-    c = vec.dot(a, b)
+    a, b = norm(a), norm(b)
+    v = cross(a, b)
+    s = mag1(v)
+    c = dot(a, b)
 
     A = np.asarray([[0, -v[2], v[1]],
                     [v[2], 0, -v[0]],
