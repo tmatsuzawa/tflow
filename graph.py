@@ -1,7 +1,7 @@
 '''
 Module for plotting and saving figures
 '''
-import os
+import os, copy
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -15,23 +15,21 @@ from matplotlib.collections import LineCollection
 from matplotlib.patches import FancyArrowPatch
 from mpl_toolkits.mplot3d import proj3d
 import mpl_toolkits
+import seaborn as sns
 from cycler import cycler
 from skimage import measure
 
+
 import itertools
-from scipy import stats
 from scipy.optimize import curve_fit
 from scipy import interpolate
 import numpy as np
-import glob
 from fractions import Fraction
 from math import modf
 import pickle
-import copy
 from scipy.stats import binned_statistic
 from numpy import ma
-import scipy
-import h5py
+import scipy, seaborn, h5py
 
 # import ilpm.vector as vec
 # comment this and plot_fit_curve if it breaks
@@ -230,7 +228,7 @@ def plotfunc(func, x, param, fignum=1, subplot=111, ax = None, label=None, color
         ax.legend()
     return fig, ax
 
-def plot(x, y=None, fignum=1, figsize=None, label='', color=None, subplot=None, legend=False,
+def plot(x, y=None, fmt='-', fignum=1, figsize=None, label='', color=None, subplot=None, legend=False,
          fig=None, ax=None, maskon=False, thd=1, xmin=None, xmax=None,
          set_bottom_zero=False, symmetric=False, # y-axis
          set_left_zero=False,
@@ -282,9 +280,9 @@ def plot(x, y=None, fignum=1, figsize=None, label='', color=None, subplot=None, 
     else:
         x2plot, y2plot = x[keep], y[keep]
     if color is None:
-        ax.plot(x2plot, y2plot, label=label, **kwargs)
+        ax.plot(x2plot, y2plot, fmt, label=label, **kwargs)
     else:
-        ax.plot(x2plot, y2plot, color=color, label=label, **kwargs)
+        ax.plot(x2plot, y2plot, fmt, color=color, label=label, **kwargs)
 
     if legend:
         ax.legend()
@@ -1676,46 +1674,47 @@ def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None
     return fig, ax, cc
 
 #imshow
-def imshow(griddata, xmin=0, xmax=1, ymin=0, ymax=1, cbar=True, vmin=0, vmax=0, \
+def imshow(arr, xmin=0, xmax=1, ymin=0, ymax=1, cbar=True, vmin=0, vmax=0, \
            fignum=1, subplot=111, figsize=__figsize__, interpolation='nearest', cmap='bwr',
-           key_kwargs={},
-           **kwargs):
+           cb_kwargs={}, **kwargs):
     """
 
     Parameters
     ----------
-    griddata
-    xmin
-    xmax
-    ymin
-    ymax
-    cbar
-    vmin
-    vmax
-    fignum
-    subplot
-    figsize
+    arr: array-like or PIL image
+    xmin: float [0., 1.)- extent=(xmin, xmax, ymin, ymax) The bounding box in data coordinates that the image will fill.
+    xmax: float (0., 1.]- extent=(xmin, xmax, ymin, ymax) The bounding box in data coordinates that the image will fill.
+    ymin: float [0., 1.)- extent=(xmin, xmax, ymin, ymax) The bounding box in data coordinates that the image will fill.
+    ymax:  float (0., 1.]- extent=(xmin, xmax, ymin, ymax) The bounding box in data coordinates that the image will fill.
+    cbar: bool, If True, fig.colorbar(ImageAxes instance, **cb_kwargs) is called.
+    vmin: float, image intensity ranges from vmin to vmax
+    vmax: float, image intensity ranges from vmin to vmax
+    fignum: int, figure number
+    subplot: int, three-digit integer to specify a subplot
+    figsize: tuple, figure size- e.g. (8,8)
     interpolation: 'none', 'nearest', 'bilinear', 'bicubic', 'spline16', 'spline36',
                    'hanning', 'hamming', 'hermite', 'kaiser', 'quadric', 'catrom',
                    'gaussian', 'bessel', 'mitchell', 'sinc', 'lanczos'.
-    cmap
+    cmap: str, color map used for plt.imshow
+    cb_kwargs: dict,  color bar keyward arguments can be passed in this dictionary like {'shrink': 0.5, 'pad':0.05}
+        https://matplotlib.org/stable/api/_as_gen/matplotlib.pyplot.colorbar.html
 
     Returns
     -------
-
+    fig, ax, ima, cc: Figure, Axes, AxesImage, Colorbar instances
     """
     fig, ax = set_fig(fignum, subplot, figsize=figsize)
     if vmin == vmax == 0:
-        cax = ax.imshow(griddata, extent=(xmin, xmax, ymin, ymax),\
+        ima = ax.imshow(arr, extent=(xmin, xmax, ymin, ymax),\
                    interpolation=interpolation, cmap=cmap)
     else:
-        cax = ax.imshow(griddata, extent=(xmin, xmax, ymin, ymax),\
+        ima = ax.imshow(arr, extent=(xmin, xmax, ymin, ymax),\
                    interpolation=interpolation, cmap=cmap, vmin=vmin, vmax=vmax)
     if cbar:
-        cc = fig.colorbar(cax, scale=1.0)
+        cc = fig.colorbar(ima, **cb_kwargs)
     else:
         cc = None
-    return fig, ax, cax, cc
+    return fig, ax, ima, cc
 
 
 # quiver
@@ -2578,7 +2577,32 @@ def add_discrete_colorbar(ax, colors, vmin=0, vmax=None, label=None, fontsize=No
 
 def add_colorbar_alone(ax, values, cmap=cmap, label=None, fontsize=None, option='normal',
                  tight_layout=True, ticklabelsize=None, ticklabel=None,
-                 aspect = None, location='right', color='k', **kwargs):
+                 aspect = None, location='right', color='k',
+                 size='5%', pad=0.15, **kwargs):
+    """
+    Add a colorbar to a figure without a mappable
+    ... It creates a dummy mappable with given values
+
+    Parameters
+    ----------
+    ax
+    values
+    cmap
+    label
+    fontsize
+    option
+    tight_layout
+    ticklabelsize
+    ticklabel
+    aspect
+    location
+    color
+    kwargs
+
+    Returns
+    -------
+
+    """
     fig = ax.get_figure()
 
     # number of values
@@ -2594,7 +2618,7 @@ def add_colorbar_alone(ax, values, cmap=cmap, label=None, fontsize=None, option=
 
     # make an axis instance for a colorbar
     divider = axes_grid.make_axes_locatable(ax)
-    cax = divider.append_axes(location, size='5%', pad=0.15)
+    cax = divider.append_axes(location, size=size, pad=pad)
 
     if option == 'scientific':
         cb = fig.colorbar(sm, cax=cax, format=sfmt, **kwargs)
@@ -3106,7 +3130,10 @@ def get_first_n_colors_from_color_cycle(n):
 def get_first_n_default_colors(n):
     return __def_colors__[:n]
 
+
 #
+
+
 def apply_custom_cyclers(ax, color=['r', 'b', 'g', 'y'], linestyle=['-', '-', '-', '-'], linewidth=[3, 3, 3, 3],
                          marker=['o', 'o', 'o', 'o'], s=[0,0,0,0], **kwargs):
 
@@ -3308,7 +3335,60 @@ def cname2hex(cname):
         print(cname, ' is not registered as default colors by matplotlib!')
         return None
 
-def set_color_cycle(ax, colors=__def_colors__):
+def set_default_color_cycle(name='tab10', n=10, colors=None):
+    """
+    Sets a color cycle for plotting
+
+    sns_palettes = ['deep', 'muted', 'bright', 'pastel', 'dark', 'colorblind'] # sns_palettes
+    matplotlab cmap names: 'tab10' (default cmap of mpl), 'tab20', 'Set1', 'Set2' etc.
+    (https://matplotlib.org/stable/tutorials/colors/colormaps.html)
+    ... One may specify the color cycles using the existing color maps (seaborn and matplotlib presets)
+        or a list of colors specified by a user.
+    ... For the presets, pass a name of the colormap like "tab10" (mpl default), "muted" (seaborn defualt)
+    ... For a more customized color cycle, pass a list of colors to 'colors'.
+
+    Parameters
+    ----------
+    name: str, name of the cmap
+    n: int, number of colors
+    colors: list, a list of colors like ['r', 'b', 'g', 'magenta']
+
+    Returns
+    -------
+    None
+    """
+    if colors is None:
+        colors = sns.color_palette(name, n_colors=n)
+    sns.set_palette(colors)
+
+def set_color_cycle(ax, name, n=10, colors=None):
+    """
+    Sets a color cycle of a particular Axes instance
+
+    sns_palettes = ['deep', 'muted', 'bright', 'pastel', 'dark', 'colorblind'] # sns_palettes
+    matplotlab cmap names: 'tab10' (default cmap of mpl), 'tab20', 'Set1', 'Set2' etc.
+    (https://matplotlib.org/stable/tutorials/colors/colormaps.html)
+    ... One may specify the color cycles using the existing color maps (seaborn and matplotlib presets)
+        or a list of colors specified by a user.
+    ... For the presets, pass a name of the colormap like "tab10" (mpl default), "muted" (seaborn defualt)
+    ... For a more customized color cycle, pass a list of colors to 'colors'.
+
+    Parameters
+    ----------
+    name: str, name of the cmap
+    n: int, number of colors
+    colors: list, a list of colors like ['r', 'b', 'g', 'magenta']
+
+    Returns
+    -------
+    None
+    """
+    if colors is None:
+        colors = sns.color_palette(name, n_colors=n)
+    # sns.set_palette(colors)
+    ax.set_prop_cycle(color=colors)
+
+def set_color_cycle_custom(ax, colors=__def_colors__):
     """
     Sets a color cycle using a list
     Parameters
@@ -3325,6 +3405,7 @@ def set_color_cycle(ax, colors=__def_colors__):
 def set_color_cycle_gradient(ax, color1='greenyellow', color2='navy', n=10):
     colors = get_color_list_gradient(color1, color2, n=n)
     ax.set_prop_cycle(color=colors)
+
 
 
 
@@ -3579,7 +3660,8 @@ def draw_box(ax, xx, yy, w_box=351., h_box=351., xoffset=0, yoffset=0, linewidth
         xmin, xmax, ymin, ymax = ax.axis()
         width, height = xmax - xmin, ymax - ymin
         ax.plot(x_sb, y_sb, linewidth=sb_lw, color=sb_txtcolor)
-        ax.text(x_sb_txt, y_sb_txt, '%d %s' % (sb_length, sb_units), color=sb_txtcolor, fontsize=fontsize)
+        if fontsize is None or fontsize>0:
+            ax.text(x_sb_txt, y_sb_txt, '%d %s' % (sb_length, sb_units), color=sb_txtcolor, fontsize=fontsize)
     ax.get_xaxis().set_visible(False)
     ax.get_yaxis().set_visible(False)
 

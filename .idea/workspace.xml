@@ -2,9 +2,8 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="8e8dbbbc-c066-4d8a-bcd3-6afa3a5c6d68" name="Default Changelist" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/fapm.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/fapm.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/graph.py" beforeDir="false" afterPath="$PROJECT_DIR$/graph.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/vector.py" beforeDir="false" afterPath="$PROJECT_DIR$/vector.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/velocity.py" beforeDir="false" afterPath="$PROJECT_DIR$/velocity.py" afterDir="false" />
     </list>
