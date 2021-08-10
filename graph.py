@@ -34,6 +34,11 @@ import scipy, seaborn, h5py
 # import ilpm.vector as vec
 # comment this and plot_fit_curve if it breaks
 import tflow.std_func as std_func
+# Suppress warnings
+import warnings
+warnings.filterwarnings("ignore")
+
+
 
 #Global variables
 #Default color cycle: iterator which gets repeated if all elements were exhausted
@@ -110,8 +115,8 @@ def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, over
         print(("Saving figure to '%s'..." % savepath))
 
     # Save the figure
-    if transparent: bkgcolor=None
-    plt.savefig(savepath, dpi=dpi, transparent=transparent, facecolor=bkgcolor, **kwargs)
+    # if transparent: bkgcolor=None
+    plt.savefig(savepath, dpi=dpi, facecolor=bkgcolor,transparent=transparent, **kwargs)
 
     # Save fig instance... This may fail for python2
     if savedata:
@@ -230,10 +235,11 @@ def plotfunc(func, x, param, fignum=1, subplot=111, ax = None, label=None, color
 
 def plot(x, y=None, fmt='-', fignum=1, figsize=None, label='', color=None, subplot=None, legend=False,
          fig=None, ax=None, maskon=False, thd=1, xmin=None, xmax=None,
-         set_bottom_zero=False, symmetric=False, # y-axis
+         set_bottom_zero=False, symmetric=False, #y-axis
          set_left_zero=False,
-         smooth=False, window_len=5, window='hanning',
-         custom_cycler=None, custom_cycler_dict=default_custom_cycler,  **kwargs):
+         smooth=False, smoothlog=False, window_len=5, window='hanning',
+         custom_cycler=None, custom_cycler_dict=default_custom_cycler,
+         return_xy=False, **kwargs):
     """
     plot a graph using given x,y
     fignum can be specified
@@ -277,6 +283,13 @@ def plot(x, y=None, fmt='-', fignum=1, figsize=None, label='', color=None, subpl
     if smooth:
         x2plot = x[keep]
         y2plot = smooth1d(y[keep], window_len=window_len, window=window)
+    elif smoothlog:
+        x2plot = x[keep]
+        try:
+            logy2plot = smooth1d(np.log10(y[keep]), window_len=window_len, window=window)
+            y2plot = 10**logy2plot
+        except:
+            y2plot = y[keep]
     else:
         x2plot, y2plot = x[keep], y[keep]
     if color is None:
@@ -289,14 +302,16 @@ def plot(x, y=None, fmt='-', fignum=1, figsize=None, label='', color=None, subpl
 
     if set_bottom_zero:
         ax.set_ylim(bottom=0)
-
     if set_left_zero:
         ax.set_xlim(left=0)
     if symmetric:
         ymin, ymax = ax.get_ylim()
-        yabs = max(-ymin, ymax)
+        yabs = np.abs(max(-ymin, ymax))
         ax.set_ylim(-yabs, yabs)
-    return fig, ax
+    if return_xy:
+        return fig, ax, x2plot, y2plot
+    else:
+        return fig, ax
 
 
 def plot_multicolor(x, y=None, colored_by=None, cmap='viridis',
@@ -987,6 +1002,8 @@ def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
             marker='o', fillstyle='full', label=None, subplot=None, legend=False,
             maskon=False, thd=1,
             xmin=None, xmax=None, alpha=1.,
+            set_bottom_zero=False, symmetric=False,
+            set_left_zero=False,
             **kwargs):
     """
     plot a graph using given x,y
@@ -1057,6 +1074,18 @@ def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
                 marker_obj.get_transform())
             paths.append(path)
         sc.set_paths(paths)
+
+    if set_bottom_zero:
+        ax.set_ylim(bottom=0)
+    if set_left_zero:
+        ax.set_xlim(left=0)
+    if symmetric:
+        xmin, xmax = ax.get_xlim()
+        xabs = np.abs(max(-xmin, xmax))
+        ymin, ymax = ax.get_ylim()
+        yabs = np.abs(max(-ymin, ymax))
+        ax.set_xlim(-xabs, xabs)
+        ax.set_ylim(-yabs, yabs)
     return fig, ax
 
 def scatter3d(x, y, z, ax=None, fig=None, fignum=1, figsize=None, marker='o',
@@ -1298,7 +1327,9 @@ def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', lin
 
 def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax=None, label=None,
               legend=False, figsize=None, color_cycle=__color_cycle__, maskon=False, thd=1,
-              xmin=None, xmax=None, **kwargs):
+              xmin=None, xmax=None,
+              set_bottom_zero=False, set_left_zero=False, symmetric=False,
+              **kwargs):
 
     if ax is None:
         fig, ax = set_fig(fignum, subplot, figsize=figsize)
@@ -1343,6 +1374,14 @@ def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax
     if legend:
         plt.legend(handles=[color_patch])
 
+    if set_bottom_zero:
+        ax.set_ylim(bottom=0)
+    if set_left_zero:
+        ax.set_xlim(left=0)
+    if symmetric:
+        ymin, ymax = ax.get_ylim()
+        yabs = np.abs(max(-ymin, ymax))
+        ax.set_ylim(-yabs, yabs)
 
     return fig, ax, color_patch
 
@@ -1350,36 +1389,71 @@ def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax
 
 def bin_and_errorbar(x_, y_, xerr=None,
                      n_bins=100, mode='linear', bin_center=True, return_std=False,
-                     fignum=1, marker='o', fillstyle='full', linestyle='None', label=None, mfc='white',
-                    subplot=None, legend=False, figsize=None, maskon=False, thd=1, capsize=10,
+                     fignum=1, ax=None, marker='o', fillstyle='full',
+                     linestyle='None', linewidth=1, label=None, mfc='white',
+                     subplot=None, legend=False, figsize=None, maskon=False, thd=1, capsize=5,
+                     set_bottom_zero=False, symmetric=False, #y-axis
+                     set_left_zero=False,
                      return_stats=False, **kwargs):
     """
-    Takes scattered data points (x, y), bin them (compute avg and std), then plots the results with errorbars
+    Takes scattered data points (x, y), bin them (compute avg and std), then plots the results with error bars
 
     Parameters
     ----------
     x : array-like
     y : array-like
     xerr: must be a scalar or numpy array with shape (N,1) or (2, N)... [xerr_left, xerr_right]
+        ... if xerr==0, it removes the error bars in x.
     yerr:  must be a scalar or numpy array with shape (N,) or (2, N)... [yerr_left, yerr_right]
-    fignum
-    label
-    color
-    subplot
-    legend
-    kwargs
+    n_bins: int, number of bins used to compute a histogram between xmin and xmax
+    mode: str, default: 'linear', options are 'linear' and 'log'. Select either linear binning or logarithmic binning
+        ... If "linear", it computes statistics using evenly separated bins between xmin and xmax.
+        ... If "log", it uses bins evenly separted in the log space. (It assumes that xmin>0)
+            i.e. The bin edges are like (10^-1.0, 10^-0.5),  (10^-0.5, 10^0),  (10^0, 10^0.5), and so on.
+    bin_center: bool, default: True.
+        ... passed to get_binned_stats()
+    return_std: bool, default: False.
+        ... passed to get_binned_stats()
+        ... If False, it uses standard errors as error bars, instead of using standard deviations
+    fignum: int, figure number
+    ax: Axes object, default: None
+        ... If given, this becomes the Axes on which the results are plotted
+    marker: str, default: 'o', marker style
+    fillstyle: str, default: 'full'. Options: 'full', 'none'. See matplotlib scatter for more details
+    linestyle: str, default:'None'
+    linewidth: float, linewidth of the error bars
+    label: str, label for a legend
+    mfc: str, default:'white', marker face color
+        ... Use this with fillstyle='none' in order to change the face color of the marker.
+        ... Common usage: empty circles- fillstyle='none', mfc='white'
+    subplot: int, three-digit number. e.g.-111
+    legend: bool, default: False. If True, ax.legend is called at the end.
+    figsize: tuple, figure size in inches
+    maskon: bool, default: False
+        ... This hides "suspicious" data points / outliers.
+        ... See the docstr of get_mask4erroneous_pts() for more details
+    thd: float, threshold value used for get_mask4erroneous_pts() to determine the outliers
+    capsize: float, width of the error bars
+    return_stats: bool, default: False
+        ... If True, it returns the binned results (that are being plotted): x[mask], y[mask], xerr[mask], yerr[mask]
+    kwargs: passed to ax.errorbar()
 
     Returns
     -------
-    fig
-    ax
-
+    If not return_stats (default),
+        fig, ax: a Figure instance, an Axes instance
+    If return_stats:
+        fig, ax, x[mask], y[mask], xerr[mask], yerr[mask]: a Figure instance, an Axes instance, binned results (x, y, x_err, y_err)
     """
-    fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    if ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    else:
+        fig = plt.gcf()
+
     # Make sure that xerr and yerr are numpy arrays
     ## x, y, xerr, yerr do not have to be numpy arrays. It is just a convention. - takumi 04/01/2018
     x_, y_ = np.array(x_), np.array(y_)
-    x, y, yerr = get_binned_stats(x_, y_, n_bins = n_bins, mode = mode, bin_center = bin_center, return_std = return_std)
+    x, y, yerr = get_binned_stats(x_, y_, n_bins = n_bins, mode = mode, bin_center=bin_center, return_std = return_std)
     if xerr is None:
         xerr = np.ones_like(x) * (x[1] - x[0])
     elif type(xerr) in [int, float]:
@@ -1393,16 +1467,30 @@ def bin_and_errorbar(x_, y_, xerr=None,
         mask = [True] * len(x)
     if fillstyle == 'none':
         ax.errorbar(x[mask], y[mask], xerr=xerr[mask], yerr=yerr[mask], marker=marker, mfc=mfc, linestyle=linestyle,
-                    label=label, capsize=capsize, **kwargs)
+                    label=label, capsize=capsize, linewidth=linewidth, **kwargs)
     else:
         ax.errorbar(x[mask], y[mask], xerr=xerr[mask], yerr=yerr[mask], marker=marker, fillstyle=fillstyle,
-                    linestyle=linestyle, label=label, capsize=capsize,  **kwargs)
+                    linestyle=linestyle, label=label, capsize=capsize, linewidth=linewidth,   **kwargs)
     if legend:
-        plt.legend()
+        ax.legend()
+
+    if set_bottom_zero:
+        ax.set_ylim(bottom=0)
+    if set_left_zero:
+        ax.set_xlim(left=0)
+    if symmetric:
+        xmin, xmax = ax.get_xlim()
+        xabs = np.abs(max(-xmin, xmax))
+        ymin, ymax = ax.get_ylim()
+        yabs = np.abs(max(-ymin, ymax))
+        ax.set_xlim(-xabs, xabs)
+        ax.set_ylim(-yabs, yabs)
+
     if not return_stats: # default
         return fig, ax
     else:
         return fig, ax, x[mask], y[mask], xerr[mask], yerr[mask]
+
 ## Plot a fit curve
 def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figsize=None, linestyle='--',
                    xmin=None, xmax=None, add_equation=True, eq_loc='bl', color=None, label='fit',
@@ -1411,16 +1499,33 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
     Plots a fit curve given xdata and ydata
     Parameters
     ----------
-    xdata
-    ydata
-    func : Method, assumes a function to be passed
-    fignum
-    subplot
+    xdata: 1d array
+    ydata: 1d array
+    func : a function to be fit- e.g. lambda x, a, b: a*x+b
+    fignum: int, figure number
+    subplot: int, three-digit number to specify a subplot location
+    ax: Axes instance- If given, it plots on the
+    figsize
+    linestyle
+    xmin
+    xmax
+    add_equation
+    eq_loc
+    color
+    label
+    show_r2
+    return_r2
+    p0
+    bounds
+    maskon
+    thd
+    kwargs
 
     Returns
     -------
-    fig, ax
-    popt, pcov : fit results, covariance matrix
+    fig, ax: A Figure object, an Axes object
+    popt, pcov : fit results, a covariance matrix
+
     """
     if ax is None:
         fig, ax = set_fig(fignum, subplot, figsize=figsize)
@@ -1584,7 +1689,7 @@ def plot_interpolated_curves(x, y, zoom=2, fignum=1, figsize=None, label='', col
 # (pcolormesh)
 def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None, vmax=None, log10=False, label=None,
                cbar=True, cmap='magma', symmetric=False, aspect='equal', option='scientific', ntick=5, tickinc=None,
-               crop=None, center_px=True,
+               crop=None, fontsize=None, ticklabelsize=None,
                **kwargs):
     """
 
@@ -1660,13 +1765,13 @@ def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None
 
     if cbar:
         if vmin is None and vmax is None:
-            add_colorbar(cc, ax=ax, label=label, option=option, ntick=ntick, tickinc=tickinc)
+            add_colorbar(cc, ax=ax, label=label, option=option, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize)
         elif vmin is not None and vmax is None:
-            add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, ntick=ntick, tickinc=tickinc)
+            add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize)
         elif vmin is None and vmax is not None:
-            add_colorbar(cc, ax=ax, label=label, option=option, vmax=vmax, ntick=ntick, tickinc=tickinc)
+            add_colorbar(cc, ax=ax, label=label, option=option, vmax=vmax, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize)
         else:
-            add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, vmax=vmax, ntick=ntick, tickinc=tickinc)
+            add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, vmax=vmax, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize)
     ax.set_aspect(aspect)
     # set edge color to face color
     cc.set_edgecolor('face')
@@ -1675,7 +1780,7 @@ def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None
 
 #imshow
 def imshow(arr, xmin=0, xmax=1, ymin=0, ymax=1, cbar=True, vmin=0, vmax=0, \
-           fignum=1, subplot=111, figsize=__figsize__, interpolation='nearest', cmap='bwr',
+           fignum=1, subplot=111, figsize=__figsize__, ax=None, interpolation='nearest', cmap='bwr',
            cb_kwargs={}, **kwargs):
     """
 
@@ -1703,7 +1808,10 @@ def imshow(arr, xmin=0, xmax=1, ymin=0, ymax=1, cbar=True, vmin=0, vmax=0, \
     -------
     fig, ax, ima, cc: Figure, Axes, AxesImage, Colorbar instances
     """
-    fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    if ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    else:
+        fig = plt.gcf()
     if vmin == vmax == 0:
         ima = ax.imshow(arr, extent=(xmin, xmax, ymin, ymax),\
                    interpolation=interpolation, cmap=cmap)
@@ -1715,6 +1823,92 @@ def imshow(arr, xmin=0, xmax=1, ymin=0, ymax=1, cbar=True, vmin=0, vmax=0, \
     else:
         cc = None
     return fig, ax, ima, cc
+
+
+def imgScatter(x, y, imgs, img_x=None, img_y=None, subax_size=0.06,
+               cmap='viridis', vmin=None, vmax=None,
+               cbar=True, cb_pad='2%', cb_size='5%', cb_option='scientific', cb_label=None,
+               axLim=(None, None, None, None),
+               fignum=1, figsize=__figsize__,
+               **kwargs):
+    """
+    Scatter plots images (2d arrays)
+    ... This function creates additional Axes on top of the master Axes instance.
+
+    To do1: one should be able to plot on the master Axes; however, this fails even with altering the zorder values.
+    To do2: Should one be able to pass a list of imag_x as well?- this would enable plotting imgs with different resolutions
+    Parameters
+    ----------
+    x: 1d array-like, x-coordinates of the image locations
+    y: 1d array-like, y-coordinates of the image locations
+    imgs: list, list of images (2d arrays
+    img_x: 2d array (optional), x grid of the images- if given, this calls color_plot(img_x, img_y, imgs[i]).
+        ... Otherwise, it calls imshow(imgs[i]).
+    img_y: 2d array (optional), y grid of the images- if given, this calls color_plot(img_x, img_y, imgs[i]).
+        ... Otherwise, it calls imshow(imgs[i]).
+    subax_size: float (0, 1], default:0.06, the size of the subaxes (inner plots)
+    cmap: str/cmap object- a color map of the images
+    vmin: float, default:None- color bar range [vmin, vmax]
+    vmax: float, default:None- color bar range [vmin, vmax]
+    cbar: boolean, default:False- To toggle a color bar, vmin and vmax must be given. This is because each image could be drawn with a different color bar range.
+    cb_pad: str, default:"2%" (with respect to the figure width)- Do not pass a float.
+    cb_size: str, default:"2%" (with respect to the figure width)- Do not pass a float.
+    cb_option: str, color bar notation, choose from 'normal' and 'scientific'
+    cb_label: str, label of the color bar
+    axLim: 1d array-like (xmin, xmax, ymin, ymax)- x- and y-limits of the master axes
+    kwargs: dict, this gets passed to either imshow() or color_plot()
+
+    Returns
+    -------
+    fig, ax, axes, cb: Figure, Axes (master), list of Axes, a color bar object
+    """
+
+    def pc2float(x):
+        return float(x.strip('%')) / 100
+    #
+    # def float2pc(x):
+    #     return "{0}%".format(x * 100)
+
+    subaxes = []
+
+    fig, ax = scatter(x, y, s=1, zorder=0, fignum=fignum, figsize=figsize)  # dummy plot
+    if cbar:
+        if vmin is None and vmax is None:
+            print('imgScatter: To toggle a universal color bar, provide vmin and vmax. Color range: [vmin, vmax]')
+            cb = None
+            cbar = False
+        else:
+            cb = add_colorbar_alone(ax, [vmin, vmax], cmap=cmap, option=cb_option, label=cb_label)
+    else: cb = None
+
+    if any([a is not None for a in axLim]):
+        ax.set_xlim(axLim[:2])
+        ax.set_ylim(axLim[2:])
+    xmin, xmax = ax.get_xlim()
+    ymin, ymax = ax.get_ylim()
+
+    pad, size = pc2float(cb_pad), pc2float(cb_size)
+
+    for i, (x_, y_) in enumerate(zip(x, y)):
+        if cbar:
+            subax = add_subplot_axes(ax, [(x_ - xmin) / ((xmax - xmin) * (1. + pad + size)) - subax_size / 2.,
+                                                (y_ - ymin) / (ymax - ymin) - subax_size / 2.,
+                                                subax_size, subax_size],
+                                           zorder=0, )
+        else:
+            subax = add_subplot_axes(ax, [(x_ - xmin) / (xmax - xmin) - subax_size / 2.,
+                                                (y_ - ymin) / (ymax - ymin) - subax_size / 2.,
+                                                subax_size, subax_size],
+                                           zorder=0, )
+        if img_x is not None and img_y is not None:
+            color_plot(img_x, img_y, imgs[i], ax=subax,
+                             cbar=False, cmap=cmap, vmin=vmin, vmax=vmax, **kwargs)
+        else:
+            imshow(imgs[i], ax=subax, cmap=cmap, vmin=vmin, vmax=vmax, cbar=False, aspect='equal', **kwargs)
+        subax.axis('off')
+        subaxes.append(subax)
+
+    return fig, ax, subaxes, cb
 
 
 # quiver
@@ -2575,7 +2769,7 @@ def add_discrete_colorbar(ax, colors, vmin=0, vmax=None, label=None, fontsize=No
 
 
 
-def add_colorbar_alone(ax, values, cmap=cmap, label=None, fontsize=None, option='normal',
+def add_colorbar_alone(ax, values, cmap=cmap, label=None, fontsize=None, option='normal', fformat=None,
                  tight_layout=True, ticklabelsize=None, ticklabel=None,
                  aspect = None, location='right', color='k',
                  size='5%', pad=0.15, **kwargs):
@@ -2583,25 +2777,37 @@ def add_colorbar_alone(ax, values, cmap=cmap, label=None, fontsize=None, option=
     Add a colorbar to a figure without a mappable
     ... It creates a dummy mappable with given values
 
+    ... LOCATION OF CAX
+    fig, ax = graph.set_fig(1, 111)
+    w, pad, size = 0.1, 0.05, 0.05
+    graph.add_colorbar_alone(ax, [0, 1], pad=float2pc(pad), size=float2pc(size), tight_layout=False)
+    graph.add_subplot_axes(ax, [1-w-(1-1/(1.+pad+size)), 0.8, w, 0.2])
+
+
     Parameters
     ----------
-    ax
-    values
-    cmap
-    label
-    fontsize
-    option
-    tight_layout
-    ticklabelsize
-    ticklabel
-    aspect
+    ax: Axes instance
+    values: 1D array-like- min and max values of values are found from this array
+    cmap: str, cmap instance
+    label: str, label of the color bar
+    fontsize: float, fontsize of the label
+    option: str, choose from 'normal' and 'scientific'
+    ... if 'scientific', the color bar is shown in a scientific format like 1x10^exponent
+    fformat: str, default: None equivalent to "%03.1f"
+    tight_layout: bool, if True, fig.tight_layout() is called.
+    ticklabelsize: float
+    ticklabel: 1d array-like
+    aspect:
+    ...  Adding a color bar may distort the aspect ratio. Fix it.
+    if aspect == 'equal':
+        ax.set_aspect('equal')
     location
     color
     kwargs
 
     Returns
     -------
-
+    cb:
     """
     fig = ax.get_figure()
 
@@ -2617,11 +2823,19 @@ def add_colorbar_alone(ax, values, cmap=cmap, label=None, fontsize=None, option=
     sm.set_array([])  # dummy mappable
 
     # make an axis instance for a colorbar
+    ## divider.append_axes(location, size=size, pad=pad) creates an Axes
+    ## s.t. the size of the cax becomes 'size' (e.g.'5%') of the ax.
     divider = axes_grid.make_axes_locatable(ax)
     cax = divider.append_axes(location, size=size, pad=pad)
 
+
     if option == 'scientific':
+        if fformat is not None:
+            global sfmt
+            sfmt.fformat = fformat
+
         cb = fig.colorbar(sm, cax=cax, format=sfmt, **kwargs)
+        reset_sfmt()
     else:
         cb = fig.colorbar(sm, cax=cax,  **kwargs)
 
@@ -2643,7 +2857,6 @@ def add_colorbar_alone(ax, values, cmap=cmap, label=None, fontsize=None, option=
     # Adding a color bar may disport the overall balance of the figure. Fix it.
     if tight_layout:
         fig.tight_layout()
-
     return cb
 
 # def add_colorbar_alone(fig=None, ax=None, ax_loc=[0.05, 0.80, 0.9, 0.15], vmin=0, vmax=1, cmap=cmap, orientation='horizontal',
@@ -3361,7 +3574,7 @@ def set_default_color_cycle(name='tab10', n=10, colors=None):
         colors = sns.color_palette(name, n_colors=n)
     sns.set_palette(colors)
 
-def set_color_cycle(ax, name, n=10, colors=None):
+def set_color_cycle(cmapname, ax=None, n=10, colors=None):
     """
     Sets a color cycle of a particular Axes instance
 
@@ -3375,7 +3588,7 @@ def set_color_cycle(ax, name, n=10, colors=None):
 
     Parameters
     ----------
-    name: str, name of the cmap
+    cmapname: str, name of the cmap like 'viridis', 'jet', etc.
     n: int, number of colors
     colors: list, a list of colors like ['r', 'b', 'g', 'magenta']
 
@@ -3384,9 +3597,11 @@ def set_color_cycle(ax, name, n=10, colors=None):
     None
     """
     if colors is None:
-        colors = sns.color_palette(name, n_colors=n)
-    # sns.set_palette(colors)
-    ax.set_prop_cycle(color=colors)
+        colors = sns.color_palette(cmapname, n_colors=n)
+    if ax is None:
+        sns.set_palette(colors)
+    else:
+        ax.set_prop_cycle(color=colors)
 
 def set_color_cycle_custom(ax, colors=__def_colors__):
     """
@@ -3489,10 +3704,11 @@ def get_markers():
     return markers
 
 # Embedded plots
-def add_subplot_axes(ax, rect, axisbg='w', alpha=1):
+def add_subplot_axes(ax, rect, axisbg='w', alpha=1, **kwargs):
     """
     Creates a sub-subplot inside the subplot (ax)
     rect: list, [x, y, width, height] e.g. rect = [0.2,0.2,0.7,0.7]
+
     Parameters
     ----------
     ax
@@ -3508,14 +3724,14 @@ def add_subplot_axes(ax, rect, axisbg='w', alpha=1):
     box = ax.get_position()
     width = box.width
     height = box.height
-    inax_position  = ax.transAxes.transform(rect[0:2])
+    inax_position = ax.transAxes.transform(rect[0:2])
     transFigure = fig.transFigure.inverted()
     infig_position = transFigure.transform(inax_position)
     x = infig_position[0]
     y = infig_position[1]
     width *= rect[2]
     height *= rect[3]
-    subax = fig.add_axes([x, y, width, height])
+    subax = fig.add_axes([x, y, width, height], **kwargs)
     subax.set_facecolor(axisbg)
     subax.patch.set_alpha(alpha)
     x_labelsize = subax.get_xticklabels()[0].get_size()
@@ -4448,3 +4664,30 @@ def smooth(x, window_len=11, window='hanning', log=False):
         return y[(window_len//2-1):(window_len//2-1)+len(x)]
     else:
         return np.exp(y[(window_len // 2 - 1):(window_len // 2 - 1) + len(x)])
+
+def pc2float(x):
+    """
+    Converts a percentage expression (str) to float
+    e.g. pc2float(5.2%) returns 0.0052
+    Parameters
+    ----------
+    x: str, e.g. "5.2%"
+
+    Returns
+    -------
+    a floating number  (e.g. 0.0052)
+    """
+    return float(x.strip('%'))/100.
+
+def float2pc(x):
+    """
+    Converts a float into a percentage expression
+    Parameters
+    ----------
+    x
+
+    Returns
+    -------
+    a string in float (e.g. 0.0052)
+    """
+    return "{0}%".format(x * 100.)
