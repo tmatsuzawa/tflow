@@ -771,6 +771,11 @@ def plot_spline(x_, y_, order=3,
     elif len(y) > len(x):
         print("Warning : x and y data do not have the same length")
         y = y[:len(x)]
+    cond1, cond2 = ~np.isnan(x), ~np.isnan(y)
+    keep = cond1 * cond2
+    x, y = x[keep], y[keep]
+
+
     try:
         if maskon:
             mask = get_mask4erroneous_pts(x, y, thd=thd)
@@ -786,16 +791,16 @@ def plot_spline(x_, y_, order=3,
         else:
             mask = [True] * len(x)
         spl_func = interpolate.UnivariateSpline(x[mask], y[mask], k=order)
-    x4plot = np.linspace(np.nanmin(x), np.nanmax(x), 1000)
-    y4plot = spl_func(x4plot)
+    x2plot = np.linspace(np.nanmin(x), np.nanmax(x), 1000)
+    y2plot = spl_func(x2plot)
 
     if log:
-        x4plot, y4plot = 10**x4plot, 10**y4plot
+        x2plot, y2plot = 10**x2plot, 10**y2plot
 
     if color is None:
-        ax.plot(x4plot, y4plot, label=label, **kwargs)
+        ax.plot(x2plot, y2plot, label=label, **kwargs)
     else:
-        ax.plot(x4plot, y4plot, color=color, label=label, **kwargs)
+        ax.plot(x2plot, y2plot, color=color, label=label, **kwargs)
 
     if legend:
         ax.legend()
@@ -1270,7 +1275,7 @@ def cdf(data, nbins=100, return_data=False, vmax=None, vmin=None,
 
 def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', linestyle='None', label=None, mfc='white',
              subplot=None, legend=False, figsize=None, maskon=False, thd=1, capsize=10,
-             xmax=None, xmin=None, **kwargs):
+             xmax=None, xmin=None, ax=None, **kwargs):
     """ errorbar plot
 
     Parameters
@@ -1292,7 +1297,10 @@ def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', lin
     ax
 
     """
-    fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    if ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    else:
+        fig = plt.gcf()
     # Make sure that xerr and yerr are numpy arrays
     ## x, y, xerr, yerr do not have to be numpy arrays. It is just a convention. - takumi 04/01/2018
     x, y = np.array(x), np.array(y)
@@ -1327,8 +1335,8 @@ def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', lin
 
 def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax=None, label=None,
               legend=False, figsize=None, color_cycle=__color_cycle__, maskon=False, thd=1,
-              xmin=None, xmax=None,
-              set_bottom_zero=False, set_left_zero=False, symmetric=False,
+              xmin=None, xmax=None, smooth=False, smoothlog=False, window_len=5, window='hanning',
+              set_bottom_zero=False, set_left_zero=False, symmetric=False, return_xy=False,
               **kwargs):
 
     if ax is None:
@@ -1342,17 +1350,6 @@ def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax
     #ax = ax if ax is not None else plt.gca()
     # if color is None:
     #     color = color_cycle.next()
-    if np.isscalar(yerr) or len(yerr) == len(y):
-        ymin = y - yerr
-        ymax = y + yerr
-    elif len(yerr) == 2:
-        yerrdown, yerrup = yerr
-        ymin = y - yerrdown
-        ymax = y + yerrup
-    else:
-        ymin = y - yerr
-        ymax = y + yerr
-
     if maskon:
         keep = get_mask4erroneous_pts(x, y, thd=thd)
     else:
@@ -1365,9 +1362,33 @@ def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax
     mask2removeNans = ~np.isnan(x) * ~np.isnan(y)
     keep = keep * mask2removeNans
 
-    p = ax.plot(x[keep], y[keep], color=color, label=label, **kwargs)
+    if smooth:
+        x2plot = x[keep]
+        y2plot = smooth1d(y[keep], window_len=window_len, window=window)
+    elif smoothlog:
+        x2plot = x[keep]
+        try:
+            logy2plot = smooth1d(np.log10(y[keep]), window_len=window_len, window=window)
+            y2plot = 10**logy2plot
+        except:
+            y2plot = y[keep]
+    else:
+        x2plot, y2plot = x[keep], y[keep]
+    if len(yerr) == len(y):
+        ymin = y2plot - yerr[keep]
+        ymax = y2plot + yerr[keep]
+    elif len(yerr) == 2:
+        yerrdown, yerrup = yerr
+        ymin = y2plot - yerrdown
+        ymax = y2plot + yerrup
+    else:
+        ymin = y2plot - yerr
+        ymax = y2plot + yerr
+
+
+    p = ax.plot(x2plot, y2plot, color=color, label=label, **kwargs)
     color = p[0].get_color()
-    ax.fill_between(x[keep], ymax[keep], ymin[keep], color=color, alpha=alpha_fill)
+    ax.fill_between(x2plot, ymax, ymin, color=color, alpha=alpha_fill)
 
     #patch used for legend
     color_patch = mpatches.Patch(color=color, label=label)
@@ -1383,8 +1404,10 @@ def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax
         yabs = np.abs(max(-ymin, ymax))
         ax.set_ylim(-yabs, yabs)
 
-    return fig, ax, color_patch
-
+    if not return_xy:
+        return fig, ax, color_patch
+    else:
+        return fig, ax, color_patch, x2plot, y2plot
 
 
 def bin_and_errorbar(x_, y_, xerr=None,
@@ -4691,3 +4714,10 @@ def float2pc(x):
     a string in float (e.g. 0.0052)
     """
     return "{0}%".format(x * 100.)
+
+
+def simple_legend(ax, **kwargs):
+    from matplotlib import container
+    handles, labels = ax.get_legend_handles_labels()
+    handles = [h[0] if isinstance(h, container.ErrorbarContainer) else h for h in handles]
+    ax.legend(handles, labels, **kwargs)
