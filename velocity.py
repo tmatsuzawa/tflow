@@ -1270,7 +1270,7 @@ def get_energy_spectrum_old(udata, x0=0, x1=None, y0=0, y1=None,
     DEPRECATED: TM cleaned up the code, and improved the literacy and transparency of the algorithm- TM (Sep 2020)
 
     Returns 1D energy spectrum from velocity field data
-    ... The algorithm implemented in this function is VERY QUICK because it does not use the two-point vel. autorcorrelation tensor.
+    ... The algorithm implemented in this function is VERY QUICK because it does not use the two-point  autorcorrelation tensor.
     ... Instead, it converts u(kx, ky, kz)u*(kx, ky, kz) into u(kr)u*(kr). (here * dentoes the complex conjugate)
     ... CAUTION: Must provide udata with aspect ratio ~ 1
     ...... The conversion process induces unnecessary error IF the dimension of u(kx, ky, kz) is skewed.
@@ -1888,7 +1888,7 @@ def get_energy_spectrum_ver2(udata, x0=0, x1=None, y0=0, y1=None,
                         cc=1, notebook=True, debug=False):
     """
     Returns 1D energy spectrum from velocity field data
-    ... The algorithm implemented in this function is VERY QUICK because it does not use the two-point vel. autorcorrelation tensor.
+    ... The algorithm implemented in this function is VERY QUICK because it does not use the two-point  autorcorrelation tensor.
     ... Instead, it converts u(kx, ky, kz)u*(kx, ky, kz) into u(kr)u*(kr). (here * dentoes the complex conjugate)
     ... CAUTION: Must provide udata with aspect ratio ~ 1
     ...... The conversion process induces unnecessary error IF the dimension of u(kx, ky, kz) is skewed.
@@ -2640,7 +2640,7 @@ def scale_energy_spectrum(e_k, kk, epsilon=10 ** 5, nu=1.0034, e_k_err=None):
 def get_large_scale_vel_field(udata, kmax, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, window=None,
                               dx=None, dy=None, dz=None):
     """
-    Returns a velocity field which satisfies k = sqrt(kx^2 + ky^2) < kmax in the original vel. field (udata)
+    Returns a velocity field which satisfies k = sqrt(kx^2 + ky^2) < kmax in the original  field (udata)
 
     Parameters
     ----------
@@ -2649,17 +2649,17 @@ def get_large_scale_vel_field(udata, kmax, x0=0, x1=None, y0=0, y1=None, z0=0, z
     kmax: float
     ... value of k below which spectrum is kept. i.e. cutoff k for the low-pass filter
     x0: int
-    ... index used to specify a region of a vel. field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
+    ... index used to specify a region of a  field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
     x1: int
-    ... index used to specify a region of a vel. field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
+    ... index used to specify a region of a  field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
     y0: int
-    ... index used to specify a region of a vel. field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
+    ... index used to specify a region of a  field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
     y1: int
-    ... index used to specify a region of a vel. field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
+    ... index used to specify a region of a  field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
     z0: int
-    ... index used to specify a region of a vel. field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
+    ... index used to specify a region of a  field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
     z1: int
-    ... index used to specify a region of a vel. field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
+    ... index used to specify a region of a  field in which spectrum is computed. udata[y0:y1, x0:x1, z0:z1]
     window: 2d/3d nd array
     ... window used to make input data periodic to surpress spectral leakage in FFT
     dx: float
@@ -3511,8 +3511,8 @@ def get_two_point_vel_corr(udata, x, y, z=None,
     """
     Returns the normalized two-point velocity tatistics (rrs, fs, f_errs, rrs, gs, g_errs)
 
-    ... f(r): longitudinal two-pt vel. stat
-    ... g(r): transverse two-pt vel. stat
+    ... f(r): longitudinal two-pt  stat
+    ... g(r): transverse two-pt  stat
     ... In order for f(r) and g(r) to have a meaning, the flow MUST be isotropic
     ... Algorithm:
         1. Choose two points A and B. Let r be the displacement vector (x_A - x_B)
@@ -5882,10 +5882,10 @@ def band_limited_noise2d(min_freq=None, max_freq=None, nsamples=1024, samplerate
             keep = freqs <= max_freq
 
         f[keep] = 1
-        f *= freqs ** (exponent)
+        f *= freqs ** exponent
         f[np.where(freqs == 0)] = 0
     #         f[np.logical_or(np.where(freqs==0), np.isinf(freqs))]=0 # spectral rep of noise
-    return fftnoise2d(f, freqs, exponent=exponent)
+    return fftnoise2d(f)
 
 
 def generate_sample_field(L, n=201, exponent=-5./3., mag=1e4, return_xy=True):
@@ -6036,7 +6036,7 @@ def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
     Given a path to a hdf5 file which stores udata,
     it returns the result of functions without loading an entire udata onto RAM
     ... example:
-        results = process_large_udata(udatapath, func=vel.get_spatial_avg_enstrophy,
+        results = process_large_udata(udatapath, func=get_spatial_avg_enstrophy,
                                               inc=inc, dx=dx, dy=dy, dz=dz)
         enst, enst_err = result
 
@@ -7606,7 +7606,7 @@ def zoom(qty, xxx, yyy, zzz, zf=2, bounds_error=False):
         qty = np.flip(qty, axis=0)
 
     ny, nx, nz = xxx.shape
-    dx, dy, dz = vel.get_grid_spacing(xxx, yyy, zzz)
+    dx, dy, dz = get_grid_spacing(xxx, yyy, zzz)
 
     x_ = np.linspace(np.nanmin(x), np.nanmax(x), int(nx * zf), endpoint=True)
     y_ = np.linspace(np.nanmin(y), np.nanmax(y), int(ny * zf), endpoint=True)
@@ -10272,24 +10272,24 @@ def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
             if dim == 2:
                 if reverse_x:
                     udata[0, ...] = -udata[0, ...]
-                    xx[...] = xx[:, ::-1]
+                    xx[...] = -xx[:, :]
 
                 if reverse_y:
                     udata[1, ...] = -udata[1, ...]
-                    yy[...] = yy[::-1, :]
+                    yy[...] = -yy[:, :]
                 return udata, xx, yy
             elif dim == 3:
                 if reverse_x:
                     udata[...] = -udata[:, :, ::-1, :, :]
-                    xx[...] = xx[:, ::-1, :]
+                    xx[...] = -xx[:, :, :]
 
                 if reverse_y:
-                    udata[0, ...] = -udata[0, ...]
-                    yy[...] = yy[::-1, :, :]
+                    udata[1, ...] = -udata[1, ...]
+                    yy[...] = -yy[:, :, :]
 
                 if reverse_z:
-                    udata[...] = -udata[:, :, :, ::-1, :]
-                    zz[...] = zz[:, :, ::-1]
+                    udata[2, ...] = -udata[2, :, :, :, :]
+                    zz[...] = -zz[:, :, :]
 
                 return udata, xx, yy, zz
         else:
@@ -10636,7 +10636,7 @@ def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=N
         qty[qty > cutoff] = np.nan
 
     if method is not None:
-        print('vel.get_spatial_profile:')
+        print('get_spatial_profile:')
         print('... clean the input quantity (replace np.nans)')
         print('... Cleaning method: ', method)
         qty = clean_data(qty, method=method, fill_value=0)
@@ -11512,7 +11512,7 @@ def get_running_avg_nd(udata, t, axis=-1, notebook=True):
 
 def get_phase_average(x, period_ind=None,
                       time=None, freq=None, nbins=100,
-                      axis=-1, return_std=True):
+                      axis=-1, return_std=True, use_masked_array=True):
     """
     Returns phase average of a ND array (generalization of get_average_data_from_periodic_data)
     ... Assume x is a periodic data, and you are interested in averaging data by locking the phase.
@@ -11613,13 +11613,18 @@ def get_phase_average(x, period_ind=None,
                 x_perr[..., i] = np.nanstd(x.take(indices=indices, axis=axis), axis=axis) / np.sqrt( len(indices) )
         x_pavg = np.swapaxes(x_pavg, axis, -1)
         x_perr = np.swapaxes(x_perr, axis, -1)
+
+    if use_masked_array:
+        x_pavg = np.ma.masked_array(x_pavg)
+        x_perr = np.ma.masked_array(x_perr)
+
     return t_p, x_pavg, x_perr
 
 
 
 def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT,
                                        x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
-                                       t0=0, t1=None, notebook=True):
+                                       t0=0, t1=None, notebook=True, use_masked_array=True):
     """
     Returns the phase-averaged udata (velocity field) without loading the entire udata from dpath
 
@@ -11683,6 +11688,10 @@ def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT,
                                                           verbose=False)[..., 0]
                 counter += 1
         udata_pavg[..., i] /= float(counter)
+
+    if use_masked_array:
+        x_pavg = np.ma.masked_array(x_pavg)
+        x_perr = np.ma.masked_array(x_perr)
 
     if notebook:
         from tqdm import tqdm
@@ -12231,7 +12240,7 @@ def derive_hard(udata, dx, dy, savepath, time=None, inc=1,
     """
     Function to derive quantities which are (relatively) computationally expensive
     ... structure function, two_point correlation function,
-     taylor microscale as a curvature of the long. vel. autocorr. func. etc.
+     taylor microscale as a curvature of the long.  autocorr. func. etc.
 
     Parameters
     ----------
@@ -12313,7 +12322,7 @@ def derive_hard(udata, dx, dy, savepath, time=None, inc=1,
         # get_taylor_re using lambda_f (derived from structure function)
         re_lambda = get_taylor_re(vdata, r_long, f_long, r_tran, g_tran, nu=nu)
 
-        # dissipation rate using the isotropic formula and Taylor microscale from the vel. autocorrelation function
+        # dissipation rate using the isotropic formula and Taylor microscale from the  autocorrelation function
         # This tends to be really noisy due to bad estimtion of lambda
         epsilon_iso_auto = get_epsilon_iso(vdata, lambda_f=lambda_g, lambda_g=lambda_g)
 
@@ -12465,7 +12474,7 @@ def default_analysis_piv(dpath, inc=1, overwrite=False, time=None, t0=0, t1=None
                     # 99% of velocity component is less than this value
                     'abs_ui_99p9': bins[find_nearest(cdf, 0.999)[0]],
                     # 99.9% of velocity component is less than this value
-                    'u_cutoff': u_cutoff,  # suggested value for u_cutoff for vel.clean
+                    'u_cutoff': u_cutoff,  # suggested value for u_cutoff for clean
                     }
         add_data2udatapath(dpath, datadict, overwrite=overwrite, grpname=grpname)
     else:
@@ -12617,7 +12626,7 @@ def default_analysis_stb(dpath, inc=1, overwrite=False, time=None):
                     # 99% of velocity component is less than this value
                     'abs_ui_99p9': bins[find_nearest(cdf, 0.999)[0]],
                     # 99.9% of velocity component is less than this value
-                    'u_cutoff': u_cutoff,  # suggested value for u_cutoff for vel.clean
+                    'u_cutoff': u_cutoff,  # suggested value for u_cutoff for clean
                     }
         add_data2udatapath(dpath, datadict, overwrite=overwrite)
     else:
@@ -15024,7 +15033,7 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
                         debug=False):
         """
         Returns 1D energy spectrum from velocity field data
-        ... The algorithm implemented in this function is VERY QUICK because it does not use the two-point vel. autorcorrelation tensor.
+        ... The algorithm implemented in this function is VERY QUICK because it does not use the two-point  autorcorrelation tensor.
         ... Instead, it converts u(kx, ky, kz)u*(kx, ky, kz) into u(kr)u*(kr). (here * dentoes the complex conjugate)
         ... CAUTION: Must provide udata with aspect ratio ~ 1
         ...... The conversion process induces unnecessary error IF the dimension of u(kx, ky, kz) is skewed.
@@ -15283,7 +15292,7 @@ def get_enstrophy_spectrum(udata, sigma=None,
                         debug=False):
         """
         Returns 1D enstrophy spectrum from velocity field data
-        ... The algorithm implemented in this function is VERY QUICK because it does not use the two-point vel. autorcorrelation tensor.
+        ... The algorithm implemented in this function is VERY QUICK because it does not use the two-point  autorcorrelation tensor.
         ... Instead, it converts u(kx, ky, kz)u*(kx, ky, kz) into u(kr)u*(kr). (here * dentoes the complex conjugate)
         ... CAUTION: Must provide udata with aspect ratio ~ 1
         ...... The conversion process induces unnecessary error IF the dimension of u(kx, ky, kz) is skewed.
@@ -15433,7 +15442,7 @@ def get_confidence_levels_on_structure_function(iw_wrt_eta, reta, alpha_min=0.1,
     ... path/to/module_dir/reference_data/error_functions_of_dll_args_iweta_keta.pkl
     contains an function which gives a SIGNED RELATIVE ERROR of the spectrum (log10[Observed E(k) / True E(k)])
     with arguments (interrogation window size / eta, keta)
-    ... You should non-dimensionalize the distance r and the two-pt vel. correlation function by the most plausible dissipation rate!
+    ... You should non-dimensionalize the distance r and the two-pt  correlation function by the most plausible dissipation rate!
         You have two choices in experiments.
         ... 1. Compute epsilon from the rate-of-strain tensor
             ... However, low resolution PIV could lead to poor estimation of epsilon
@@ -16197,6 +16206,219 @@ def get_azimuthal_average(ef_nd, freqs, nkout=None, statistic='mean', mode='line
     return fr_binned, ef1d, ef1d_err
 
 
+# FLUX ANALYSIS
+def compute_energy_flux(udata, xx, yy, zz, xc, yc, zc, rho=0.000997, n=50, ntheta=100, nphi=100, flux_density=False):
+    """
+    Returns the energy flux (\int (Energy current density) dS in nW
+    ... If flux_density is True, it returns the energy flux per unit area in nW / mm^2
+    ... Units guide: [udata], [xx] = L/T, L.
+        The dimension of the energy flux is [e_flux] = [rho * udata**3 * dS] = ML^2/T^3 = [W=J/s]
+        ... This represents the amount of energy flow through the surface per unit time.
+    ... If flux_density is True, this returns the energy flux density- simply energy flux divided by the surface area
+        The dimension of the energy flux DENSITY is [e_flux density] = M/T^3 = [W] / L^2
+        ... This represents the amount of energy flow through the surface per unit time.
+    ... Sample case: [udata], [xx] = mm/s, mm
+        ... The dimension of energy flux: ML^2/T^3 = g mm^2/s^3 = nW
+        ... The dimension of energy flux density: nW / mm^2
+
+    Parameters:
+    _____________________
+    n: number of gaussian surfaces considered
+    """
+    #     rho = 0.000997 #g/mm3
+    udata = fix_udata_shape(udata)
+    duration = udata.shape[-1]
+
+    # Generate interpolating functions for ux, uy, uz
+    y, x, z = yy[:, 0, 0], xx[0, :, 0], zz[0, 0, :]
+
+    dx, dy, dz = get_grid_spacing(xx, yy, zz)
+    l, w, d = np.max(yy) - np.min(yy), np.max(xx) - np.min(xx), np.max(zz) - np.min(zz)
+    rmax = np.sqrt(l ** 2 + w ** 2 + d ** 2) / 2.
+    rs = np.linspace(dx * 1, rmax, n)
+    # xyz coordinates on the spherical surface with radius r and origin at (xc, yc, zc)
+    theta = np.linspace(0, np.pi, ntheta)
+    phi = np.linspace(0, 2 * np.pi, nphi)
+
+    # INITIALIZATION
+    e_flux = np.empty((len(rs), duration))
+    for t in range(duration):
+        f_ux = RegularGridInterpolator((y, x, z), udata[0, ..., t])  # ux interpolating function
+        f_uy = RegularGridInterpolator((y, x, z), udata[1, ..., t])  # uy interpolating function
+        f_uz = RegularGridInterpolator((y, x, z), udata[2, ..., t])  # uz interpolating function
+        energy = get_energy(udata)[..., t]  # inpainted energy field
+        f_e = RegularGridInterpolator((y, x, z), energy)  # energy interpolating function
+
+        for j, r_float in enumerate(rs):
+            r = np.asarray([r_float])
+            # now make a 3D grid for radial distance, polar angle, and azimuthal angle
+            ttheta, rr, pphi = np.meshgrid(theta, r, phi)  # shape [len(r), len(theta), len(phi)]
+            x_, y_, z_ = sph2cart(rr, ttheta, pphi, xc=xc, yc=yc, zc=zc)
+
+            try:
+                ux_at_r = f_ux((y_, x_, z_))
+                uy_at_r = f_uy((y_, x_, z_))
+                uz_at_r = f_uz((y_, x_, z_))
+                udata_at_r = np.stack((ux_at_r, uy_at_r, uz_at_r))
+
+                # compute energy at r
+                energy_at_r = get_energy(udata_at_r)
+                #             energy_at_r = f_e((y_, x_, z_))
+
+                # Get unit area vectors for each area element
+                RR = np.stack((x_ - xc, y_ - yc, z_ - zc))
+                RR_norm = np.sqrt((x_ - xc) ** 2 + (y_ - yc) ** 2 + (z_ - zc) ** 2)
+                nx, ny, nz = (x_ - xc) / RR_norm, (y_ - yc) / RR_norm, (z_ - zc) / RR_norm
+                nhat = np.stack((nx, ny, nz))
+
+                # Now compute energy flux: flux psi_s = \int J_s \cdot \hat{n} dA
+                dtheta, dphi = theta[1] - theta[0], phi[1] - phi[0]
+                dA = r[0] ** 2 * np.sin(ttheta) * dtheta * dphi
+                # manual cleaning
+                #             energy_at_r = clean_data(energy_at_r, cutoff=1*10**5)
+                e_flux_density_at_r = rho * energy_at_r * np.nansum(udata_at_r * nhat,
+                                                                    axis=0)  # energy current = energy * velocity
+                e_flux_at_r = np.nanmean(e_flux_density_at_r * dA) * e_flux_density_at_r.size
+                if flux_density:
+                    A = np.sum(dA)  # surface area of the gaussian sphere (should be 4pi*r^2)
+                else:
+                    A = 1.
+                e_flux[j, t] = e_flux_at_r / A
+            except ValueError:
+                e_flux[j, t] = np.nan
+                #             print('... a problem occured probably in ux_at_r, uy_at_r, or uz_at_r (r=%f)' % r_float)
+                continue
+
+    #         A = np.sum(dA) # surface area of the gaussian sphere (should be 4pi*r^2)
+    return e_flux, rs
+
+
+def compute_net_energy_current(udata, xx, yy, zz, xc, yc, zc, rho=0.000997, flux_density=False, maxr=None):
+    """
+    Returns the integral of energy flux (Net energy current inside the Gaussian sphere)
+        Net energy current = \int_0^{R} (energy current density) \cdot dS dr    
+    """
+    eflux, rs = compute_energy_flux(udata, xx, yy, zz, xc, yc, zc, rho=rho, flux_density=False)
+    duration = eflux.shape[-1]
+    #     net_e_current = np.empty(duration)
+    if maxr is not None:
+        ind, _ = find_nearest(rs, maxr)
+    else:
+        ind = None
+    eflux = clean_data(eflux, method='fill', fill_value=0)
+    net_e_current = np.trapz(eflux[:ind, :], rs[:ind], axis=0)
+    return net_e_current
+
+
+def compute_mass_flux(udata, xx, yy, zz, xc, yc, zc, rho=0.000997, ntheta=100, nphi=100, flux_density=False):
+    """
+    Returns the energy flux (\int (mass current density) dS in M/T
+    ... If flux_density is True, it returns the energy flux per unit area in M/(L^2 T)
+    ... Units guide: [udata], [xx] = L/T, L.
+        The dimension of the energy flux is [mass_flux] = [rho * udata * dS] = M/T
+        ... This represents the amount of energy flow through the surface per unit time.
+    ... If flux_density is True, this returns the energy flux density- simply energy flux divided by the surface area
+        The dimension of the energy flux DENSITY is [mass_flux density] = M/(L^2 T)
+        ... This represents the amount of energy flow through the surface per unit time.
+    ... Sample case: [udata], [xx] = mm/s, mm
+        ... The dimension of energy flux: M/T = g /s
+        ... The dimension of energy flux density: M/(L^2 T)
+    """
+    #     rho = 0.000997 #g/mm3
+    udata = fix_udata_shape(udata)
+    duration = udata.shape[-1]
+
+    # Generate interpolating functions for ux, uy, uz
+    y, x, z = yy[:, 0, 0], xx[0, :, 0], zz[0, 0, :]
+
+    dx, dy, dz = get_grid_spacing(xx, yy, zz)
+    l, w, d = np.max(yy) - np.min(yy), np.max(xx) - np.min(xx), np.max(zz) - np.min(zz)
+    rmax = np.sqrt(l ** 2 + w ** 2 + d ** 2) / 2.
+    rs = np.linspace(dx * 1, rmax)
+    # xyz coordinates on the spherical surface with radius r and origin at (xc, yc, zc)
+    theta = np.linspace(0, np.pi, ntheta)
+    phi = np.linspace(0, 2 * np.pi, nphi)
+
+    # INITIALIZATION
+    mass_flux = np.empty((len(rs), duration))
+    for t in range(duration):
+        for j, r_float in enumerate(rs):
+            r = np.asarray([r_float])
+            # now make a 3D grid for radial distance, polar angle, and azimuthal angle
+            ttheta, rr, pphi = np.meshgrid(theta, r, phi)  # shape [len(r), len(theta), len(phi)]
+            x_, y_, z_ = sph2cart(rr, ttheta, pphi, xc=xc, yc=yc, zc=zc)
+            f_ux = RegularGridInterpolator((y, x, z), udata[0, ..., t])  # ux interpolating function
+            f_uy = RegularGridInterpolator((y, x, z), udata[1, ..., t])  # uy interpolating function
+            f_uz = RegularGridInterpolator((y, x, z), udata[2, ..., t])  # uz interpolating function
+
+            try:
+                ux_at_r = f_ux((y_, x_, z_))
+                uy_at_r = f_uy((y_, x_, z_))
+                uz_at_r = f_uz((y_, x_, z_))
+                udata_at_r = np.stack((ux_at_r, uy_at_r, uz_at_r))
+
+                #             energy_at_r = f_e((y_, x_, z_))
+
+                # Get unit area vectors for each area element
+                RR = np.stack((x_ - xc, y_ - yc, z_ - zc))
+                RR_norm = np.sqrt((x_ - xc) ** 2 + (y_ - yc) ** 2 + (z_ - zc) ** 2)
+                nx, ny, nz = (x_ - xc) / RR_norm, (y_ - yc) / RR_norm, (z_ - zc) / RR_norm
+                nhat = np.stack((nx, ny, nz))
+
+                # Now compute energy flux: flux psi_s = \int J_s \cdot \hat{n} dA
+                dtheta, dphi = theta[1] - theta[0], phi[1] - phi[0]
+                dA = r[0] ** 2 * np.sin(ttheta) * dtheta * dphi
+                # manual cleaning
+                #             energy_at_r = clean_data(energy_at_r, cutoff=1*10**5)
+                mass_flux_density_at_r = rho * np.nansum(udata_at_r * nhat,
+                                                         axis=0)  # energy current = energy * velocity
+                mass_flux_at_r = np.nanmean(mass_flux_density_at_r * dA) * mass_flux_density_at_r.size
+                if flux_density:
+                    A = np.sum(dA)  # surface area of the gaussian sphere (should be 4pi*r^2)
+                else:
+                    A = 1.
+                mass_flux[j, t] = mass_flux_at_r / A
+            except ValueError:
+                mass_flux[j, t] = np.nan
+                #             print('... a problem occured probably in ux_at_r, uy_at_r, or uz_at_r (r=%f)' % r_float)
+                continue
+
+    #         A = np.sum(dA) # surface area of the gaussian sphere (should be 4pi*r^2)
+    return mass_flux, rs
+
+
+def compute_energy_flux_from_path(udatapath, xc, yc, zc, rho=0.000997, flux_density=False, maxr=None,
+                                  x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
+                                  t0=0, t1=None, inc=1, clean=True, cutoff=np.inf, verbose=False):
+    if t1 is None:
+        t1 = get_udata_dim(udatapath)[-1]
+
+    e_flux = np.empty(len(range(t0, t1, inc)))
+    for i, t in enumerate(tqdm(range(t0, t1, inc), desc='computing energy current: time')):
+        udata, xx, yy, zz = get_udata_from_path(udatapath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1,
+                                                    t0=t, t1=t + 1, inc=inc, return_xy=True, reverse_y=True,
+                                                    verbose=verbose)
+        udata_i = clean_udata(udata, cutoff=cutoff, verbose=False, showtqdm=verbose)
+        e_flux[i] = compute_energy_flux(udata_i, xx, yy, zz, xc, yc, zc, rho=rho)[0]
+    return e_flux
+
+
+def compute_energy_current_from_path(udatapath, xc, yc, zc, rho=0.000997, flux_density=False, maxr=None,
+                                     x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
+                                     t0=0, t1=None, inc=1, clean=True, cutoff=np.inf, verbose=False):
+    if t1 is None:
+        t1 = get_udata_dim(udatapath)[-1]
+
+    net_e_current = np.empty(len(range(t0, t1, inc)))
+    for i, t in enumerate(tqdm(range(t0, t1, inc), desc='computing energy current: time')):
+        udata, xx, yy, zz = get_udata_from_path(udatapath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1,
+                                                    t0=t, t1=t + 1, inc=inc, return_xy=True, reverse_y=True,
+                                                    verbose=verbose)
+        udata_i = clean_udata(udata, cutoff=cutoff, verbose=False, showtqdm=verbose)
+        net_e_current[i] = compute_net_energy_current(udata_i, xx, yy, zz, xc, yc, zc, rho=rho, maxr=maxr)[0]
+    return net_e_current
+
+
 # RW HELPER
 #pickle
 def read_pickle(filename):
@@ -16352,7 +16574,7 @@ def compute_ring_radius_from_master_curve(l, dp=160., do=25.6, N=8, lowerGamma=2
     ... units: mm
     e.g.-
         r = compute_ring_radius_from_master_curve(8.2, setting='small')
-        v = compute_ring_velocity_from_master_curve(8.2, vel.estimate_veff(8.2, 200), setting='small')
+        v = compute_ring_velocity_from_master_curve(8.2, estimate_veff(8.2, 200), setting='small')
 
     Parameters
     ----------
@@ -16393,14 +16615,14 @@ def compute_ring_velocity_from_master_curve(l, veff, dp=160., do=25.6, N=8, sett
     ... units: mm/s
     e.g.-
         r = compute_ring_radius_from_master_curve(8.2, setting='small')
-        v = compute_ring_velocity_from_master_curve(8.2, vel.estimate_veff(8.2, 200), setting='small')
+        v = compute_ring_velocity_from_master_curve(8.2, estimate_veff(8.2, 200), setting='small')
     Parameters
     ----------
     l: float/array
         ... stroke length in mm
     veff: float/array
         ... effective piston velocity- (<vp>^2 / <vp> )
-        ... this quantitty can be estimated from vel.estimate_veff(commanded_stroke_length, commanded_stroke_velocity)
+        ... this quantitty can be estimated from estimate_veff(commanded_stroke_length, commanded_stroke_velocity)
 
     dp: float
         .... piston diameter in mm
@@ -16508,7 +16730,7 @@ def estimate_ring_energy(sl, sv, dp=160., do=25.6, N=8, lowerGamma=2.2, setting=
 
 
 def estimate_ringVRratio(sl, sv, dp=160., do=25.6, norfices=8, lowerGamma=2.2, setting='medium', method='master_curve',
-                         return_err=False):
+                         return_err=False, return_V_R=False):
     """
     Estimates the V/R ratio of a ring created in a vortex ring collider
     ... V/R ratio: ring velocity / ring radius
@@ -16553,10 +16775,13 @@ def estimate_ringVRratio(sl, sv, dp=160., do=25.6, norfices=8, lowerGamma=2.2, s
     veff = estimate_veff(sl, sv)
 
     if method == 'master_curve': # from data collapse
-        radius = compute_ring_radius_from_master_curve(sl, lowerGamma=lowerGamma, setting=setting)
-        velocity = compute_ring_velocity_from_master_curve(sl, veff, setting=setting)
+        radius = compute_ring_radius_from_master_curve(sl, dp=dp, do=do, lowerGamma=lowerGamma, setting=setting)
+        velocity = compute_ring_velocity_from_master_curve(sl, veff, dp=dp, do=do, setting=setting)
         vrRatio = velocity / radius
-        return vrRatio
+        if return_V_R:
+            return vrRatio, velocity, radius
+        else:
+            return vrRatio
     elif method == 'measurement' and setting == 'medium': # from past experimental results
         # get module location
         mod_loc = os.path.abspath(__file__)
@@ -16579,10 +16804,17 @@ def estimate_ringVRratio(sl, sv, dp=160., do=25.6, norfices=8, lowerGamma=2.2, s
         deltaVr, deltaRr = np.abs(vrT - vr_avg), np.abs(rr_avg - rrT)
         vrRatio = vr_avg / rr_avg
         vrRatio_err = vrRatio * np.sqrt((deltaVr / vr_avg) ** 2 + (deltaRr / rr_avg) ** 2)
+
         if return_err:
-            return vrRatio, vrRatio_err
+            if return_V_R:
+                return vrRatio, vrRatio_err, vr_avg, rr_avg
+            else:
+                return vrRatio, vrRatio_err
         else:
-            return vrRatio
+            if return_V_R:
+                return vrRatio, vr_avg, rr_avg
+            else:
+                return vrRatio
 
 def estimate_cirulation_vring_collider(sl, sv):
     """
