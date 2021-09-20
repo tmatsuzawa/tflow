@@ -1274,7 +1274,7 @@ def cdf(data, nbins=100, return_data=False, vmax=None, vmin=None,
 
 
 def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', linestyle='None', label=None, mfc='white',
-             subplot=None, legend=False, figsize=None, maskon=False, thd=1, capsize=10,
+             subplot=None, legend=False, legend_remove_bars=False, figsize=None, maskon=False, thd=1, capsize=10,
              xmax=None, xmin=None, ax=None, **kwargs):
     """ errorbar plot
 
@@ -1329,8 +1329,14 @@ def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', lin
     else:
         ax.errorbar(x[keep], y[keep], xerr=xerr[keep], yerr=yerr[keep], marker=marker, fillstyle=fillstyle,
                     linestyle=linestyle, label=label, capsize=capsize,  **kwargs)
+
     if legend:
-        plt.legend()
+        ax.legend()
+
+        if legend_remove_bars:
+            from matplotlib import container
+            handles, labels = ax.get_legend_handles_labels()
+            handles = [h[0] if isinstance(h, container.ErrorbarContainer) else h for h in handles]
     return fig, ax
 
 def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax=None, label=None,
@@ -1711,7 +1717,7 @@ def plot_interpolated_curves(x, y, zoom=2, fignum=1, figsize=None, label='', col
 ## 2D plotsFor the plot you showed at group meeting of lambda converging with resolution, can you please make a version with two x axes (one at the top, one below) one pixel spacing, other PIV pixel spacing, and add a special tick on each for the highest resolution point.
 # (pcolormesh)
 def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None, vmax=None, log10=False, label=None,
-               cbar=True, cmap='magma', symmetric=False, aspect='equal', option='scientific', ntick=5, tickinc=None,
+               cbar=True, cmap='magma', symmetric=False, enforceSymmetric=True, aspect='equal', option='scientific', ntick=5, tickinc=None,
                crop=None, fontsize=None, ticklabelsize=None,
                **kwargs):
     """
@@ -1761,7 +1767,8 @@ def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None
         z = np.log10(z)
 
     # For Diverging colormap, ALWAYS make the color thresholds symmetric
-    if cmap in ['PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdGy', 'RdBu', 'RdYlBu', 'RdYlGn', 'Spectral', 'coolwarm', 'bwr', 'seismic']:
+    if cmap in ['PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdGy', 'RdBu', 'RdYlBu', 'RdYlGn', 'Spectral', 'coolwarm', 'bwr', 'seismic'] \
+            and enforceSymmetric:
         symmetric = True
 
     if symmetric:
@@ -1770,10 +1777,14 @@ def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None
         if vmin is None and vmax is None:
             v = max(np.abs(np.nanmin(z[keep])), np.abs(np.nanmax(z[keep])))
             vmin, vmax = -v, v
-        else:
+        elif vmin is not None and vmax is not None:
             arr = np.asarray([vmin, vmax])
             v = np.nanmax(np.abs(arr))
             vmin, vmax = -v, v
+        elif vmin is not None and vmax is None:
+            vmax = -vmin
+        else:
+            vmin = -vmax
 
 
 
@@ -2037,6 +2048,94 @@ def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
     ax.set_aspect(aspect)
     return fig, ax, Q
 
+
+def quiver3d(udata, normalize=False, mag=1, inc=1, xinc=None, yinc=None, zinc=None, vmin=0, vmax=None,
+             add_bounding_box=True,
+             save=False, savepath='./vectorfield.png', verbose=True):
+    """
+    3D Quiver plot using pyvista
+
+    Parameters
+    ----------
+    udata: 4d array with shape (3, y, x, z)
+    normalize: bool, default: False. If True, it ignores the magnitude in udata. All vectors have the magnitude of 1.
+        ... This is handy if you would like to assess the directions of the field.
+    mag: float greater than 0, default:1. udata*mag gets plotted. Sometimes, it is necessary to multiply a scalar to see the quivers.
+    inc: int, default:1. Increment of quivers to be plotted- if inc=1, it plots all vectors in udata.
+        If inc=2, it plots vectors every 2 xsteps, 2ysteps, and 2zsteps. i.e. 1/8 of vectors in udata gets plotted
+    xinc: int, default:1. Increment of quivers to be plotted along the x-axis (the third index of udata)
+    yinc: int, default:1. Increment of quivers to be plotted along the y-axis (the second index of udata)
+    zinc: int, default:1. Increment of quivers to be plotted along the z-axis (the fourth index of udata)
+    vmin: float, default: 0. The color range is specified by [vmin, vmax]
+    vmax: float, default: None. The default is the maximum value in udata
+    add_bounding_box: bool, default: True. If True, it draws a bounding box of udata
+    save: bool, default: False. If True, it saves an image (png) at savepath.
+    savepath: str, a path where an image gets saved if save is True.
+    verbose: bool, default: True. If False, it suppresses print outputs.
+
+    Returns
+    -------
+    None
+
+    """
+    import pyvista
+    def compute_direction_from_udata(udata, normalize=False, t=0):
+        udata = vel.fix_udata_shape(udata)
+        dim, height, width, depth, duration = udata.shape
+        ux, uy, uz = udata[0, ..., t].ravel('F'), udata[1, ..., t].ravel('F'), udata[2, ..., t].ravel('F')
+        umag = np.sqrt(ux ** 2 + uy ** 2 + uz ** 2)
+        direction = np.empty((len(ux), 3))
+        if normalize:
+            direction[:, 0] = ux / umag
+            direction[:, 1] = uy / umag
+            direction[:, 2] = uz / umag
+        else:
+            direction[:, 0] = ux
+            direction[:, 1] = uy
+            direction[:, 2] = uz
+        return direction
+
+    udata = vel.fix_udata_shape(udata)
+    dim, height, width, depth, duration = udata.shape
+
+    # set up coordinates
+    if xinc is None: xinc = inc
+    if yinc is None: yinc = inc
+    if zinc is None: zinc = inc
+    x, y, z = np.meshgrid(np.arange(0, width, xinc),
+                          np.arange(0, height, yinc),
+                          np.arange(0, depth, zinc)
+                          )
+    udata = udata[:, ::yinc, ::xinc, ::zinc]
+
+    points = np.empty((x.size, 3))
+    points[:, 0] = x.ravel('F')
+    points[:, 1] = y.ravel('F')
+    points[:, 2] = z.ravel('F')
+
+    # range
+    if vmax is None:
+        vmax = np.nanmax(udata) * mag
+
+    # Compute a direction for the vector field
+    direction = compute_direction_from_udata(udata, normalize=normalize)
+
+    # plot using the plotting class
+    plobj = pyvista.Plotter()
+    a = plobj.add_arrows(points, direction, mag=mag)
+    plobj.update_scalar_bar_range([vmin, vmax])
+    if add_bounding_box:
+        plobj.add_bounding_box()
+    if not save:
+        plobj.show()
+    else:
+        savedir = os.path.split(savepath)[0]
+        if not os.path.exists(savedir):
+            os.makedirs(savedir)
+        plobj.show(screenshot=savepath)
+        if verbose:
+            print('... A vector field image was saved at ', savepath)
+
 # streamlines
 def streamplot(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None, density=[1., 1.],
                aspect='equal', **kwargs):
@@ -2127,7 +2226,7 @@ def contour(x, y, psi, levels=10,
         vmin = np.nanmin(psi)
     if vmax is None:
         vmax = np.nanmax(psi)
-    hide1 = psi < vmin
+    hide1 = psi <= vmin
     hide2 = psi > vmax
     hide = np.logical_or(hide1, hide2)
     psi2plot = copy.deepcopy(psi)
@@ -4601,9 +4700,43 @@ def get_binned_stats(arg, var, n_bins=100, mode='linear', bin_center=True, retur
 
 
 def make_ax_symmetric(ax):
+    """
+    Makes the y-axis symmetric about x=0
+
+    Parameters
+    ----------
+    ax: axes.Axes instance
+
+    Returns
+    -------
+    None
+
+    """
     ymin, ymax = ax.get_ylim()
     yabs = max(-ymin, ymax)
     ax.set_ylim(-yabs, yabs)
+
+def make_ticks_scientific(ax):
+    """
+    Make tick labels display in a scientific format
+
+    Some other useful lines about tick formats
+        ax.set_xticks(np.arange(0, 1.1e-3, 0.5e-3))
+        ax.set_yticks(np.arange(0, 1.1e-3, 0.25e-3))
+        ax.tick_params(axis='x', labelsize=20)
+        ax.tick_params(axis='y', labelsize=20)
+        ax.xaxis.offsetText.set_fontsize(20)
+        ax.yaxis.offsetText.set_fontsize(20)
+
+    Parameters
+    ----------
+    ax
+
+    Returns
+    -------
+
+    """
+    ax.ticklabel_format(style='sci', scilimits=(0, 0))
 
 
 def color_axis(ax, locs=['bottom', 'top', 'left'], colors=['t', 'r', 'b', 'g'],
@@ -4717,6 +4850,7 @@ def float2pc(x):
 
 
 def simple_legend(ax, **kwargs):
+    "Removes the errorbars from the legend"
     from matplotlib import container
     handles, labels = ax.get_legend_handles_labels()
     handles = [h[0] if isinstance(h, container.ErrorbarContainer) else h for h in handles]
