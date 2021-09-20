@@ -371,6 +371,55 @@ def div(udata, dx=1., dy=1., dz=1., xyz_orientations=np.asarray([1, -1, 1]), xx=
 
     return div_u
 
+def grad(U, dx=1., dy=1., dz=1., xyz_orientations=np.asarray([1, -1, 1]), xx=None, yy=None, zz=None):
+    """
+    Computes divergence of a velocity field
+
+    Parameters
+    ----------
+    U: numpy array
+          ... U has a shape (height, width, depth, duration) or (height, width, depth) (3D)
+          ... U may have a shape (height, width, duration) or (height, width) (2D)
+
+    Returns
+    -------
+    grad_U: numpy array
+          ... grad_U has a shape (3, height, width, depth, duration) (3D) or (2, height, width, duration) (2D)
+    """
+
+    if xx is not None and yy is not None:
+        xyz_orientations = get_jacobian_xyz_ijk(xx, yy, zz)
+        if zz is None:
+            dx, dy = get_grid_spacing(xx, yy)
+        else:
+            dx, dy, dz = get_grid_spacing(xx, yy, zz)
+    shape = U.shape  # shape=(dim, nrows, ncols, nstacks) if nstacks=0, shape=(dim, nrows, ncols)
+    if zz is not None: dim=3
+    else: dim = 2
+
+    if dim==2:
+        try:
+            nrows, ncols, duration = U.shape
+        except:
+            nrows, ncols = U.shape
+            duration = 1
+            U = U.reshape((U.shape[0], U.shape[1], duration))
+
+        dUdx = np.gradient(U, dx, axis=1) * xyz_orientations[0]
+        dUdy = np.gradient(U, dy, axis=0) * xyz_orientations[1]
+        grad_U = np.stack((dUdx, dUdy))
+    elif dim==3:
+        try:
+            nrows, ncols, nstacks, duration = U.shape
+        except:
+            nrows, ncols, nstacks = U.shape
+            duration = 1
+            U = U.reshape((U.shape[0], U.shape[1], U.shape[2], duration))
+        dUdx = np.gradient(U, dx, axis=1) * xyz_orientations[0]
+        dUdy = np.gradient(U, dy, axis=0) * xyz_orientations[1]
+        dUdz = np.gradient(U, dz, axis=2) * xyz_orientations[2]
+        grad_U = np.stack((dUdx, dUdy, dUdz))
+    return grad_U
 
 def curl(udata, dx=1., dy=1., dz=1., xyz_orientations=np.asarray([1, -1, 1]),
          xx=None, yy=None, zz=None, verbose=False):
@@ -700,6 +749,82 @@ def get_spatial_avg_enstrophy(udata, x0=0, x1=None, y0=0, y1=None,
     enstrophy_vs_t_err = enstrophy_vs_t_std / np.sqrt(n_elements)
     return enstrophy_vs_t, enstrophy_vs_t_err
 
+def get_radial_enstrophy_dist_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None, inc=1,
+                                        notebook=True,
+                                        xc=None, yc=None, zc=None, n=50,
+                                        clean=False, clean_kwargs={'u_cutoff': np.inf, 'method':'nn', 'median_filter':False}):
+    """
+    Returns the radial enstrophy profile (i.e. angular average) of a velocity field without loading a whole udata
+    ... This function loads udata frame by frame.
+    ...
+
+    Parameters
+    ----------
+    udatapath: str, path to a h5 where udata is stored
+    x0: int, index used to specify the physical dimension of the velocity field for computation udata[:, y0:y1, x0
+    x1
+    y0
+    y1
+    z0
+    z1
+    t0
+    t1
+    inc
+    notebook
+    xc
+    yc
+    zc
+    n
+    clean
+    clean_kwargs
+
+    Returns
+    -------
+
+    """
+    if notebook:from tqdm import tqdm_notebook as tqdm
+    keys = get_h5_keys(udatapath)
+    if 'uz' in keys: dim = 3
+    else: dim = 2
+
+    duration = get_udata_dim(udatapath)[-1]
+    if t1 is None: t1 = duration
+
+    for i, t in enumerate(tqdm(range(t0, t1, inc))):
+        if i == 0:
+            udata_and_grids = get_udata_from_path(udatapath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z1, t0=t, t1=t+1, return_xy=True, verbose=False)
+            udata = udata_and_grids[0]
+            if dim == 3:
+                xx, yy, zz = udata_and_grids[1:]
+                rr, ttheta, pphi = cart2sph(xx, yy, zz)
+                if xc is None or yc is None or zc is None:
+                    try:
+                        xc, yc, zc = read_data_from_h5(udatapath, ['xc', 'yc', 'zc'])
+                    except:
+                        xc, yc, zc = get_center_of_energy(udatapath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z1)
+            else:
+                xx, yy = udata_and_grids[1:]
+                zz = None
+                rr, ttheta = cart2pol(xx, yy)
+                if xc is None or yc is None:
+                    try: xc, yc = read_data_from_h5(udatapath, ['xc', 'yc'])
+                    except: xc, yc = get_center_of_energy(udatapath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z1)
+            # initialize the output array
+        else:
+            udata = get_udata_from_path(udatapath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z1, t0=t, t1=t+1, verbose=False)
+        if clean:
+            udata = clean_udata(udata, **clean_kwargs)
+        enst = get_enstrophy(udata, xx=xx, yy=yy, zz=zz)[..., 0]
+        rs, enstR, enstR_std = get_spatial_profile(xx, yy, enst, zz=zz, xc=xc, yc=yc, zc=zc, n=n, showtqdm=False) #angular average
+
+        if i==0:
+            enstRs = np.empty(enstR.shape[:1] + (len(range(t0, t1, inc)), ))
+            enstR_stds = np.empty(enstR_std.shape[:1] + (len(range(t0, t1, inc)), ))
+        enstRs[:, i], enstR_stds[:, i]= enstR[:, 0], enstR_std[:, 0]
+
+
+    if notebook: from tqdm import tqdm as tqdm
+    return rs[:, 0], enstRs, enstR_stds
 
 def get_turbulence_intensity_local(udata):
     """
@@ -7082,7 +7207,23 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
         e.g.
             Mab = vec.get_change_of_basis_matrix(basis_xyz, basis_npq) # transformation matrix from xyz coords to npq coords
             Mba = np.linalg.inv(Mab) # the change-of-basis matrix is ALWAYS unitary.
-
+    ... e.g. You want a v-field on a slice whose normal vector is obtained by rotating the unit z vector rotated by +45 degrees
+            theta = np.pi/180.*-45 # Convert degrees to rad
+            n = [np.cos(theta), np.sin(theta), 0] # This is the normal vector of the slice
+            pt = [0, 0, 0] # A point on the slice
+            # Providing the new basis (npq basis) is optional
+            # but this helps to speed up the process to find all available points on the slice
+            basis = np.asarray([n, [0, 0, 1], [np.sin(theta), -np.cos(theta), 0]]).T # The transpose is necessary
+            vdata, pp, qq = vel.slice_udata_3d(udata, xxx, yyy, zzz, n, pt, basis=basis, show=True)
+            enst = vel.get_enstrophy(vdata[1:, ...], xx=pp, yy=qq)
+            graph.color_plot(pp, qq, enst[..., 0], fignum=1+i)
+    ... e.g. get a v-field on the xy plane (z=0)
+            n = [0, 0, 1] # area vector // unit z vector
+            pt = [0, 0, 0] # the plane contains the origin
+            basis = np.asarray([n, [1, 0, 0], [0, 1, 0]]).T
+            vdata, pp, qq = vel.slice_udata_3d(udata, xxx, yyy, zzz, n, pt, basis=basis, show=True)
+            enst = vel.get_enstrophy(vdata[1:, ...], xx=pp, yy=qq)
+            graph.color_plot(pp, qq, enst[..., 0], fignum=1+i)
     Example:
 
     Parameters
@@ -7104,9 +7245,9 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
     max_iter: int, parameter for replacng nans in udata clean_udata()
     tol: float, parameter for replacng nans in udata clean_udata()
     basis: 3x3 matrix, column vectors are the basis vectors.
-        ... If given, the basis vectors are used to span the crosss section.
+        ... If given, these basis vectors are used to span the crosss section.
         ... The basis vectors may be rotated or converted to right-handed at the end.
-        ...
+        ... See the example above for a sample input
     apply_convention: bool, If True, it enforces the new basis to follow the convention (right-handed etc.)
     u_basis: str, default: "npq", options: "npq", "xyz" / "standard" "std", "both"
         ... the basis used to represent a velocity field on the plane
@@ -8723,18 +8864,20 @@ def clean_data_interp1d(y, x=None, thd=None, p=0.98):
 
     if x is None:
         x = np.arange(len(y))
-        x = x.reshape(shape + (1,))
+        # x = x.reshape(x.shape + (1,))
+        x = np.tile(x[:, np.newaxis], duration)
     else:
         x = np.asarray(x)
         if len(x.shape) == 1:
-            shape = x.shape
-            x = x.reshape(shape + (1,))
+            # shape = x.shape
+            # x = x.reshape(shape + (1,))
+            x = np.tile(x[:, np.newaxis], duration)
 
     x_output, y_output = np.empty_like(x), np.empty_like(y)
-
     for t in range(duration):
         y_tmp = y[:, t]
         x_tmp = x[:, t]
+
 
         keep_x_0, keep_y_0 = ~np.isnan(x_tmp), ~np.isnan(y_tmp)
         keep_x_1, keep_y_1 = ~np.isinf(x_tmp), ~np.isinf(y_tmp)
@@ -10592,12 +10735,12 @@ def get_udata_from_path_nested(udatapath, ind=0,
         return udata
 
 
-# Spatial Pofile
+# Spatial Pofile / radial profile
 def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=None, n=50,
                         return_center=False,
                         zz=None, zc=None, z0=0, z1=None,
                         method=None, # if qty contains nan, choose how to clean the array
-                        cutoff=np.inf,
+                        cutoff=np.inf, notebook=True, showtqdm=True
                         ):
     """
     Returns a spatial profile (radial histogram) of 3D object with shape (height, width, duration)
@@ -10629,8 +10772,9 @@ def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=N
     qty_ms: 2d numpy array
     ... mean values of the quantity between r and r+dr with shape (n, duration)
     qty_errs: 2d numpy array
-    ... std of the quantity between r and r+dr with shape (n, duration)
+    ... std of the quantity between r and r+dr with shape (n, duration)- not standard error
     """
+    if notebook: from tqdm import tqdm_notebook as tqdm
 
     if not np.isinf(cutoff):
         qty[qty > cutoff] = np.nan
@@ -10697,11 +10841,14 @@ def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=N
         rs = np.empty(shape)
         qty_ms = np.empty(shape)
         qty_errs = np.empty(shape)
-        for t in tqdm(list(range(duration))):
+        for t in tqdm(list(range(duration)), disable=~showtqdm):
             rs[:, t], qty_ms[:, t], qty_errs[:, t] = get_binned_stats(r.flatten(),
                                                                       qty_local[..., t].flatten(),
                                                                       n_bins=n,
                                                                       return_std=True)
+
+    if notebook: from tqdm import tqdm as tqdm
+
     if not return_center:
         return rs, qty_ms, qty_errs
     else:
@@ -10709,6 +10856,10 @@ def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=N
             return rs, qty_ms, qty_errs, np.asarray([xc, yc])
         else:
             return rs, qty_ms, qty_errs, np.asarray([xc, yc, zc])
+
+def get_radial_profile(*args, **kwargs):
+    """See get_spatial_profile for documentation"""
+    return get_spatial_profile(*args, **kwargs)
 
 ########## Helpers ###########
 
@@ -11130,6 +11281,27 @@ def sph2cart(r, theta, phi, xc=0, yc=0, zc=0):
     return x, y, z
 
 
+def change_of_basis_mat_sph2cart(theta, phi):
+    """
+    Returns a change-of-basis matrix from a spherical basis to a cartesian basis
+    [ax, ay, az] = np.matmul(Ms2c, [ar, atheta, aphi])
+    """
+    Ms2c = np.asarray([[np.sin(theta) * np.cos(phi), np.cos(theta) * np.cos(phi), -np.sin(phi)],
+                       [np.sin(theta) * np.sin(phi), np.cos(theta) * np.sin(phi), np.cos(phi)],
+                       [np.cos(theta), -np.sin(theta), 0]])
+    return Ms2c
+
+def change_of_basis_mat_cart2sph(theta, phi):
+    """
+    Returns a change-of-basis matrix from a cartesian basis to a spherical basis
+    [ar, atheta, aphi] = np.matmul(Ms2c, [ax, ay, az])
+    """
+    Mc2s = np.asarray([[np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)],
+                       [np.cos(theta) * np.cos(phi), np.cos(theta) * np.sin(phi), -np.sin(theta)],
+                       [-np.sin(phi), np.cos(phi), 0]])
+    return Mc2s
+
+
 def pol2cart_udata(r, theta, udata_pol, x0=0, y0=0):
     """
     Transformation: Polar coord to Cartesian coord (r, phi, (ur, uphi)) -> (x, y, (ux, uy))
@@ -11524,7 +11696,7 @@ def get_phase_average(x, period_ind=None,
         2. Provide a time array as well as data.
             ... For example, one can give unevenly spaced data (ND array) in time
                one can take phase average by taking a histogram appropriately
-    ... Arguments for each method:
+    ... Required arguments for each method:
         1. x, period_ind
         2. x, time, freq
 
@@ -11604,7 +11776,6 @@ def get_phase_average(x, period_ind=None,
             tmin, tmax = t_p[i] - dt / 2., t_p[i] + dt / 2,
             keep1, keep2 = time_mod >= tmin, time_mod < tmax
             keep = keep1 * keep2
-
             indices = np.arange(x.shape[axis])[keep]
             x_pavg[..., i] = np.nanmean(x.take(indices=indices, axis=axis), axis=axis)
             if return_std:
@@ -15676,8 +15847,6 @@ def get_pressure(udata, xx, yy, zz, nu=1.003, notebook=True):
     ... The solvalbility condition is F(p(x))|(kx=0, ky=0, kz=0) = pk(kx=0, ky=0, kz=0) = 0
     ...... The zeroth term of the Fourier decomposition of the pressure field is zero.
 
-
-
     Parameters
     ----------
     udata: 4d/5d array, v-field data with shape (3, h, w, d) or (3, h, w, d, t)
@@ -15993,11 +16162,8 @@ def get_angular_impulse_density(udata, xx, yy, zz=None, rho=1e-3, crop=2):
     ... It is the moment of the impulsive force which generates the motion from the rest
     ... Angular impulse is defined as
         A = 1/3 \int r \times (r \times \omega) dV (Lamb, 1932, Sect. 152, Saffman. Sect. 3.5, Eq.5)
-
           = - 1/2 \int r^2 omega dV - 1/6 r^2 r \times (omega \cdot n) dS (Batchelor, 1967, Sect. 7.2)
-
           =  \int r \times u dV  + 1/2 \int r^2 (n \times  u) dS (Saffman. Sect. 3.5, Eq.7)
-
 
         ... If all the vorticity is contained inside the control volume,
             A = \int r \times u dV
