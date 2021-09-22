@@ -2,15 +2,30 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="8e8dbbbc-c066-4d8a-bcd3-6afa3a5c6d68" name="Default Changelist" comment="">
+      <change afterPath="$PROJECT_DIR$/../../library/library/pde/fenics101_poisson.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../../library/library/scripts/clean_udata_example.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../library/library/.idea/library.iml" beforeDir="false" afterPath="$PROJECT_DIR$/../../library/library/.idea/library.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../library/library/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/../../library/library/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../library/library/basics/formatarray.py" beforeDir="false" afterPath="$PROJECT_DIR$/../../library/library/basics/formatarray.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../library/library/basics/formatstring.py" beforeDir="false" afterPath="$PROJECT_DIR$/../../library/library/basics/formatstring.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../library/library/basics/std_func.py" beforeDir="false" afterPath="$PROJECT_DIR$/../../library/library/basics/std_func.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/fapm.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/fapm.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/modules.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/graph.py" beforeDir="false" afterPath="$PROJECT_DIR$/graph.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/vector.py" beforeDir="false" afterPath="$PROJECT_DIR$/vector.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/velocity.py" beforeDir="false" afterPath="$PROJECT_DIR$/velocity.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
   </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
@@ -24,6 +39,7 @@
     </file-type-list>
   </component>
   <component name="ProjectId" id="1s8YxuScTsVXlymOy5NZV32dhnQ" />
+  <component name="ProjectLevelVcsManager" settingsEditedManually="true" />
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
@@ -38,6 +54,34 @@
         <option name="myUseModuleSdk" value="true" />
       </console-settings>
     </option>
+  </component>
+  <component name="RunManager">
+    <configuration name="fenics101_poisson" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="library" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/../../library/library/pde" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/../../library/library/pde/fenics101_poisson.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Python.fenics101_poisson" />
+      </list>
+    </recent_temporary>
   </component>
   <component name="ServiceViewManager">
     <option name="viewStates">
