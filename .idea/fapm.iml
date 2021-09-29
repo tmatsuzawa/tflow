@@ -5,6 +5,7 @@
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="module" module-name="vol1" />
     <orderEntry type="module" module-name="library" />
+    <orderEntry type="module" module-name="tmatsuzawa.github.io" />
   </component>
   <component name="PackageRequirementsSettings">
     <option name="requirementsPath" value="" />

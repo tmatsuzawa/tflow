@@ -16821,9 +16821,55 @@ def compute_ring_velocity_from_master_curve(l, veff, dp=160., do=25.6, N=8, sett
     return velocity
 
 
+def compute_ring_circulation_from_master_curve(l, veff, dp=160., do=25.6, N=8, setting='medium'):
+    """
+    Given a stroke length, this function returns circulation of a vortex ring in a vortex ring collider
+    ... well tested over time
+    ... units: mm2/s
+    e.g.-
+        r = compute_ring_radius_from_master_curve(8.2, setting='small')
+        v = compute_ring_velocity_from_master_curve(8.2, estimate_veff(8.2, 200), setting='small')
+    Parameters
+    ----------
+    l: float/array
+        ... stroke length in mm
+    veff: float/array
+        ... effective piston velocity- (<vp>^2 / <vp> )
+        ... this quantitty can be estimated from estimate_veff(commanded_stroke_length, commanded_stroke_velocity)
+
+    dp: float
+        .... piston diameter in mm
+    do float
+        ... orfice diameter in mm
+    N: int/float
+        ... number of oricies
+    lowerGamma: float
+        ... experimental constant, default: 2.2
+        ... This represents the ratio of semi-major to semi-minor radius when a vortex bubble is approximated as an ellipsoid
+    setting: str
+        ... vortex ring collider versions
+        ... choose from 'medium' or 'small'
+        ... 'medium' refers to the chamber configuration to create D=10cm blobs
+        ... 'small' refers to the chamber configuration to create D=5cm blobs
+
+    Returns
+    -------
+    velocity: float/array, velocity of the ring
+    """
+    if setting == 'medium':
+        dp, do, N = 160, 25.6, 8.
+    elif setting == 'small':
+        dp, do, N = 56.7, 12.8, 8.
+    lstar = 1. / N * (dp / do) ** 2 * l / do
+    gammaStar = (do * veff / N * (dp/do)**2)
+    circulation = 0.43794512 * gammaStar * lstar ** (2/3.)
+
+    return circulation
 
 def estimate_ring_energy(sl, sv, dp=160., do=25.6, N=8, lowerGamma=2.2, setting='medium', rho=1e-3,
-                         a=1., alpha=None, beta=None, core_type='viscous', verbose=False):
+                         a=1., alpha=None, beta=None, core_type='viscous',
+                         circulation_option='master curve',
+                         verbose=False):
     """
     Given a stroke length, this function estimates energy of a vortex ring in a vortex ring collider in nJ
     ... units: nJ
@@ -16871,7 +16917,10 @@ def estimate_ring_energy(sl, sv, dp=160., do=25.6, N=8, lowerGamma=2.2, setting=
 
     radius = compute_ring_radius_from_master_curve(sl, dp=dp, do=do, N=N, lowerGamma=lowerGamma, setting=setting) # in mm
     vel = compute_ring_velocity_from_master_curve(sl, veff, dp=dp, do=do, N=N, setting=setting) # in mm/s
-    circulation = 4*np.pi * radius * vel / (np.log(8. * radius / a) - beta) # in mm2/s
+    if circulation_option=='model':
+        circulation = 4*np.pi * radius * vel / (np.log(8. * radius / a) - beta) # in mm2/s
+    elif circulation_option=='master curve' or 'mc':
+        circulation = compute_ring_circulation_from_master_curve(sl, veff, dp=dp, do=do, N=N, setting=setting)
     energy = 0.5 * rho * circulation ** 2 * radius * (np.log(8. * radius / a) - alpha) # in mm= gmm2/s2 = nJ
     if verbose:
         ring_properties = {'core size(given by a user)': a,

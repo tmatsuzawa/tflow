@@ -2,6 +2,7 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="8e8dbbbc-c066-4d8a-bcd3-6afa3a5c6d68" name="Default Changelist" comment="">
+      <change afterPath="$PROJECT_DIR$/../../external/tmatsuzawa.github.io/.idea/tmatsuzawa.github.io.iml" afterDir="false" />
       <change afterPath="$PROJECT_DIR$/../../library/library/pde/fenics101_poisson.py" afterDir="false" />
       <change afterPath="$PROJECT_DIR$/../../library/library/scripts/clean_udata_example.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../../library/library/.idea/library.iml" beforeDir="false" afterPath="$PROJECT_DIR$/../../library/library/.idea/library.iml" afterDir="false" />
@@ -10,10 +11,10 @@
       <change beforePath="$PROJECT_DIR$/../../library/library/basics/formatstring.py" beforeDir="false" afterPath="$PROJECT_DIR$/../../library/library/basics/formatstring.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../../library/library/basics/std_func.py" beforeDir="false" afterPath="$PROJECT_DIR$/../../library/library/basics/std_func.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/fapm.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/fapm.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/modules.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/velocity.py" beforeDir="false" afterPath="$PROJECT_DIR$/velocity.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -46,6 +47,7 @@
   </component>
   <component name="PropertiesComponent">
     <property name="RunOnceActivity.ShowReadmeOnStart" value="true" />
+    <property name="SHARE_PROJECT_CONFIGURATION_FILES" value="true" />
     <property name="settings.editor.selected.configurable" value="com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable" />
   </component>
   <component name="PyConsoleOptionsProvider">
