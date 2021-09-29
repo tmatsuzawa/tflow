@@ -3,9 +3,12 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/fapm.iml" filepath="$PROJECT_DIR$/.idea/fapm.iml" />
+<<<<<<< HEAD
       <module fileurl="file://$PROJECT_DIR$/../../library/library/.idea/library.iml" filepath="$PROJECT_DIR$/../../library/library/.idea/library.iml" />
       <module fileurl="file://$PROJECT_DIR$/../../external/tmatsuzawa.github.io/.idea/tmatsuzawa.github.io.iml" filepath="$PROJECT_DIR$/../../external/tmatsuzawa.github.io/.idea/tmatsuzawa.github.io.iml" />
       <module fileurl="file://$PROJECT_DIR$/../../fenics-tutorial/pub/python/vol1/.idea/vol1.iml" filepath="$PROJECT_DIR$/../../fenics-tutorial/pub/python/vol1/.idea/vol1.iml" />
+=======
+>>>>>>> parent of 83e7d4f (weekly commit)
     </modules>
   </component>
 </project>
