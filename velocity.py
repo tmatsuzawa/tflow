@@ -266,6 +266,7 @@ def reynolds_decomposition(udata, t0=0, t1=None):
 def get_mean_flow_field_using_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                                         t0=0, t1=None, inc=1,
                                         clean=True, cutoff=np.inf, method='nn', median_filter=False, verbose=False,
+                                        replace_zeros=True,
                                         notebook=True):
     """
     Returns mean_field when a path to udata is provided
@@ -328,13 +329,13 @@ def get_mean_flow_field_using_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None,
         udata_m = np.zeros(shape)
 
         counter = 0
-        for t in tqdm(range(t0, t1, inc)):
+        for t in tqdm(range(t0, t1, inc), desc='mean flow'):
             udata_tmp = get_udata_from_path(udatapath,
                                             x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1,
                                             t0=t, t1=t+1, verbose=verbose)
             if clean:
                 udata_tmp = clean_udata(udata_tmp, cutoff=cutoff, method=method, median_filter=median_filter,
-                                    verbose=verbose, showtqdm=verbose)
+                                        replace_zeros=replace_zeros, verbose=verbose, showtqdm=verbose)
             else:
                 udata_tmp = fix_udata_shape(udata_tmp)
             udata_m += udata_tmp[..., 0]
@@ -2968,7 +2969,8 @@ def get_epsilon_using_sij(udata, dx=None, dy=None, dz=None, nu=1.004,
     return epsilon
 
 
-def get_epsilon_iso(udata, lambda_f=None, lambda_g=None, nu=1.004, x=None, y=None, **kwargs):
+def get_epsilon_iso(udata, x=None, y=None, lambda_f=None, lambda_g=None, nu=1.004,
+                    x0=0, x1=None, y0=0, y1=None, **kwargs):
     """
     Return epsilon computed by isotropic formula involving Taylor microscale
 
@@ -2979,14 +2981,18 @@ def get_epsilon_iso(udata, lambda_f=None, lambda_g=None, nu=1.004, x=None, y=Non
         long. Taylor microscale
     lambda_g: numpy array
         transverse. Taylor microscale
+        transverse. Taylor microscale
     nu: float
         viscosity
+
 
     Returns
     -------
     epsilon: numpy array
         dissipation rate
     """
+    udata = fix_udata_shape(udata)
+    udata = udata[:, y0:y1, x0:x1, :]
     dim = len(udata)
     u2_irms = 2. / dim * get_spatial_avg_energy(udata)[0]
 
@@ -2995,7 +3001,7 @@ def get_epsilon_iso(udata, lambda_f=None, lambda_g=None, nu=1.004, x=None, y=Non
         print('... Both of Taylor microscales, lambda_f, lambda_g, were not provided!')
         print('... Compute lambdas from scratch. One must provide x and y.')
         if x is None or y is None:
-            raise ValueError('... x and y were not provided! Exitting...')
+            raise ValueError('... x and y were not provided! Exiting...')
         else:
             autocorrs = get_two_point_vel_corr_iso(udata, x, y, return_rij=False, **kwargs)
             r_long, f_long, f_err_long, r_tran, g_tran, g_err_tran = autocorrs
@@ -3155,6 +3161,156 @@ def get_epsilon_using_struc_func(rrs, Dxxs, epsilon_guess=100000, r0=1.0, r1=10.
         else:
             epsilons[t] = np.nan
     return epsilons
+
+
+def get_epsilon_from_spectrum(udata, dx=1., dy=1.,
+                              x0=0, x1=None, y0=0, y1=None,
+                              window=None,
+                              epsilon_range=(2, 7), n=51,
+                              nu=1.004, kMaxInd=None,
+                              plot=False, t0=0
+                              ):
+    """
+
+    Estimates dissipation rate by comparing the 1D spectrum to the master curve in Saddoughi&Veeravalli 1994
+
+    Parameters
+    ----------
+    udata
+    dx
+    dy
+    x0
+    x1
+    y0
+    y1
+    epsilon_range
+    n
+    nu
+    kMaxInd:
+    plotResults
+
+    Returns
+    -------
+
+    """
+    udata = fix_udata_shape(udata)
+    duration = udata.shape[-1]
+    epsilons = np.empty(duration)
+
+    e11_sv, keta_sv = get_rescaled_energy_spectrum_saddoughi()
+    g = interpolate.interp1d(keta_sv, e11_sv, bounds_error=False, fill_value=np.nan)
+    eiis, eiierr, k1 = get_1d_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, x1=x1, y0=y0, y1=y1, verbose=False, window=window)
+    m = k1.shape[0]
+    # RESAMPLE 1D DFT result
+    k1_rs, e11rs = resample2d(k1[:kMaxInd], eiis[0, :kMaxInd, :], n=m, mode='log')
+    epsilons2test = np.logspace(epsilon_range[0], epsilon_range[1], n)
+    residuals = np.zeros((n, duration))
+
+    for i, epsilon2test in enumerate(epsilons2test):
+        try:
+            e11r, k1eta = scale_energy_spectrum(e11rs, k1_rs, epsilon=epsilon2test, nu=nu)
+            measuredLog = np.log10(e11r)
+            measuredRefLog = np.swapaxes(np.tile(np.log10(g(k1eta)), (duration, 1)), 0, 1)
+            residuals[i, :] = np.nansum(np.abs(measuredLog - measuredRefLog), axis=0)
+        except:
+            residuals[i, :] = np.nan
+    epsilons = epsilons2test[np.nanargmin(residuals, axis=0)]
+
+    if plot:
+        from matplotlib.patches import Polygon
+        epsilon = epsilons[t0]
+        eta = compute_kolmogorov_lengthscale_simple(epsilon, nu)
+        e11rs_t = e11rs[:, t0]
+        #         e11_avg = np.nanmean(e11rs, axis=-1)
+        fig, ax11 = graph.plot(epsilons2test, residuals[:, t0], subplot=121)
+        epsilon_min, epsilon_max = 10 ** (np.log10(epsilon) * 0.9), 10 ** (np.log10(epsilon) * 1.1)
+        graph.tosemilogx(ax11)
+        e11r, k1eta = scale_energy_spectrum(e11rs_t, k1_rs, epsilon=epsilon, nu=nu)
+        fig, ax12 = graph.plot(k1eta, e11r, subplot=122)
+        e11rUpper, k1etaUpper = scale_energy_spectrum(e11rs_t, k1_rs,
+                                                          epsilon=epsilon_min,
+                                                          nu=nu)
+        e11rLower, k1etaLower = scale_energy_spectrum(e11rs_t, k1_rs,
+                                                          epsilon=epsilon_max,
+                                                          nu=nu)
+        polygon1 = Polygon(list(zip(k1etaUpper, e11rUpper)) + list(zip(k1etaLower[::-1], e11rLower[::-1])))
+        polygon1.set_alpha(0.5)
+        ax12.add_patch(polygon1)
+        graph.plot_saddoughi(ax=ax12)
+        graph.tologlog(ax12)
+        graph.axvband(ax11, epsilon_min, epsilon_max, color='C0')
+        graph.axvline(ax12, k1_rs[-1] * eta)
+        graph.labelaxes(ax11, '$\epsilon~(mm^2/s^3)$',
+                        'Residuals \n$\sum | \log_{10}{\\tilde{E}_{11}(\kappa \eta)} - \log_{10}{\\tilde{E}_{11}^{Ref}(\kappa \eta)}|$')
+    return epsilons
+
+
+def get_epsilon_distribution_using_sij(udata, dx=None, dy=None, dz=None, nu=1.004,
+                          x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None):
+    """
+    Returns the dissipation rate computed using the rate-of-strain tensor
+
+    sij: numpy array with shape (nrows, ncols, duration, 2, 2) (dim=2) or (nrows, ncols, nstacks, duration, 3, 3) (dim=3)
+    ... idea is... sij[spacial coordinates, time, tensor indices]
+        e.g.-  sij(x, y, t) can be accessed by sij[y, x, t, i, j]
+    ... sij = d ui / dxj
+    Parameters
+    ----------
+    udata: nd array
+    nu: flaot, viscosity
+    x0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    x1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    y1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t0: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    t1: int
+        index to specify a portion of data in which autocorrelation funciton is computed. Use data u[y0:y1, x0:x1, t0:t1].
+    dx: float
+        spacing in x
+    dy: float
+        spacing in y
+    dz: float
+        spacing in z
+
+    Returns
+    -------
+    epsilon_spatial: numpy array
+        spatio-temporal dissipation rate
+    """
+    udata = fix_udata_shape(udata)
+    dim = len(udata)
+
+    if dim == 2:
+        udata = udata[:, y0:y1, x0:x1, t0:t1]
+    elif dim == 3:
+        if z1 is None:
+            z1 = udata[0].shape[2]
+        udata = udata[:, y0:y1, x0:x1, z0:z1, t0:t1]
+
+    if dx is None:
+        raise ValueError('... dx is None. Provide int or float.')
+    if dy is None:
+        raise ValueError('... dy is None. Provide int or float.')
+    if dim == 3:
+        if dz is None:
+            raise ValueError('... dz is None. Provide int or float.')
+
+    duidxj = get_duidxj_tensor(udata, dx=dx, dy=dy, dz=dz)
+    if dim == 3:
+        sij, tij = decompose_duidxj(duidxj)
+        epsilon_spatial = 2. * nu * np.nansum(sij ** 2, axis=(4, 5))
+    elif dim == 2:
+        # Estimate epsilon from 2D data (assuming isotropy)
+        epsilon_0 = duidxj[..., 0, 0] ** 2
+        epsilon_1 = duidxj[..., 0, 1] ** 2
+        epsilon_2 = duidxj[..., 0, 1] * duidxj[..., 1, 0]
+        epsilon_spatial = 6. * nu * (epsilon_0 + epsilon_1 + epsilon_2)  # Hinze, 1975, eq. 3-98
+    return epsilon_spatial
 
 
 ########## advanced analysis ##########
@@ -3631,7 +3787,7 @@ def get_two_point_vel_corr_roll(ui, x, y, z=None, roll_axis=1, n_bins=None,
 
 def get_two_point_vel_corr(udata, x, y, z=None,
                            x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None,
-                           nd=10 ** 3, nr=70, notebook=True,
+                           nd=10 ** 3, nr=70, rmax=None, notebook=True,
                            periodic=False, **kwargs):
     """
     Returns the normalized two-point velocity tatistics (rrs, fs, f_errs, rrs, gs, g_errs)
@@ -3756,13 +3912,15 @@ def get_two_point_vel_corr(udata, x, y, z=None,
     if dim == 2:
         xmin, xmax, ymin, ymax = np.min(x_grid), np.max(x_grid), np.min(y_grid), np.max(y_grid)
         width, height = xmax - xmin, ymax - ymin
-        rs_ = np.linspace(dx * 2, min([width, height]) * prefactor, nr)
+        if rmax is None: rmax = min([width, height]) * prefactor
+        rs_ = np.linspace(dx*2, rmax, nr)
     elif dim == 3:
         xmin, xmax, ymin, ymax, zmin, zmax = np.min(x_grid), np.max(x_grid), \
                                              np.min(y_grid), np.max(y_grid), \
                                              np.min(z_grid), np.max(z_grid)
         width, height, depth = xmax - xmin, ymax - ymin, zmax - zmin
-        rs_ = np.linspace(dx, min([width, height, depth]) * prefactor, nr)
+        if rmax is None: rmax = min([width, height, depth]) * prefactor
+        rs_ = np.linspace(dx*2, rmax, nr)
     rs = np.empty(nd)
     fs_ = np.empty(nd)
     gs_ = np.empty(nd)
@@ -3770,8 +3928,8 @@ def get_two_point_vel_corr(udata, x, y, z=None,
     denominators_g = np.empty(nd)
 
     uirms = get_characteristic_velocity(udata)
-    for t in tqdm(list(range(t0, t1)), desc='struc. func. time'):
-        for i, r in enumerate(tqdm(rs_, desc='struc. func. r-loop')):
+    for t in tqdm(list(range(t0, t1)), desc='two-pt vel corr: time'):
+        for i, r in enumerate(tqdm(rs_, desc='two-pt vel corr: r-loop')):
             for j in range(nd):
                 if dim == 2:
                     while not is_R1_reasonable:
@@ -6155,7 +6313,9 @@ def get_rescaled_structure_function_saddoughi(p=2):
 
 def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
                         x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, inc=10, notebook=True,
-                        clean=False, cutoff=np.inf, median_filter=False, replace_zeros=True, **kwargs):
+                        reynolds_decomposition=False,
+                        clean=False, cutoff=np.inf, method='nn',
+                        median_filter=False, replace_zeros=True, overwrite_udatam=False,**kwargs):
     """
         (Intended for 3D velocity field data)
     Given a path to a hdf5 file which stores udata,
@@ -6208,7 +6368,16 @@ def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
     # number elements saved in the temporal axis
     n = len(range(t0, t1, inc))
 
-    for i, t in enumerate(tqdm(range(t0, t1, inc))):
+    if reynolds_decomposition:
+        udata_m = read_data_from_h5(udatapath, ['udata_m'])[0]
+        if udata_m is None:
+            udata_m = get_mean_flow_field_using_udatapath(udatapath, t0=t0, t1=t1,
+                                                          x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, verbose=False,
+                                                          clean=clean, cutoff=cutoff, method=method,
+                                                          median_filter=median_filter, replace_zeros=replace_zeros)
+            add_data2udatapath(udatapath, {'udata_m': udata_m}, overwrite=overwrite_udatam)
+
+    for i, t in enumerate(tqdm(range(t0, t1, inc), desc=func.__name__)):
         # load a dummy data
         try:
             udata, xx, yy, zz = get_udata_from_path(udatapath, return_xy=True, t0=t, t1=t + 1,
@@ -6218,6 +6387,8 @@ def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
                                                 x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, verbose=False)
         if clean:
             udata = clean_udata(udata, cutoff=cutoff, verbose=False, median_filter=median_filter,  replace_zeros=replace_zeros, showtqdm=False)
+        if reynolds_decomposition:
+            udata[..., 0] -= udata_m
         if i == 0:
             datalist = []
             result = func(udata, **kwargs)
@@ -6231,21 +6402,27 @@ def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
                     datalist.append(np.empty(shape))
             else:
                 n_output = 1
-                for j in range(n_output):
-                    # initialize a list which will be returned
-                    datalist.append(np.empty(result.shape))
+                shape = list(result.shape)
+                if shape[-1] == 1:
+                    shape[-1] *= n
+                # initialize a list which will be returned
+                datalist.append(np.empty(shape))
+                result = np.asarray([result])
         else:
             result = func(udata, **kwargs)  # compute stuff at t=t
+            if n_output == 1:
+                result = np.asarray([result])
 
         # insert the result to the datalist
         for j in range(n_output):
             if datalist[j].shape[-1] == n:
                 datalist[j][..., i] = result[j][..., 0]
             else:
-                # if i == 0: # this seems unnecessary- why did i do this? 2020/07/01
                 datalist[j] = result[j]
     if notebook:
         from tqdm import tqdm as tqdm
+
+    if len(datalist)==1: datalist=datalist[0]
     return datalist
 
 
@@ -8969,6 +9146,8 @@ def get_center_of_energy(dpath, inc=10, x0=0, x1=None, y0=0, y1=None, z0=0, z1=N
     return center_of_energy
 
 
+
+
 def get_center_of_vorticity(udata, xx, yy, sigma=5, sign='auto',
                             x0=0, x1=None,
                             y0=0, y1=None,
@@ -9023,6 +9202,7 @@ def get_center_of_vorticity(udata, xx, yy, sigma=5, sign='auto',
             omega_blurred[y0:y1, x0:x1])
 
     return centers
+
 
 
 # plotting usual stuff # REQUIRES graph module. Ask Takumi for details or check out takumi's git on immense
@@ -9612,7 +9792,7 @@ def plot_time_avg_enstrophy(udata, xx, yy, x0=0, x1=None, y0=0, y1=None, t0=0, t
 
     Returns
     -------
-
+    fig, ax, cc
     """
     enstrophy = get_enstrophy(udata[:, y0:y1, x0:x1, t0:t1], xx=xx, yy=yy)
     en = np.nanmean(enstrophy, axis=-1)
@@ -9626,21 +9806,24 @@ def plot_spatial_avg_energy(udata, time, x0=0, x1=None, y0=0, y1=None, t0=0, t1=
                             ylabel='$\\frac{1}{2} \langle U_i U_i\\rangle~(mm^2/s^2)$',
                             xlabel='$t~(s)$', xmin=None, xmax=None, ymin=None, ymax=None, **kwargs):
     """
+    Plots spatially averaged energy vs time
+    ... <0.5 ux^2 + uy^2 + uz^2>_space
 
     Parameters
     ----------
-    udata
-    xx
-    yy
-    x0
-    x1
-    y0
-    y1
-    t0
-    t1
+    udata: nd array- velocity field data
+    xx: 2d array- positional grids (x-coordinate)
+    yy: 2d array- positional grids (y-coordinate)
+    x0: int, xx[y0:y1, x0:x1] will be plotted
+    x1: int, xx[y0:y1, x0:x1] will be plotted
+    y0: int, xx[y0:y1, x0:x1] will be plotted
+    y1: int, xx[y0:y1, x0:x1] will be plotted
+    t0: int, This function considers udata[..., t0:t1]
+    t1: int, This function considers udata[..., t0:t1]
 
     Returns
     -------
+    fig, ax
 
     """
     energy = get_energy(udata[:, y0:y1, x0:x1, t0:t1])
@@ -10906,6 +11089,24 @@ def fix_udata_shape(udata):
             uz = uz.reshape((uz.shape[0], uz.shape[1], uz.shape[2], duration))
             return np.stack((ux, uy, uz))
 
+def get_speed(udata):
+    """Returns speed from udata"""
+    speed = np.zeros_like(udata[0, ...])
+    dim = udata.shape[0]
+    for d in range(dim):
+        speed += udata[d, ...] ** 2
+    speed = np.sqrt(speed)
+    return speed
+
+def normalize_udata(udata):
+    norm_udata = np.zeros_like(udata)
+    dim = udata.shape[0]
+    speed = get_speed(udata)
+    for d in range(dim):
+        norm_udata[d, ...] = udata[d, ...] / speed
+        norm_udata[d, speed==0] = 0
+    norm_udata[np.isnan(udata)] = 0
+    return norm_udata
 
 def expand_dim(arr):
     """
@@ -11256,6 +11457,29 @@ def cart2sph_velocity(ux, uy, uz, xx, yy, zz, xc=0, yc=0, zc=0):
     uphi = (yy_tmp * ux - xx_tmp * uy) / (Rxy ** 2)
     return ur, utheta, uphi
 
+def sph2cart_velocity(ur, utheta, uphi, ttheta, pphi):
+    """
+    Returns velocity in the spherical basis
+    when a velocity vector in cartesian coordinates is given
+
+    z = r cos theta
+    y = r sin theta sin phi
+    x = r sin theta cos phi
+
+    Spherical coorrdinates:
+    (r, theta, phi) = (radial distance, polar angle, azimuthal angle)
+    r: radius
+    theta: polar angle [-pi/2, pi/2] (angle from the z-axis)
+    phi: azimuthal angle [-pi, pi] (angle on the x-y plane)
+
+    http://www.astrosurf.com/jephem/library/li110spherCart_en.htm
+    """
+    st, ct = np.sin(ttheta), np.cos(ttheta)
+    sp, cp = np.sin(pphi), np.cos(pphi)
+    ux = ur * st * cp + utheta * ct * cp - uphi * sp
+    uy = ur * st * sp + utheta * ct * sp + uphi * cp
+    uz = ur * ct - utheta * st
+    return ux, uy, uz
 
 def sph2cart(r, theta, phi, xc=0, yc=0, zc=0):
     """
@@ -12566,6 +12790,79 @@ def is_data_derived(savepath, datanames, verbose=False, mode=None):
         fyle.close()
     return result
 
+def run_vel_statistics(dpath, inc=1, overwrite=False, time=None, t0=0, t1=None):
+    def compute_pdf(data, nbins=100, vmin=None, vmax=None):
+        """Get a normalized histogram"""
+        data = np.asarray(data)
+
+        # Use data where values are between vmin and vmax
+        if vmax is not None:
+            cond1 = np.asarray(
+                data) < vmax  # if nan exists in data, the condition always gives False for that data point
+        else:
+            cond1 = np.ones(data.shape, dtype=bool)
+        if vmin is not None:
+            cond2 = np.asarray(data) > vmin
+        else:
+            cond2 = np.ones(data.shape, dtype=bool)
+        data = data[cond1 * cond2]
+
+        # exclude nans from statistics
+        pdf, bins = np.histogram(data.flatten()[~np.isnan(data.flatten())], bins=nbins, density=True)
+        # len(bins) = len(hist) + 1
+        # Get middle points for plotting sake.
+        bins1 = np.roll(bins, 1)
+        bins = (bins1 + bins) / 2.
+        bins = np.delete(bins, 0)
+        return bins, pdf
+
+    def compute_cdf(data, nbins=100):
+        """compute cummulative probability distribution of data"""
+        bins, pdf = compute_pdf(data, nbins=nbins)
+        cdf = np.cumsum(pdf) * np.diff(bins, prepend=0)
+        return bins, cdf
+
+    # If one wants to compute time-avg data between [t0, t1], then save then under /grpname/datanames
+    if not (t0 == 0 and t1 is None):
+        t1 = get_udata_dim(dpath)[-1]
+        grpname = 't0_%05d_t1_%05d' % (t0, t1)
+    else:
+        grpname = None
+
+    with h5py.File(dpath, mode='a') as f:
+        if not (t0==0 and t1 is None):
+            if not grpname in f.keys():
+                grp = f.create_group('/%s/' % grpname)
+            keys = [key for key in f[grpname].keys()]
+        else:
+            keys = [key for key in f.keys()]
+    if not all([target in keys for target in ['x0', 'x1', 'y0', 'y1', 'z0', 'z1']]) or overwrite:
+        x0, x1, y0, y1, z0, z1 = suggest_udata_dim2load(dpath, show=False, return_tuple=True, return_None=False)
+        datadict = {'x0': x0, 'x1': x1, 'y0': y0, 'y1': y1, 'z0': z0, 'z1': z1}
+        add_data2udatapath(dpath, datadict, overwrite=overwrite, grpname=grpname)
+    else:
+        x0, x1, y0, y1, z0, z1 = read_data_from_h5(dpath, ['x0', 'x1', 'y0', 'y1', 'z0', 'z1'])
+
+    # Velocity statistics
+    if not all(
+            [target in keys for target in ['abs_ui_median', 'abs_ui_avg', 'abs_ui_99', 'abs_ui_99p9', 'u_cutoff']]) or overwrite:
+        udata, xx, yy = get_udata_from_path(dpath, inc=100, return_xy=True, t0=t0, t1=t1)  # sample udata
+        abs_ui_median, abs_ui_avg = np.nanmedian(np.abs(udata)), np.nanmean(np.abs(udata))
+        # bins, pdf = compute_pdf(np.abs(udata))
+        bins, cdf = compute_cdf(np.abs(udata))
+        u_cutoff = bins[find_nearest(cdf, 0.999)[0]] # set u_cutoff at which only 0.1% will be rejected
+        datadict = {'abs_ui_median': abs_ui_median,
+                    'abs_ui_avg': abs_ui_avg,
+                    'abs_ui_99': bins[find_nearest(cdf, 0.99)[0]],
+                    # 99% of velocity component is less than this value
+                    'abs_ui_99p9': bins[find_nearest(cdf, 0.999)[0]],
+                    # 99.9% of velocity component is less than this value
+                    'u_cutoff': u_cutoff,  # suggested value for u_cutoff for clean
+                    }
+        add_data2udatapath(dpath, datadict, overwrite=overwrite, grpname=grpname)
+    else:
+        u_cutoff = read_data_from_h5(dpath, ['u_cutoff'])
+
 def default_analysis_piv(dpath, inc=1, overwrite=False, time=None, t0=0, t1=None):
     """
     A function which add some basic results
@@ -12689,6 +12986,13 @@ def default_analysis_piv(dpath, inc=1, overwrite=False, time=None, t0=0, t1=None
         etavg, esavg = read_data_from_h5(dpath, ['etavg', 'esavg'])
         enst_tavg, enst_savg = read_data_from_h5(dpath, ['enst_tavg', 'enst_savg'])
 
+    # mean flow
+    if not 'udata_m' in keys or overwrite:
+        udata_m = get_mean_flow_field_using_udatapath(dpath, inc=inc, t0=t0, t1=t1,
+                                            clean=True, cutoff=np.inf, method='nn', median_filter=False, verbose=False,
+                                            notebook=True)
+        add_data2udatapath(dpath, {'udata_m': udata_m}, overwrite=overwrite, grpname=grpname)
+
     # Radial profile
     if not all([target in keys for target in ['r_energy', 'eTimeThetaPhi_avg', 'eTimeThetaPhi_avg_err', 'r_blob_e']]) or overwrite:
         udata, xx, yy = get_udata_from_path(dpath, t0=0, t1=1, return_xy=True)  # sample udata
@@ -12702,8 +13006,8 @@ def default_analysis_piv(dpath, inc=1, overwrite=False, time=None, t0=0, t1=None
                     'r_enstrophy': radial_dist_enst,  # radial distance for "enstTimeThetaPhi_avg"
                     'enstTimeThetaPhi_avg': enstTimeThetaPhi_avg, # radial enstrophy profile (averaged over polar and azimuthal angles
                     'enstTimeThetaPhi_avg_err': enstTimeThetaPhi_avg_err,  # standard error of enstTimeThetaPhi_avg
-                    'r_blob_e': np.trapz(radial_dist * eTimeThetaPhi_avg, x=radial_dist) / np.trapz(eTimeThetaPhi_avg, x=radial_dist),
-                    'r_blob_enst': np.trapz(radial_dist_enst * enstTimeThetaPhi_avg, x=radial_dist_enst) / np.trapz(enstTimeThetaPhi_avg, x=radial_dist_enst),
+                    'r_blob_e': np.trapz(radial_dist**3 * eTimeThetaPhi_avg, x=radial_dist) / np.trapz(radial_dist**2*eTimeThetaPhi_avg, x=radial_dist),
+                    'r_blob_enst': np.trapz(radial_dist_enst**3 * enstTimeThetaPhi_avg, x=radial_dist_enst) / np.trapz(radial_dist**2*enstTimeThetaPhi_avg, x=radial_dist_enst),
                     }
         add_data2udatapath(dpath, datadict, overwrite=overwrite, grpname=grpname)
     # else:
@@ -14332,6 +14636,9 @@ def estimate_veff(sl, sv):
                         425.65185384290123,  683.6223751807265]
     points = np.dstack((sl_cmd, vp_cmd_sorted))[0, ...]
     veff = interpolate.griddata(points, veff_data_sorted, pts2estimate)# stroke length, commanded_velocity
+
+    if len(veff)==1:
+        veff = veff[0]
     return veff
 
 
@@ -17218,15 +17525,15 @@ def resample(x, y, n=100, mode='linear'):
                 keep = [True] * len(x)
             else:
                 keep = x > 0  # ignore data points s.t. x < 0
-                xmin = np.nanmin(x[keep])
-                logx = np.log10(x[keep])
-                logxmin, logxmax = np.log10(xmin), np.log10(xmax)
-                logx_new = np.linspace(logxmin, logxmax, n, endpoint=True)
-                x_new = 10 ** logx_new
-                flog = interpolate.interp1d(logx, y[keep])
-                y_rs = flog(logx_new)
-                #                 y_rs = scipy.signal.resample(y[keep], n)
-                return x_new, y_rs
+            xmin = np.nanmin(x[keep])
+            logx = np.log10(x[keep])
+            logxmin, logxmax = np.log10(xmin), np.log10(xmax)
+            logx_new = np.linspace(logxmin, logxmax, n, endpoint=True)
+            x_new = 10 ** logx_new
+            flog = interpolate.interp1d(logx, y[keep])
+            y_rs = flog(logx_new)
+            #                 y_rs = scipy.signal.resample(y[keep], n)
+            return x_new, y_rs
     else:
         x_new = np.linspace(xmin, xmax, n, endpoint=True)
         #         y_rs = scipy.signal.resample(y, n)
@@ -17235,6 +17542,36 @@ def resample(x, y, n=100, mode='linear'):
 
         return x_new, y_rs
 
+
+def resample2d(x, ys, n=100, mode='linear', return_x_in_2d=False):
+    """
+    Resample x, y
+    ... this is particularly useful to crete a evenly spaced data in log from a linearly spaced data, and vice versa
+
+    Parameters
+    ----------
+    x: 1d array
+    ys: 2d array
+    n: int, number of points to resample
+    mode: str, options are "linear" and "log"
+
+    Returns
+    -------
+    x_new, y_rs: 1d arrays of new x and new y
+    """
+    x, ys = np.array(x), np.array(ys) # np.array creates a new object unlike np.asarray
+    _, duration = ys.shape
+    new_shape = (n, duration)
+    x_resampled = np.empty(new_shape)
+    y_resampled = np.empty(new_shape)
+
+    for t in range(duration):
+        y = ys[:, t]
+        x_resampled[:, t], y_resampled[:, t] = resample(x, y, n=n, mode=mode)
+    if return_x_in_2d:
+        return x_resampled, y_resampled
+    else:
+        return x_resampled[:, 0], y_resampled
 
 # IMAGE ANALYSIS
 import cv2, math

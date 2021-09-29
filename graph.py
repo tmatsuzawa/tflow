@@ -64,12 +64,18 @@ params = {'figure.figsize': __figsize__,
 ## Save a figure
 def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, overwrite=True, tight_layout=False,
          savedata=True, transparent=True, bkgcolor='w', **kwargs):
-    """Save a figure from pyplot
+    """
+    Save a figure from pyplot
+
     Parameters
     ----------
-    path : string
+    path: string
         The path (and filename, without the extension) to save the
         figure to.
+    ext: string (default='png')
+        The file extension. This must be supported by the active
+        matplotlib backend (see matplotlib.backends module).  Most
+        backends support 'png', 'pdf', 'ps', 'eps', and 'svg'.
     ext : string (default='png')
         The file extension. This must be supported by the active
         matplotlib backend (see matplotlib.backends module).  Most
@@ -82,6 +88,18 @@ def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, over
     verbose : boolean (default=True)
         Whether to print information about when and where the image
         has been saved.
+    fignum
+    dpi
+    overwrite
+    tight_layout
+    savedata
+    transparent
+    bkgcolor
+    kwargs
+
+    Returns
+    -------
+
     """
     if fignum == None:
         fig = plt.gcf()
@@ -2049,9 +2067,12 @@ def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
     return fig, ax, Q
 
 
-def quiver3d(udata, normalize=False, mag=1, inc=1, xinc=None, yinc=None, zinc=None, vmin=0, vmax=None,
-             add_bounding_box=True,
-             save=False, savepath='./vectorfield.png', verbose=True):
+def quiver3d(udata, normalize=False, mag=1, inc=1, xinc=None, yinc=None, zinc=None,
+             umin=0, umax=None, # data range to show quiver
+             vmin=0, vmax=None, # colorbar range
+             add_bounding_box=True, notebook=True,
+             show=True,
+             save=False, savepath='./vectorfield.png', verbose=True, **kwargs):
     """
     3D Quiver plot using pyvista
 
@@ -2079,8 +2100,53 @@ def quiver3d(udata, normalize=False, mag=1, inc=1, xinc=None, yinc=None, zinc=No
 
     """
     import pyvista
+    if notebook:
+        pyvista.set_jupyter_backend('ipygany')
+
+    def fix_udata_shape(udata):
+        """
+        It is better to always have udata with shape (height, width, depth, duration) (3D) or  (height, width, duration) (2D)
+        This method fixes the shape of udata whose shape is (height, width, depth) or (height, width)
+
+        Parameters
+        ----------
+        udata: nd array,
+              ... with shape (height, width, depth) (3D) or  (height, width, duration) (2D)
+              ... OR shape (height, width, depth, duration) (3D) or  (height, width, duration) (2D)
+
+        Returns
+        -------
+        udata: nd array, with shape (height, width, depth, duration) (3D) or  (height, width, duration) (2D)
+
+        """
+        shape = udata.shape  # shape=(dim, nrows, ncols, nstacks) if nstacks=0, shape=(dim, nrows, ncols)
+        if shape[0] == 2:
+            ux, uy = udata[0, ...], udata[1, ...]
+            try:
+                dim, nrows, ncols, duration = udata.shape
+                return udata
+            except:
+                dim, nrows, ncols = udata.shape
+                duration = 1
+                ux = ux.reshape((ux.shape[0], ux.shape[1], duration))
+                uy = uy.reshape((uy.shape[0], uy.shape[1], duration))
+                return np.stack((ux, uy))
+
+        elif shape[0] == 3:
+            dim = 3
+            ux, uy, uz = udata[0, ...], udata[1, ...], udata[2, ...]
+            try:
+                nrows, ncols, nstacks, duration = ux.shape
+                return udata
+            except:
+                nrows, ncols, nstacks = ux.shape
+                duration = 1
+                ux = ux.reshape((ux.shape[0], ux.shape[1], ux.shape[2], duration))
+                uy = uy.reshape((uy.shape[0], uy.shape[1], uy.shape[2], duration))
+                uz = uz.reshape((uz.shape[0], uz.shape[1], uz.shape[2], duration))
+                return np.stack((ux, uy, uz))
     def compute_direction_from_udata(udata, normalize=False, t=0):
-        udata = vel.fix_udata_shape(udata)
+        udata = fix_udata_shape(udata)
         dim, height, width, depth, duration = udata.shape
         ux, uy, uz = udata[0, ..., t].ravel('F'), udata[1, ..., t].ravel('F'), udata[2, ..., t].ravel('F')
         umag = np.sqrt(ux ** 2 + uy ** 2 + uz ** 2)
@@ -2093,9 +2159,20 @@ def quiver3d(udata, normalize=False, mag=1, inc=1, xinc=None, yinc=None, zinc=No
             direction[:, 0] = ux
             direction[:, 1] = uy
             direction[:, 2] = uz
+        direction[np.isnan(direction)] = 0
+        direction[umag==0, :] = 0
         return direction
 
-    udata = vel.fix_udata_shape(udata)
+    def get_speed(udata):
+        """Returns speed from udata"""
+        speed = np.zeros_like(udata[0, ...])
+        dim = udata.shape[0]
+        for d in range(dim):
+            speed += udata[d, ...] ** 2
+        speed = np.sqrt(speed)
+        return speed
+
+    udata = fix_udata_shape(udata)
     dim, height, width, depth, duration = udata.shape
 
     # set up coordinates
@@ -2113,28 +2190,36 @@ def quiver3d(udata, normalize=False, mag=1, inc=1, xinc=None, yinc=None, zinc=No
     points[:, 1] = y.ravel('F')
     points[:, 2] = z.ravel('F')
 
-    # range
+    # data range [umin, umax]
+    if umin!=0 or umax is not None:
+        speed = get_speed(udata)
+        keep = np.logical_and(umin <= speed, speed <= umax)
+        for d in range(udata.shape[0]):
+            udata[d, ~keep] = 0
+    # color bar range
     if vmax is None:
         vmax = np.nanmax(udata) * mag
 
     # Compute a direction for the vector field
     direction = compute_direction_from_udata(udata, normalize=normalize)
-
     # plot using the plotting class
     plobj = pyvista.Plotter()
-    a = plobj.add_arrows(points, direction, mag=mag)
+
+    a = plobj.add_arrows(points, direction, mag=mag, **kwargs)
     plobj.update_scalar_bar_range([vmin, vmax])
     if add_bounding_box:
         plobj.add_bounding_box()
-    if not save:
+    if not save and show:
         plobj.show()
     else:
         savedir = os.path.split(savepath)[0]
         if not os.path.exists(savedir):
             os.makedirs(savedir)
-        plobj.show(screenshot=savepath)
+        if show:
+            plobj.show(screenshot=savepath)
         if verbose:
             print('... A vector field image was saved at ', savepath)
+    return plobj, a
 
 # streamlines
 def streamplot(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None, density=[1., 1.],
@@ -3466,9 +3551,6 @@ def get_first_n_default_colors(n):
     return __def_colors__[:n]
 
 
-#
-
-
 def apply_custom_cyclers(ax, color=['r', 'b', 'g', 'y'], linestyle=['-', '-', '-', '-'], linewidth=[3, 3, 3, 3],
                          marker=['o', 'o', 'o', 'o'], s=[0,0,0,0], **kwargs):
 
@@ -3558,7 +3640,7 @@ def get_colors_and_cmap_using_values(values, cmap=None, color1='greenyellow', co
     colors = cmap(norm(values))
     return colors, cmap, norm
 
-def get_color_list_gradient(color1='greenyellow', color2='darkgreen', color3=None, n=10):
+def get_color_list_gradient(color1='greenyellow', color2='darkgreen', color3=None, n=100, return_cmap=False):
     """
     Returns a list of colors in RGB between color1 and color2
     Input (color1 and color2) can be RGB or color names set by matplotlib
@@ -3611,9 +3693,13 @@ def get_color_list_gradient(color1='greenyellow', color2='darkgreen', color3=Non
         b2 = np.linspace(color2_rgb[2], color3_rgb[2], n-n_middle)
         color_list2 = list(zip(r2, g2, b2))
         color_list = color_list1 + color_list2
-    return color_list
+    if return_cmap:
+        cmap = create_cmap_using_values(colors=color_list, n=n)
+        return color_list, cmap
+    else:
+        return color_list
 
-def get_color_from_cmap(cmap='viridis', n=10, lut=None):
+def get_color_from_cmap(cmap='viridis', n=10, lut=None, reverse=False):
     """
     A simple function which returns a list of RGBA values from a cmap (evenly spaced)
     ... If one desires to assign a color based on values, use get_colors_and_cmap_using_values()
@@ -3632,6 +3718,8 @@ def get_color_from_cmap(cmap='viridis', n=10, lut=None):
 
     """
     cmap = mpl.cm.get_cmap(cmap, lut)
+    if reverse:
+        cmap = cmap.reversed()
     colors = cmap(np.linspace(0, 1, n, endpoint=True))
     return colors
 
@@ -3696,7 +3784,7 @@ def set_default_color_cycle(name='tab10', n=10, colors=None):
         colors = sns.color_palette(name, n_colors=n)
     sns.set_palette(colors)
 
-def set_color_cycle(cmapname, ax=None, n=10, colors=None):
+def set_color_cycle(cmapname='tab10', ax=None, n=10, colors=None):
     """
     Sets a color cycle of a particular Axes instance
 
