@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.pylab as pylab
 import matplotlib.ticker as ticker
-import mpl_toolkits.axes_grid as axes_grid
+import mpl_toolkits.axes_grid1 as axes_grid
 from matplotlib.lines import Line2D
 import matplotlib.lines as mlines
 from mpl_toolkits.mplot3d import Axes3D
@@ -58,7 +58,7 @@ params = {'figure.figsize': __figsize__,
          'axes.titlesize': __fontsize__,
          'xtick.labelsize': __fontsize__, # tick
          'ytick.labelsize': __fontsize__,
-          'lines.linewidth': 5}
+          'lines.linewidth': 3}
 
 
 ## Save a figure
@@ -210,7 +210,7 @@ def set_fig(fignum, subplot=111, dpi=100, figsize=None,
     # <matplotlib 3.4: fig.add_subplot() returns an existing Axes instance if it existed
     # ax = fig.add_subplot(subplot, **kwargs, )
     # >matplotlib 3.4 plt.suplot() continues to reuse an existing Axes with a matching subplot spec and equal kwargs.
-    ax = plt.subplot(subplot, **kwargs, )
+    ax = plt.subplot(subplot, **kwargs)
 
     if custom_cycler:
         apply_custom_cyclers(ax, **custom_cycler_dict)
@@ -336,7 +336,7 @@ def plot_multicolor(x, y=None, colored_by=None, cmap='viridis',
                     fignum=1, figsize=None,
                     subplot=None,
                     fig=None, ax=None, maskon=False, thd=1,
-                    linewidth=2, vmin=None, vmax=None, **kwargs):
+                    linewidth=2, vmin=None, vmax=None, verbose=True, **kwargs):
     """
     plot a graph using given x,y
     fignum can be specified
@@ -356,6 +356,8 @@ def plot_multicolor(x, y=None, colored_by=None, cmap='viridis',
         fig = plt.gcf()
     elif ax is None:
         ax = plt.gca()
+    xminOrg, xmaxOrg = ax.get_xlim()
+    yminOrg, ymaxOrg = ax.get_ylim()
 
     if y is None:
         y = copy.deepcopy(x)
@@ -364,14 +366,17 @@ def plot_multicolor(x, y=None, colored_by=None, cmap='viridis',
     x, y = np.asarray(x), np.asarray(y)
 
     if colored_by is None:
-        print('... colored_by is None. Pass a list/array by which line segments are colored. Using x instead...')
+        if verbose:
+            print('... colored_by is None. Pass a list/array by which line segments are colored. Using x instead...')
         colored_by = x
 
     if len(x) > len(y):
-        print("Warning : x and y data do not have the same length")
+        if verbose:
+            print("Warning : x and y data do not have the same length")
         x = x[:len(y)]
     elif len(y) > len(x):
-        print("Warning : x and y data do not have the same length")
+        if verbose:
+            print("Warning : x and y data do not have the same length")
         y = y[:len(x)]
     if maskon:
         mask = get_mask4erroneous_pts(x, y, thd=thd)
@@ -395,8 +400,8 @@ def plot_multicolor(x, y=None, colored_by=None, cmap='viridis',
     line = ax.add_collection(lc)
 
     # autoscale does not work for collection => manually set x/y limits
-    ax.set_xlim(x.min(), x.max())
-    ax.set_ylim(y.min(), y.max())
+    ax.set_xlim(min(xminOrg, x.min()), max(xmaxOrg, x.max()))
+    ax.set_ylim(min(yminOrg, y.min()), max(ymaxOrg, y.max()))
 
     return fig, ax
 
@@ -551,7 +556,7 @@ def plot_with_arrows(x, y=None, fignum=1, figsize=None, label='', color=None, su
 
 
 def plot3d(x, y, z, fignum=1, figsize=None, label='', color=None, subplot=None, fig=None,
-           ax=None, labelaxes=True, **kwargs):
+           ax=None, labelaxes=True, aspect='auto', **kwargs):
     """
     plot a 3D graph using given x, y, z
     """
@@ -579,8 +584,8 @@ def plot3d(x, y, z, fignum=1, figsize=None, label='', color=None, subplot=None, 
         ax.set_xlabel('x (mm)')
         ax.set_ylabel('y (mm)')
         ax.set_zlabel('z (mm)')
-
-    set_axes_equal(ax)
+    if aspect=='equal':
+        set_axes_equal(ax)
     return fig, ax
 
 
@@ -1576,8 +1581,8 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
     """
     if ax is None:
         fig, ax = set_fig(fignum, subplot, figsize=figsize)
-    xdata = np.array(xdata)
-    ydata = np.array(ydata)
+    xdata = np.array(xdata).squeeze()
+    ydata = np.array(ydata).squeeze()
 
     if len(xdata) != len(ydata):
         print('x and y have different length! Data will be clipped... %d, %d' % (len(xdata), len(ydata)))
@@ -1600,7 +1605,7 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
     if xmax is None:
         xmax = np.nanmax(xdata)
 
-    if maskon:
+    if maskon and func!='power2':
         mask = get_mask4erroneous_pts(xdata, ydata, thd=thd)
         if any(mask):
             xdata = xdata[mask]
@@ -1620,7 +1625,10 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
 
         if add_equation:
             text = '$y=ax+b$: a=%.2f, b=%.2f' % (popt[0], popt[1])
-            addtext(ax, text, option=eq_loc)
+            try:
+                addtext(ax, text, option=eq_loc)
+            except:
+                pass
         y_fit = std_func.linear_func(xdata, *popt)
     elif func == 'power':
         print('Fitting to a power law...')
@@ -1635,7 +1643,10 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
 
         if add_equation:
             text = '$y=ax^b$: a=%.2f, b=%.2f' % (popt[0], popt[1])
-            addtext(ax, text, option=eq_loc)
+            try:
+                addtext(ax, text, option=eq_loc)
+            except:
+                pass
         y_fit = std_func.power_func(xdata, *popt)
     elif func == 'power2':
         print('Fitting to a linear function to the log-log plot')
@@ -1646,7 +1657,6 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
 
         y_fit = np.exp(popt[1]) * x_for_plot ** popt[0]
 
-        # plot(x_for_plot, y_fit, fignum=fignum)
         if color is None:
             fig, ax = plot(x_for_plot, y_fit, fignum=fignum, subplot=subplot,
             label = label, figsize = figsize, linestyle = linestyle, ax = ax, ** kwargs)
@@ -1656,7 +1666,10 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
 
         if add_equation:
             text = '$y=ax^b$: a=%.2f, b=%.2f' % (np.exp(popt[1]) , popt[0])
-            addtext(ax, text, option=eq_loc)
+            try:
+                addtext(ax, text, option=eq_loc)
+            except:
+                pass
     else:
         popt, pcov = curve_fit(func, xdata, ydata, p0=p0, bounds=bounds)
         if color is None:
@@ -2407,11 +2420,21 @@ def axhline(ax, y, x0=None, x1=None, color='black', linestyle='--', linewidth=1,
     """
     if x0 is not None:
         xmin, xmax = ax.get_xlim()
-        xmin_frac, xmax_frac = x0 / float(xmax), x1 / float(xmax)
+        x1 = xmax
+    elif x1 is not None:
+        xmin, xmax = ax.get_xlim()
+        x0 = xmin
+    if x0 is not None or x1 is not None:
+        if ax.get_xscale()=='linear':
+            xmin_frac, xmax_frac = (x0-float(xmin)) / (float(xmax)-float(xmin)), (x1-float(xmin)) / (float(xmax)-float(xmin))
+        if ax.get_xscale()=='log':
+            xmin, xmax = np.log(xmin), np.log(xmax)
+            x0, x1 = np.log(x0), np.log(x1)
+            xmin_frac, xmax_frac = (x0 - xmin) / (xmax - xmin), (x1 - xmin) / (xmax - xmin)
     else:
         xmin_frac, xmax_frac= 0, 1
-    ax.axhline(y, xmin_frac, xmax_frac, color=color, linestyle=linestyle, linewidth=linewidth, zorder=zorder, **kwargs)
-
+    handle = ax.axhline(y, xmin_frac, xmax_frac, color=color, linestyle=linestyle, linewidth=linewidth, zorder=zorder, **kwargs)
+    return handle
 def axvline(ax, x, y0=None, y1=None,  color='black', linestyle='--', linewidth=1, zorder=0, **kwargs):
     """
     Draw a vertical line at x=x from ymin to ymax
@@ -2429,9 +2452,9 @@ def axvline(ax, x, y0=None, y1=None,  color='black', linestyle='--', linewidth=1
         ymin_frac, ymax_frac = y0 / float(ymax), y1 / float(ymax)
     else:
         ymin_frac, ymax_frac= 0, 1
-    ax.axvline(x, ymin_frac, ymax_frac, color=color, linestyle=linestyle, linewidth=linewidth,  zorder=zorder,
+    handle = ax.axvline(x, ymin_frac, ymax_frac, color=color, linestyle=linestyle, linewidth=linewidth,  zorder=zorder,
                **kwargs)
-
+    return handle
 ## Bands
 def axhband(ax, y0, y1, x0=None, x1=None, color='C1', alpha=0.2, **kwargs):
     """
@@ -3508,7 +3531,7 @@ def draw_power_triangle(ax, x, y, exponent, w=None, h=None, facecolor='none', ed
         x_height, y_height = 10 ** (exp_x - (exp_xmax - exp_xmin) / beta), 10 ** (exp_y + exp_h * 0.5)
     else:
         x_base, y_base = 10 ** (exp_x + exp_w * 0.5), 10 ** (exp_y + exp_h - (exp_ymax - exp_ymin) / beta)
-        x_height, y_height = 10 ** (exp_x - (exp_xmax - exp_xmin) / beta), 10 ** (exp_y + exp_h * 0.6)
+        x_height, y_height = 10 ** (exp_x - 0.6*(exp_xmax - exp_xmin) / beta), 10 ** (exp_y + exp_h * 0.6)
 
 
     if set_base_label_one:
@@ -3723,6 +3746,11 @@ def get_color_from_cmap(cmap='viridis', n=10, lut=None, reverse=False):
     colors = cmap(np.linspace(0, 1, n, endpoint=True))
     return colors
 
+def choose_colors(**kwargs):
+    """sns.choose_cubehelix_palette()"""
+    colors = sns.choose_cubehelix_palettee(**kwargs)
+    return colors
+
 def hex2rgb(hex):
     """
     Converts a HEX code to RGB in a numpy array
@@ -3758,7 +3786,7 @@ def cname2hex(cname):
         print(cname, ' is not registered as default colors by matplotlib!')
         return None
 
-def set_default_color_cycle(name='tab10', n=10, colors=None):
+def set_default_color_cycle(name='tab10', n=10, colors=None, reverse=False):
     """
     Sets a color cycle for plotting
 
@@ -3782,6 +3810,8 @@ def set_default_color_cycle(name='tab10', n=10, colors=None):
     """
     if colors is None:
         colors = sns.color_palette(name, n_colors=n)
+        if reverse:
+            colors.reverse()
     sns.set_palette(colors)
 
 def set_color_cycle(cmapname='tab10', ax=None, n=10, colors=None):
@@ -3844,13 +3874,14 @@ def update_figure_params(params):
                     'axes.titlesize':'x-large',
                     'xtick.labelsize':'x-large',
                     'ytick.labelsize':'x-large'}
+    ... pylab.rcParams.update(params)
     Parameters
     ----------
     params: dictionary
 
     Returns
     -------
-
+    None
     """
     pylab.rcParams.update(params)
 
@@ -4827,15 +4858,17 @@ def make_ticks_scientific(ax):
     ax.ticklabel_format(style='sci', scilimits=(0, 0))
 
 
-def color_axis(ax, locs=['bottom', 'top', 'left'], colors=['t', 'r', 'b', 'g'],
+def color_axis(ax, locs=['bottom', 'left', 'right'], colors=['k', 'C0', 'C1'],
                xlabel_color=None, ylabel_color=None,
                xtick_color=None, ytick_color=None):
     for loc, color in zip(locs, colors):
         ax.spines[loc].set_color(color)
         if loc in ['top', 'bottom'] and xlabel_color is None:
             xlabel_color = color
+            if xlabel_color is None: xlabel_color = 'k'
         elif loc in ['right', 'left'] and ylabel_color is None:
             ylabel_color = color
+
     if xlabel_color is None: xlabel_color = 'k'
     if ylabel_color is None: ylabel_color = 'k'
 
@@ -4847,6 +4880,8 @@ def color_axis(ax, locs=['bottom', 'top', 'left'], colors=['t', 'r', 'b', 'g'],
     ax.tick_params(axis='x', colors=xtick_color)
     ax.xaxis.label.set_color(xlabel_color)
     ax.tick_params(axis='y', colors=ytick_color)
+
+
 
 
 def smooth(x, window_len=11, window='hanning', log=False):

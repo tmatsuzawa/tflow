@@ -32,7 +32,7 @@ try:
     bezier_installed = True
 except:
     bezier_installed = False
-    print('velocity module: bezier is missing iny our environment. Run setup.py or pip install bezier')
+    print('velocity module: bezier is missing in a current environment. pip install bezier')
 
 path_mod = os.path.abspath(__file__)
 moddirpath = os.path.dirname(path_mod)
@@ -536,6 +536,12 @@ def get_energy(udata):
     for d in range(dim):
         energy += udata[d, ...] ** 2
     energy /= 2.
+
+    if type(udata)==np.ma.core.MaskedArray:
+        mask = udata.mask
+        energy = np.ma.masked_array(energy, mask=mask[1:])
+        energy = energy.filled(np.nan)
+        # energy = energy.data
     return energy
 
 
@@ -3069,7 +3075,7 @@ def get_epsilon_using_diss_spectrum(udata, nu=1.0034, x0=0, x1=None,
     return epsilon
 
 
-def get_epsilon_using_struc_func(rrs, Dxxs, epsilon_guess=100000, r0=1.0, r1=10.0, p=2, method='Nelder-Mead'):
+def get_epsilon_using_struc_func_old(rrs, Dxxs, epsilon_guess=100000, r0=1.0, r1=10.0, p=2, method='Nelder-Mead'):
     """
     Returns the values of estimated dissipation rate using a long. structure function
 
@@ -3096,7 +3102,7 @@ def get_epsilon_using_struc_func(rrs, Dxxs, epsilon_guess=100000, r0=1.0, r1=10.
     epsilons: numpy array
         estimated dissipation rate
     """
-
+    print('... DEPRICATED- use get_dissipation_rate_using_struc_func(dll, r_dll, c=2.1, p=2, n=5)')
     def find_nearest(array, value, option='normal'):
         """
         Find an element and its index closest to 'value' in 'array'
@@ -3163,90 +3169,169 @@ def get_epsilon_using_struc_func(rrs, Dxxs, epsilon_guess=100000, r0=1.0, r1=10.
     return epsilons
 
 
-def get_epsilon_from_spectrum(udata, dx=1., dy=1.,
-                              x0=0, x1=None, y0=0, y1=None,
-                              window=None,
-                              epsilon_range=(2, 7), n=51,
-                              nu=1.004, kMaxInd=None,
-                              plot=False, t0=0
-                              ):
+def get_epsilon_using_struc_func(dll, r_dll, c=2.1, p=2., n=5):
     """
-
-    Estimates dissipation rate by comparing the 1D spectrum to the master curve in Saddoughi&Veeravalli 1994
+    Estimates dissipation rate based on the plateau of the rescaled structure funciton
+    ... Structure function D = c(epsilon r)^{p/3} in the inertial subrage, ignoring the intermittency correction
+        Let f be f(r)=(D/c)^{3/p} / r.
+        Then, f(r)= epsilon where r is in the inertial subrange. This is essentially the value at the plateau.
+        ... This function grabs the n largest values of f(r), and considers its average as a dissipation rate.
 
     Parameters
     ----------
-    udata
-    dx
-    dy
-    x0
-    x1
-    y0
-    y1
-    epsilon_range
-    n
-    nu
-    kMaxInd:
-    plotResults
+    dll: nd array with shape (m, duration)
+        ... the p-th order structure function
+        ... one of the outputs of get_structure_function()
+    r_dll: nd array with shape (m, duration)
+        ... separation length for the structure function (correlation function of the velocity difference)
+    c: float, default:2.1 (applicable to p=2)
+        ... Kolmogorov constant for the p-th order structure function
+        ... c=2.1 (p=2, experiment), c=-4/5 (p=3, theory)
+    p: float, order of the structure function
+        ... the order of the structure function
+    n: int
+        ... number of structure peaks of f(r) used to estimate the dissipation rate
 
     Returns
     -------
-
+    epsilons: 1d array with shape (duration, ), dissipation rate (mean of the n largest values of f(r))
+    epsilon_errs: 1d array with shape (duration, ), std of the dissipation rate (std of the n largest values of f(r))
     """
+    if p != 2:
+        print(
+            '... WARNING: Make sure to supply the appropirate Kolmogorov constant for the p-th order structure funciton: D=c(epsilon r)^(p/3)')
+    if p==3:
+        c = -0.8
+        print('... c=-0.8 according to Karman-Howarth eq. Ignoring user-supplied value for c...')
+    dll = np.asarray(dll)
+    if len(dll.shape) == 1: dll = dll.reshape((len(dll), 1))
+    duration = dll.shape[1]
+    eps = (dll / c) ** (3. / p) / r_dll  # the value at the plateau of this function should be dissipation
+    epsilon_cands = np.partition(eps, -n, axis=0)[-n:, :]
+    epsilons = np.nanmean(epsilon_cands, axis=0)
+    epsilon_errs = np.nanstd(epsilon_cands, axis=0)
+
+    return epsilons, epsilon_errs
+
+# def get_epsilon_from_spectrum(udata, dx=1., dy=1.,
+#                               x0=0, x1=None, y0=0, y1=None,
+#                               window=None,
+#                               epsilon_range=(2, 7), n=51,
+#                               nu=1.004, kMaxInd=None,
+#                               plot=False, t0=0
+#                               ):
+#     """
+#     Estimates dissipation rate by comparing the 1D spectrum to the master curve in Saddoughi&Veeravalli 1994
+#     (WILL BE DELETED)
+#     Parameters
+#     ----------
+#     udata
+#     dx
+#     dy
+#     x0
+#     x1
+#     y0
+#     y1
+#     epsilon_range
+#     n
+#     nu
+#     kMaxInd:
+#     plotResults
+#
+#     Returns
+#     -------
+#
+#     """
+#     udata = fix_udata_shape(udata)
+#     duration = udata.shape[-1]
+#     epsilons = np.empty(duration)
+#
+#     e11_sv, keta_sv = get_rescaled_energy_spectrum_saddoughi()
+#     g = interpolate.interp1d(keta_sv, e11_sv, bounds_error=False, fill_value=np.nan)
+#     eiis, eiierr, k1 = get_1d_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, x1=x1, y0=y0, y1=y1, verbose=False, window=window)
+#     m = k1.shape[0]
+#     # RESAMPLE 1D DFT result
+#     k1_rs, e11rs = resample2d(k1[:kMaxInd], eiis[0, :kMaxInd, :], n=m, mode='log')
+#     epsilons2test = np.logspace(epsilon_range[0], epsilon_range[1], n)
+#     residuals = np.zeros((n, duration))
+#
+#     for i, epsilon2test in enumerate(epsilons2test):
+#         try:
+#             e11r, k1eta = scale_energy_spectrum(e11rs, k1_rs, epsilon=epsilon2test, nu=nu)
+#             measuredLog = np.log10(e11r)
+#             measuredRefLog = np.swapaxes(np.tile(np.log10(g(k1eta)), (duration, 1)), 0, 1)
+#             residuals[i, :] = np.nansum(np.abs(measuredLog - measuredRefLog), axis=0)
+#         except:
+#             residuals[i, :] = np.nan
+#     epsilons = epsilons2test[np.nanargmin(residuals, axis=0)]
+#
+#     if plot:
+#         from matplotlib.patches import Polygon
+#         epsilon = epsilons[t0]
+#         eta = compute_kolmogorov_lengthscale_simple(epsilon, nu)
+#         e11rs_t = e11rs[:, t0]
+#         #         e11_avg = np.nanmean(e11rs, axis=-1)
+#         fig, ax11 = graph.plot(epsilons2test, residuals[:, t0], subplot=121)
+#         epsilon_min, epsilon_max = 10 ** (np.log10(epsilon) * 0.9), 10 ** (np.log10(epsilon) * 1.1)
+#         graph.tosemilogx(ax11)
+#         e11r, k1eta = scale_energy_spectrum(e11rs_t, k1_rs, epsilon=epsilon, nu=nu)
+#         fig, ax12 = graph.plot(k1eta, e11r, subplot=122)
+#         e11rUpper, k1etaUpper = scale_energy_spectrum(e11rs_t, k1_rs,
+#                                                           epsilon=epsilon_min,
+#                                                           nu=nu)
+#         e11rLower, k1etaLower = scale_energy_spectrum(e11rs_t, k1_rs,
+#                                                           epsilon=epsilon_max,
+#                                                           nu=nu)
+#         polygon1 = Polygon(list(zip(k1etaUpper, e11rUpper)) + list(zip(k1etaLower[::-1], e11rLower[::-1])))
+#         polygon1.set_alpha(0.5)
+#         ax12.add_patch(polygon1)
+#         graph.plot_saddoughi(ax=ax12)
+#         graph.tologlog(ax12)
+#         graph.axvband(ax11, epsilon_min, epsilon_max, color='C0')
+#         graph.axvline(ax12, k1_rs[-1] * eta)
+#         graph.labelaxes(ax11, '$\epsilon~(mm^2/s^3)$',
+#                         'Residuals \n$\sum | \log_{10}{\\tilde{E}_{11}(\kappa \eta)} - \log_{10}{\\tilde{E}_{11}^{Ref}(\kappa \eta)}|$')
+#     return epsilons
+
+def get_epsilon_from_1d_spectrum(udata, k='kx', dx=1., dy=1., c1=0.491, r=(1., np.inf), **kwargs):
+    """
+    Returns a dissipation rate from a 1D energy spectrum
+    ... Since  E11=c1 epsilon^(2/3) k^(-5/3) in the inertial subrange,
+               epsilon = (E11/ (c1 k^(-5/3)))^(3/2)
+
+    Parameters
+    ----------
+    udata: nd array with shape (dim, nrows, ncols, duration)
+    k: str, 'kx' or 'ky'
+    dx: float, spacing along x
+    dy: float, spacing along y
+    c1: kolmogorov constant for E11=c1 epsilon^(2/3) k^(-5/3)
+    r: tuple, (r0, r1)
+        ... (r0, r1) defines a inertial subrange
+    kwargs: keyword arguments passed to get_1d_energy_spectrum
+
+    Returns
+    -------
+    epsilons: 2d array with shape (n, duration)
+    epsilon_errs:
+    """
+    kmin, kmax = 2 * np.pi / r[1], 2 * np.pi / r[0]
     udata = fix_udata_shape(udata)
-    duration = udata.shape[-1]
-    epsilons = np.empty(duration)
+    eii, eii_err, k11 = get_1d_energy_spectrum(udata, k=k, dx=dx, dy=dy, **kwargs)
+    e11 = eii[0]
+    epsilons = np.empty(udata.shape[-1])
+    epsilon_errs = np.empty(udata.shape[-1])
 
-    e11_sv, keta_sv = get_rescaled_energy_spectrum_saddoughi()
-    g = interpolate.interp1d(keta_sv, e11_sv, bounds_error=False, fill_value=np.nan)
-    eiis, eiierr, k1 = get_1d_energy_spectrum(udata, dx=dx, dy=dy, x0=x0, x1=x1, y0=y0, y1=y1, verbose=False, window=window)
-    m = k1.shape[0]
-    # RESAMPLE 1D DFT result
-    k1_rs, e11rs = resample2d(k1[:kMaxInd], eiis[0, :kMaxInd, :], n=m, mode='log')
-    epsilons2test = np.logspace(epsilon_range[0], epsilon_range[1], n)
-    residuals = np.zeros((n, duration))
-
-    for i, epsilon2test in enumerate(epsilons2test):
-        try:
-            e11r, k1eta = scale_energy_spectrum(e11rs, k1_rs, epsilon=epsilon2test, nu=nu)
-            measuredLog = np.log10(e11r)
-            measuredRefLog = np.swapaxes(np.tile(np.log10(g(k1eta)), (duration, 1)), 0, 1)
-            residuals[i, :] = np.nansum(np.abs(measuredLog - measuredRefLog), axis=0)
-        except:
-            residuals[i, :] = np.nan
-    epsilons = epsilons2test[np.nanargmin(residuals, axis=0)]
-
-    if plot:
-        from matplotlib.patches import Polygon
-        epsilon = epsilons[t0]
-        eta = compute_kolmogorov_lengthscale_simple(epsilon, nu)
-        e11rs_t = e11rs[:, t0]
-        #         e11_avg = np.nanmean(e11rs, axis=-1)
-        fig, ax11 = graph.plot(epsilons2test, residuals[:, t0], subplot=121)
-        epsilon_min, epsilon_max = 10 ** (np.log10(epsilon) * 0.9), 10 ** (np.log10(epsilon) * 1.1)
-        graph.tosemilogx(ax11)
-        e11r, k1eta = scale_energy_spectrum(e11rs_t, k1_rs, epsilon=epsilon, nu=nu)
-        fig, ax12 = graph.plot(k1eta, e11r, subplot=122)
-        e11rUpper, k1etaUpper = scale_energy_spectrum(e11rs_t, k1_rs,
-                                                          epsilon=epsilon_min,
-                                                          nu=nu)
-        e11rLower, k1etaLower = scale_energy_spectrum(e11rs_t, k1_rs,
-                                                          epsilon=epsilon_max,
-                                                          nu=nu)
-        polygon1 = Polygon(list(zip(k1etaUpper, e11rUpper)) + list(zip(k1etaLower[::-1], e11rLower[::-1])))
-        polygon1.set_alpha(0.5)
-        ax12.add_patch(polygon1)
-        graph.plot_saddoughi(ax=ax12)
-        graph.tologlog(ax12)
-        graph.axvband(ax11, epsilon_min, epsilon_max, color='C0')
-        graph.axvline(ax12, k1_rs[-1] * eta)
-        graph.labelaxes(ax11, '$\epsilon~(mm^2/s^3)$',
-                        'Residuals \n$\sum | \log_{10}{\\tilde{E}_{11}(\kappa \eta)} - \log_{10}{\\tilde{E}_{11}^{Ref}(\kappa \eta)}|$')
-    return epsilons
+    indMin, indMax = find_nearest(k11, kmin)[0], find_nearest(k11, kmax)[0]
+    for t in range(udata.shape[-1]):
+        epsilon_ = (e11[..., t] / (c1 * k11 ** (-5 / 3.))) ** 1.5
+        epsilons[t] = np.nanmean(epsilon_[indMin:indMax])
+        epsilon_errs[t] = np.nanstd(epsilon_[indMin:indMax]) / np.sqrt(indMax-indMin)
+    return epsilons, epsilon_errs
 
 
 def get_epsilon_distribution_using_sij(udata, dx=None, dy=None, dz=None, nu=1.004,
-                          x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None):
+                          x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None, xx=None, yy=None):
     """
     Returns the dissipation rate computed using the rate-of-strain tensor
 
@@ -3300,7 +3385,7 @@ def get_epsilon_distribution_using_sij(udata, dx=None, dy=None, dz=None, nu=1.00
         if dz is None:
             raise ValueError('... dz is None. Provide int or float.')
 
-    duidxj = get_duidxj_tensor(udata, dx=dx, dy=dy, dz=dz)
+    duidxj = get_duidxj_tensor(udata, dx=dx, dy=dy, dz=dz, )
     if dim == 3:
         sij, tij = decompose_duidxj(duidxj)
         epsilon_spatial = 2. * nu * np.nansum(sij ** 2, axis=(4, 5))
@@ -4782,6 +4867,41 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
                            time_thd=10.,
                            spacing='log',
                            notebook=True):
+    """
+
+    Parameters
+    ----------
+    udata
+    x
+    y
+    z
+    nu
+    x0
+    x1
+    y0
+    y1
+    z0
+    z1
+    t0
+    t1
+    p
+    nr
+    nd
+    mode
+    time_thd
+    spacing
+    notebook
+
+    Returns
+    -------
+    rrs: nd array
+    Dijks:
+    Dijk_errs:
+    rrs_scaled:
+    Dijks_scaled:
+    Dijk_errs_scaled:
+
+    """
     if notebook:
         from tqdm import tqdm_notebook as tqdm
         print('Using tqdm_notebook. If this is a mistake, set notebook=False')
@@ -5024,7 +5144,7 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
     return rrs, Dijks, Dijk_errs, rrs_scaled, Dijks_scaled, Dijk_errs_scaled
 
 
-def scale_raw_structure_funciton_long(rrs, Dxxs, Dxx_errs, epsilon, nu=1.004, p=2):
+def scale_raw_structure_funciton_long(rrs, Dxxs, epsilon, Dxx_errs=None, nu=1.004, p=2):
     """
     Returns the scaled structure functions when raw structure function data are given
     ... This allows users to scale the structure functions with epsilon and nu input by the users.
@@ -5050,7 +5170,7 @@ def scale_raw_structure_funciton_long(rrs, Dxxs, Dxx_errs, epsilon, nu=1.004, p=
         Scaled r
     Dxxs_s: numpy array
         Scaled structure function
-    Dxx_errs_s: numpy array
+    Dxx_errs_s: numpy array (optional)
         Scaled DLL error
     """
     if type(epsilon) == list:
@@ -5061,16 +5181,21 @@ def scale_raw_structure_funciton_long(rrs, Dxxs, Dxx_errs, epsilon, nu=1.004, p=
         Dxxs_s, Dxx_errs_s, rrs_s = np.empty_like(Dxxs), np.empty_like(Dxxs), np.empty_like(Dxxs)
         for t in list(range(len(epsilon))):
             Dxxs_s[:, t] = Dxxs[:, t] / (epsilon[t] * rrs[:, t]) ** (p / 3.)
-            Dxx_errs_s[:, t] = Dxx_errs[:, t] / (epsilon[t] * rrs[:, t]) ** (p / 3.)
+            if Dxx_errs is not None:
+                Dxx_errs_s[:, t] = Dxx_errs[:, t] / (epsilon[t] * rrs[:, t]) ** (p / 3.)
             rrs_s[:, t] = rrs[:, t] / eta[t]
     else:
         Dxxs_s = Dxxs / (epsilon * rrs) ** (p / 3.)
-        Dxx_errs_s = Dxx_errs / (epsilon * rrs) ** (p / 3.)
+        if Dxx_errs is not None:
+            Dxx_errs_s = Dxx_errs / (epsilon * rrs) ** (p / 3.)
         rrs_s = rrs / eta
-    return rrs_s, Dxxs_s, Dxx_errs_s
 
+    if Dxx_errs is not None:
+        return rrs_s, Dxxs_s, Dxx_errs_s
+    else:
+        return rrs_s, Dxxs_s,
 
-########## Length scales ##########
+    ########## Length scales ##########
 ## TAYLOR MICROSCALES ##
 # Taylor microscales 1: using autocorrelation functions
 ### DEFAULT ###
@@ -6386,7 +6511,8 @@ def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
             udata, xx, yy = get_udata_from_path(udatapath, return_xy=True, t0=t, t1=t + 1,
                                                 x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, verbose=False)
         if clean:
-            udata = clean_udata(udata, cutoff=cutoff, verbose=False, median_filter=median_filter,  replace_zeros=replace_zeros, showtqdm=False)
+            udata = clean_udata(udata, cutoff=cutoff, verbose=False, median_filter=median_filter,
+                                replace_zeros=replace_zeros, showtqdm=False)
         if reynolds_decomposition:
             udata[..., 0] -= udata_m
         if i == 0:
@@ -8163,7 +8289,7 @@ def compute_signal_loss_due_to_windowing(xx, yy, window, x0=0, x1=None, y0=0, y1
         inverse of the signal-loss factor
 
     """
-    if window is 'rectangle' or window is None:
+    if window=='rectangle' or window is None:
         signal_intensity_loss = 1.
     else:
         window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
@@ -8452,7 +8578,7 @@ def clean_udata(udata,
         udata_c[udata_c == 0] = np.nan
 
     nnans = np.count_nonzero(np.isnan(udata_c))
-    if nnans == 0:  # udata is already clean (No nan values and no values beyond cutoff)
+    if nnans == 0 and not median_filter:  # udata is already clean (No nan values and no values beyond cutoff)
         return udata_c
 
     # Method 1
@@ -8945,7 +9071,7 @@ def clean_data(data_org, mask=None,
 
     Parameters
     ----------
-    data: nd array, array to be cleaned
+    data_org: nd array, array to be cleaned
     mask: nd array
     method: str, choose from 'fill', 'nn', 'localmean', 'idw'
         ... computation is more expensive as it gets more right.
@@ -8968,7 +9094,7 @@ def clean_data(data_org, mask=None,
 
     Returns
     -------
-
+    data: nd array with the same shape as data_org
     """
 
 
@@ -9013,7 +9139,6 @@ def clean_data(data_org, mask=None,
 def clean_data_interp1d(y, x=None, thd=None, p=0.98):
     """
     Replaces np.nan in the input with linearly interpolated values
-
 
     Parameters
     ----------
@@ -9062,7 +9187,7 @@ def clean_data_interp1d(y, x=None, thd=None, p=0.98):
         x_keep, y_keep = x_tmp[keep], y_tmp[keep]
 
         fractional_dydx = np.gradient(y_keep, x_keep) / y_keep
-
+        print(fractional_dydx)
         if thd is None:
             zeta = sorted(np.abs(fractional_dydx))
             n_zeta = len(zeta)
@@ -9074,7 +9199,6 @@ def clean_data_interp1d(y, x=None, thd=None, p=0.98):
         mask = np.roll(mask, 1)  # shift the resulting array (due to the convention of np.gradient)
 
         x_clean, y_clean = x_keep[mask], y_keep[mask]
-
         f = interpolate.interp1d(x_clean, y_clean)
 
         xmin, xmax = np.nanmin(x_clean), np.nanmax(x_clean)
@@ -9111,12 +9235,18 @@ def get_center_of_energy(dpath, inc=10, x0=0, x1=None, y0=0, y1=None, z0=0, z1=N
     ----------
     dpath
     inc
-    x0
-    x1
-    y0
-    y1
-    z0
-    z1
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
 
     Returns
     -------
@@ -9164,10 +9294,14 @@ def get_center_of_vorticity(udata, xx, yy, sigma=5, sign='auto',
     yy
     sigma
     sign
-    x0
-    x1
-    y0
-    y1
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
     thd
 
     Returns
@@ -9216,10 +9350,14 @@ def plot_energy_spectra(udata, dx, dy, dz=None, x0=0, x1=None, y0=0, y1=None, wi
     dx
     dy
     dz
-    x0
-    x1
-    y0
-    y1
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
     window
     epsilon_guess
     nu
@@ -9309,10 +9447,14 @@ def plot_energy_spectra_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=None, 
     dx
     dy
     dz
-    x0
-    x1
-    y0
-    y1
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
     window
     epsilon_guess
     nu
@@ -9431,10 +9573,14 @@ def plot_energy_spectra_avg_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=No
     dx
     dy
     dz
-    x0
-    x1
-    y0
-    y1
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
     window
     epsilon_guess
     nu
@@ -9451,7 +9597,8 @@ def plot_energy_spectra_avg_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=No
 
     Returns
     -------
-
+    fig1, (ax1, ax2, ax3),
+    spectra_dict: dict, optional. Returned if return_spectra is True
     """
     if figparams is None:
         __fontsize__ = 20
@@ -9755,11 +9902,19 @@ def plot_time_avg_energy(udata, xx, yy, x0=0, x1=None, y0=0, y1=None, t0=0, t1=N
     xx
     yy
     x0
-    x1
-    y0
-    y1
-    t0
-    t1
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    t0 int, default: 0
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+    t1 int, default: None
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+
 
     Returns
     -------
@@ -9783,12 +9938,19 @@ def plot_time_avg_enstrophy(udata, xx, yy, x0=0, x1=None, y0=0, y1=None, t0=0, t
     udata
     xx
     yy
-    x0
-    x1
-    y0
-    y1
-    t0
-    t1
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    t0 int, default: 0
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+    t1 int, default: None
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+
 
     Returns
     -------
@@ -9995,12 +10157,18 @@ def make_time_evo_movie_from_udata(qty, xx, yy, time, t=1, inc=100, label='$\\fr
     t
     inc
     label
-    x0
-    x1
-    y0
-    y1
-    z0
-    z1
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
     vmin
     vmax
     draw_box
@@ -10489,19 +10657,26 @@ def get_binned_stats3d(x, y, z, var, n_bins=100, nx_bins=None, ny_bins=None, nz_
 def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                         t0=0, t1=None, inc=1, frame=None, return_xy=False, verbose=True,
                         slicez=None, crop=None, mode='r',
-                        reverse_x=False, reverse_y=False, reverse_z=False):
+                        reverse_x=False, reverse_y=False, reverse_z=False, ind=0):
     """
     Returns udata from a path to udata
     If return_xy is True, it returns udata, xx(2d grid), yy(2d grid)
     Parameters
     ----------
     udatapath
-    x0: int
-    x1: int
-    y0: int
-    y1: int
-    t0: int
-    t1: int
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    t0 int, default: 0
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+    t1 int, default: None
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+
     inc: int
         time increment of data to load from udatapath, default: 1
     frame: array-like or int, default: None
@@ -10513,6 +10688,8 @@ def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
     return_xy: bool, defualt: False
     verbose: bool
         If True, return the time it took to load udata to memory
+    ind: int, id for a file with multiple piv data (udata)
+        ... A file may include ux, uy, x, y under /piv/piv000/, /piv/piv001, /piv/piv001, ... when piv is conducted on the same footage.
 
     Returns
     -------
@@ -10527,7 +10704,7 @@ def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
     if not 'ux' in keys:
         print(
             '... get_udata_from_path() is not compatible with a data structure in this h5.  \n Try get_udata_from_path_nested() instead.')
-        results = get_udata_from_path_nested(udatapath, ind=0,
+        results = get_udata_from_path_nested(udatapath, ind=ind,
                                              x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1,
                                              t0=t0, t1=t1, inc=inc, frame=frame, return_xy=return_xy, verbose=verbose,
                                              slicez=slicez, crop=crop, mode=mode,
@@ -10536,14 +10713,13 @@ def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
     else:
         if verbose:
             tau0 = time_mod.time()
-            print('... reading udata from path')
+            print('... reading udata from a given path')
         if crop is not None and [x0, x1, y0, y1, z0, z1] == [0, None, 0, None, 0, None]:
             x0, x1, y0, y1, z0, z1 = crop, -crop, crop, -crop, crop, -crop
 
         if mode == 'w' or mode == 'wb':
-            print('... w was passed to h5Py.File(...) which would truncate the file if it exists. \n'
+            raise ValueError('... w was passed to h5Py.File(...) which would truncate the file if it exists. \n'
                   'Probably, this is not what you want. Pass r for read-only')
-            raise ValueError
 
         with h5py.File(udatapath, 'r') as f:
             if 'z' in f.keys():
@@ -10592,7 +10768,7 @@ def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                         xx, yy, zz = f['x'][y0:y1, x0:x1, slicez], f['y'][y0:y1, x0:x1, slicez], f['z'][0, 0, slicez]
         tau1 = time_mod.time()
         if verbose:
-            print('... time took to load udata in sec: ', tau1 - tau0)
+            print(f'... time took to load udata: {tau1 - tau0:.2f} s')
 
         if return_xy:
             if dim == 2:
@@ -10634,12 +10810,19 @@ def get_scalar_data_from_path(udatapath, name='pressure', x0=0, x1=None, y0=0, y
     ----------
     udatapath: str, a path to udata
     name: str, name of the dataset in the udata h5
-    x0: int
-    x1: int
-    y0: int
-    y1: int
-    t0: int
-    t1: int
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    t0 int, default: 0
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+    t1 int, default: None
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+
     inc: int
         time increment of data to load from udatapath, default: 1
     frame: array-like or int, default: None
@@ -10708,7 +10891,7 @@ def get_scalar_data_from_path(udatapath, name='pressure', x0=0, x1=None, y0=0, y
                         xx, yy, zz = f['x'][y0:y1, x0:x1, slicez], f['y'][y0:y1, x0:x1, slicez], f['z'][0, 0, slicez]
         tau1 = time_mod.time()
         if verbose:
-            print('... time took to load udata in sec: ', tau1 - tau0)
+            print(f'... time took to load udata: {tau1 - tau0:.2f} s')
 
         if return_xy:
             if dim == 2:
@@ -10773,14 +10956,22 @@ def get_udata_from_path_nested(udatapath, ind=0,
     ----------
     udatapath, str
     ind: int, index to specify which piv data to load in a nested h5
-    x0: int
-    x1: int
-    y0: int
-    y1: int
-    z0: int
-    z1: int
-    t0: int
-    t1: int
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    t0 int, default: 0
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+    t1 int, default: None
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
     inc: int
     frame: int
     return_xy: bool, If True, it retursn a 2D/3D grid which can be used for pcolormesh etc.
@@ -11088,6 +11279,68 @@ def fix_udata_shape(udata):
             uy = uy.reshape((uy.shape[0], uy.shape[1], uy.shape[2], duration))
             uz = uz.reshape((uz.shape[0], uz.shape[1], uz.shape[2], duration))
             return np.stack((ux, uy, uz))
+
+def fill_udata(udata, keep, duplicate=True, fill_value=np.nan):
+    """
+    Replaces values in ~keep with 'filled_value'
+    ... For actual masking which does not involve replacing values of the array, use a numpy masked array.
+
+    Parameters
+    ----------
+    udata: nd array of a v-field
+    keep: 2d/3d shape
+    copy: bool, default: True
+    ... If True, the given udata remains untouched.
+    Returns
+    -------
+    vdata: nd array- a masked array
+    """
+    if duplicate:
+        vdata = copy.deepcopy(udata)
+    else:
+        vdata = udata
+    vdata = fix_udata_shape(vdata)
+    dim = vdata.shape[0]
+    for t in range(vdata.shape[-1]):
+        for d in range(dim):
+            vdata[d, ..., t][~keep] = fill_value
+    return vdata
+
+def mask_udata(udata, mask):
+    """
+    Returns a numpy.masked array
+    ... The shape of the mask must be one of ushape, ushape[1:], ushape[1:-1] where ushape=udata.shape
+
+    Parameters
+    ----------
+    udata: nd array, v-field data
+    mask: md boolean array
+
+    Returns
+    -------
+    udata: numpy masked nd array
+
+    """
+    ushape = udata.shape
+    if ushape == mask.shape:
+        return np.ma.masked_array(udata, mask)
+    else:
+        udata = fix_udata_shape(udata)
+        d = ushape[0]
+        if ushape[1:] == mask.shape:
+            rep = [1] * len(ushape)
+            rep[0] = d
+            mask_ = np.tile(mask[np.newaxis, ...], rep)
+            udata = np.ma.masked_array(udata, mask=mask_)
+        elif ushape[1:-1] == mask.shape:
+            rep = [1] * len(ushape)
+            rep[0] = d
+            rep[-1] = ushape[-1]
+            mask_ = np.tile(mask[np.newaxis, ..., np.newaxis], rep)
+            udata = np.ma.masked_array(udata, mask=mask_)
+        else:
+            raise ValueError('mask shape must be one of these:', ushape, ushape[1:], ushape[1:-1])
+    return udata
 
 def get_speed(udata):
     """Returns speed from udata"""
@@ -12030,14 +12283,22 @@ def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT,
     time
     deltaT
     n
-    x0
-    x1
-    y0
-    y1
-    z0
-    z1
-    t0
-    t1
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    t0 int, default: 0
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+    t1 int, default: None
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
 
     Returns
     -------
@@ -12184,7 +12445,7 @@ def add_data2udatapath(udatapath, datadict, grpname=None, overwrite=False, verbo
 
     Returns
     -------
-
+    None
     """
     if grpname is not None:
         if verbose:
@@ -12514,14 +12775,23 @@ def derive_easy(udata, dx, dy, savepath, time=None, inc=1,
     inc
     dz
     nu
-    x0
-    x1
-    y0
-    y1
-    z0
-    z1
-    t0
-    t1
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    t0 int, default: 0
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+    t1 int, default: None
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+
     reynolds_decomp
     notebook
     overwrite
@@ -12647,14 +12917,23 @@ def derive_hard(udata, dx, dy, savepath, time=None, inc=1,
     inc
     dz
     nu
-    x0
-    x1
-    y0
-    y1
-    z0
-    z1
-    t0
-    t1
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    t0 int, default: 0
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+    t1 int, default: None
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+
     reynolds_decomp
     coarse
     coarse2
@@ -13625,7 +13904,7 @@ def psi2udata(psi,
 
 def psi2udata_cylindrical(psi,
               rrho=None, zz=None,
-              return_cartesian=True):
+              return_cartesian=False):
     """
     psi is streamfunction (psi) on u-grid,
     returns v = dq/dx and u= -dq/dy, on U-grid
@@ -13653,7 +13932,7 @@ def psi2udata_cylindrical(psi,
     ux = uz
     uy = copy.deepcopy(urho)
     drho = np.gradient(rrho[:, 0]) # If drho < 0, y<0. i.e. If drho < 0, dy = -drho
-    # uy[drho > 0] *= -1 # this w
+    # uy[drho > 0] *= -1
     udata_cartesian = np.stack((ux, uy))
 
     if return_cartesian:
@@ -13922,7 +14201,38 @@ def get_streamfunction_hill_spherical_vortex(xx, yy, x0=0, y0=0, u=1, a=1, gamma
 
     Source: https://link.springer.com/chapter/10.1007/978-3-319-55164-7_34 (by Emmanuel Branlard, p.413)
 
-    Hill's spherical vortex is an axisymmetric flow. Hence, it is often described in
+    Hill's spherical vortex is an axisymmetric flow.
+    ... Radial distance to the extremum of streamfunction inside the bubble is a/sqrt(2)=0.707a.
+    ... In the 'lab' frame, psi=0 defines the vortex atmosphere.
+    ...... The streamfunction has an extremeum at rho=a/sqrt(2)=0.707a.
+    ...... The vorticity center (rho weighted by omega(rho, z, theta)) is at rho=0.75a.
+    ...... The velocity at the center is -1.5u \hat{z}.
+    ... In the 'vortex' frame, the vortex is at rest.
+    ...... The velocity at the center is 0.
+    ... In the 'wind' or 'absolute' frame, the environment is at rest. velocity outside the vortex decays to zero at infinity.
+    ...... The velocity at the center is -2.5u \hat{z}
+
+
+    e.g.
+    import velocity as vel
+    import graph
+    n = 101
+    L = 200
+    a=50
+    x, y = np.linspace(-L/2, L/2, n), np.linspace(0, L/2, n)
+    XX, YY = np.meshgrid(x, y)
+    dx, dy = vel.get_grid_spacing(XX, YY)
+
+    psi, zz, rrho = vel.get_streamfunction_hill_spherical_vortex(XX, YY, x0=0, y0=0, gamma=1, a=50,
+                                                       return_cylindrical_coords=True, reference_frame='lab')
+    wdata = vel.psi2udata_cylindrical(psi, zz=zz, rrho=rrho, return_cartesian=False)
+    omega = vel.curl(wdata, xx=XX, yy=YY)[..., 0]
+
+    fig, ax, Q = graph.quiver(XX, YY, wdata[0, ...], wdata[1, ...], color='darkgreen', zorder=100, inc=5)
+    graph.contour(XX, YY, psi, levels=[-1.5, -1, -0.5, 0], colors='k', linewidths=1)
+    graph.color_plot(XX, YY, omega, ax=ax, cmap='bwr')
+    # graph.color_plot(XX, YY, psi, ax=ax, cmap='bwr')
+    graph.scatter([0], [a/np.sqrt(2)], ax=ax) # psi has an extremum at a/sqrt(2)
 
     Parameters
     ----------
@@ -13933,17 +14243,18 @@ def get_streamfunction_hill_spherical_vortex(xx, yy, x0=0, y0=0, u=1, a=1, gamma
     y0: float, default: 0
         ... center of the spherical vortex is at (x0, y0)
     u: float
+        ... stream velocity
         ... The center of the vortex moves at (-1.5u, 0)
         ... gamma = 5 * a * u # circulaton of gamma
     gamma: float, default: None
         ... if given, u will be overwritten
-    r: float, >0
+    a: float, >0
         ... radius of the spherical vortex
     reference_frame: str, default- 'lab'
         ... Choose reference_frame from [lab, wind, vortex]
         ... "lab" refers to the rest frame
         ... "vortex" refers to the frame of reference of the vortex
-        ... "wind" refers to a frame of reference which is moving at velocity u from the rest frame
+        ... "wind"/"absolute" refers to a frame of reference such that the -2.5u.
     return_cylindrical_coords: bool, default- False
 
     Returns
@@ -13953,8 +14264,8 @@ def get_streamfunction_hill_spherical_vortex(xx, yy, x0=0, y0=0, u=1, a=1, gamma
     if gamma is not None:
         u = gamma / 5 / a
         print('get_streamfunction_hill_spherical_vortex():\n'
-              '... gamma is given. overwriting u to', u)
-
+              '... gamma was given. Overwriting u to', u)
+    u *= -1
     psi = np.empty_like(xx)
 
     # From now on, use the cylindrical coordinates (x, y, z) -> (rho, phi, z)
@@ -13973,14 +14284,14 @@ def get_streamfunction_hill_spherical_vortex(xx, yy, x0=0, y0=0, u=1, a=1, gamma
     # gamma = 5 * a * u # circulaton of gamma
     uc = -1.5 * u # velocity at the center of the vortex
 
-    if reference_frame == 'lab':
+    if reference_frame == 'lab': # stream
         pass
-    elif reference_frame == 'wind':
+    elif reference_frame in ['wind', 'absolute', 'vortex']: # vortex moves at u when the outer fluid is at rest
         psi = psi - 1/2. * u * rrho ** 2
-    elif reference_frame == 'vortex':
-        psi = psi - 1/2. * uc * rrho ** 2
+    # elif reference_frame == 'vortex':
+    #     psi = psi - 1/2. * uc * rrho ** 2
     else:
-        raise ValueError('... Choose reference_frame from [lab, wind, vortex]')
+        raise ValueError('... Choose reference_frame from [lab, vortex]')
 
     if return_cylindrical_coords:
         return psi, zz, rrho
@@ -13988,11 +14299,14 @@ def get_streamfunction_hill_spherical_vortex(xx, yy, x0=0, y0=0, u=1, a=1, gamma
         return psi
 
 
-def get_streamfunction_thin_cored_vring(xx, yy, x0=0, y0=0, gamma=1, R=1,
+def get_streamfunction_vloop(xx, yy, x0=0, y0=0, gamma=1, R=1,
                                          reference_frame='lab',
                                          return_cylindrical_coords=False, verbose=True):
     """
-    Returns a streamfunction of a thin-cored vortex ring in cylindrical coordinates
+    Returns a streamfunction of a vortex loop in cylindrical coordinates
+    ... A loop consists of a vortex filament. i.e. the vorticity is concentrated on a point (zero cross-section)
+    ... This makes the streamfunction on the filament to diverge.
+    ... Similarly, the energy density diverges like rho*gamma^2*R*log(R/epsilon) as it approaches to the filament by epsilon.
 
     y(input) => rho in the cylindrical axis (distance from the symmetry axis)
     ^
@@ -14003,12 +14317,12 @@ def get_streamfunction_thin_cored_vring(xx, yy, x0=0, y0=0, gamma=1, R=1,
 
     Parameters
     ----------
-    xx:
-    yy
-    x0
-    y0
-    gamma
-    R
+    xx: 2d array, positional grid
+    yy: 2d array, positional grid
+    x0: float, x-coordinate of the origin of the cylindrical coordinate
+    y0: float, x-coordinate of the origin of the cylindrical coordinate
+    gamma: float, circulation of a vortex loop
+    R: float, radius of a vortex loop
     reference_frame: str, default- 'lab'
         ... Choose reference_frame from [lab, wind, vortex]
         ... "lab" refers to the rest frame
@@ -14017,7 +14331,7 @@ def get_streamfunction_thin_cored_vring(xx, yy, x0=0, y0=0, gamma=1, R=1,
 
     Returns
     -------
-    psi: streamfunction(rrho, zz)
+    psi: 2d array, streamfunction(rrho, zz)
     rrho: 2d array
     zz: 2d array
     """
@@ -14030,7 +14344,7 @@ def get_streamfunction_thin_cored_vring(xx, yy, x0=0, y0=0, gamma=1, R=1,
     c1 = special.ellipk(k2)# complete elliptical integral of the first kind
     c2 = special.ellipe(k2)# complete elliptical integral of the second kind
 
-    psi_cylindrical = gamma / 2 / np.pi * np.sqrt(rrho * R) * ( (2/k - k) * c1 - 2/k * c2 )
+    psi_cylindrical = gamma / 2 / np.pi * np.sqrt(rrho * R) * ( (2/k - k) * c1 - 2/k * c2 ) # Lamb Sect 161 Eq.9
 
     if reference_frame == 'lab':
         pass
@@ -14045,13 +14359,124 @@ def get_streamfunction_thin_cored_vring(xx, yy, x0=0, y0=0, gamma=1, R=1,
 
     if return_cylindrical_coords:
         if verbose:
-            print('get_streamfunction_thin_cored_vring: Use psi2udata_cylindrical(psi, rrho, zz) to get a velocity field')
+            print('get_streamfunction_vloop: Use psi2udata_cylindrical(psi, rrho, zz) to get a velocity field')
         # return psi_cylindrical, zz, yy-y0
-        return psi_cylindrical, rrho, zz
+        return psi_cylindrical, zz, rrho
+    else:
+        if verbose:
+            print('get_streamfunction_vloop: Output in Cartesian coords is not implemented yet')
+        sys.exit()
+
+
+def get_streamfunction_thin_cored_vring(xx, yy, x0=0, y0=0, gamma=1., R=1., a=0.01,
+                                        reference_frame='lab', uc=None,
+                                        return_cylindrical_coords=False, verbose=True, notebook=True):
+    """
+
+    Parameters
+    ----------
+    xx: 2d array, positional grid
+    yy: 2d array, positional grid
+    x0: float, x-coordinate of the origin of the cylindrical coordinate
+    y0: float, x-coordinate of the origin of the cylindrical coordinate
+    gamma: float, circulation of a vortex ring
+    R: float, radius of a vortex ring
+    a: float, cora radius of a vortex ring
+    reference_frame: str, default- 'lab'
+        ... Choose reference_frame from [lab, wind, vortex]
+        ... "lab" refers to the rest frame
+        ... "vortex" refers to the frame of reference of the vortex
+    uc: float, self-induced velocity of a vortex ring, default: None
+        ... If a<<r, uc = -gamma / (4 * np.pi * R) * (np.log(8 * R / a) - 0.25)
+        ... For reference_frame=='vortex', it assumes that the induced velocity is
+    return_cylindrical_coords: bool, default- False
+    xx
+    yy
+    x0
+    y0
+    gamma
+    R
+    a
+    reference_frame
+    uc
+    return_cylindrical_coords
+    verbose
+
+    Returns
+    -------
+
+    """
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+
+    gamma *= -1
+
+    zz = xx - x0
+    rrho = np.abs(yy - y0)
+    deltaZ, deltaRho = zz[0, 1] - zz[0, 0], rrho[1, 0] - rrho[0, 0]
+    insideCore = np.sqrt(zz ** 2 + (rrho - R) ** 2) <= a
+    ii, jj = np.indices(zz.shape)
+    psi = np.zeros_like(zz)
+
+    # CORE STRUCTURE
+    ## RIGID CORE: v=omega r (inside the core) i.e. omega=gamma/A
+    ## i.e. omega=gamma/A
+    A = np.pi * a ** 2
+    omega = gamma / A
+    #     omega = gamma / float(np.sum(insideCore)) # this might be better than omega = gamma / A.=> no sig. difference
+
+    for i in tqdm(range(psi.shape[0]), desc='Streamfunction'):
+        for j in range(psi.shape[1]):
+            for k, l in zip(ii[insideCore], jj[insideCore]):  # k, l: source
+                r1 = np.sqrt((zz[i, j] - zz[k, l]) ** 2 + (rrho[i, j] - rrho[k, l]) ** 2)
+                r2 = np.sqrt((zz[i, j] - zz[k, l]) ** 2 + (rrho[i, j] + rrho[k, l]) ** 2)
+                lambda_ = (r2 - r1) / (r2 + r1)
+                c1 = special.ellipk(lambda_ ** 2)  # complete elliptical integral of the first kind
+                c2 = special.ellipe(lambda_ ** 2)  # complete elliptical integral of the second kind
+                psi_ = - 1 / np.pi * (c1 - c2) * (r1 + r2) * omega * deltaZ * deltaRho
+                psi[i, j] += psi_
+
+    ss = np.sqrt(zz[insideCore] ** 2 + (rrho[insideCore] - R) ** 2)
+    psi[insideCore] = - 0.5 * omega * R * a ** 2 * (np.log(8 * R / a) - 1.5 - 0.5 * (ss / a) ** 2)
+
+    # matching psi at the core interface
+    if gamma < 0:
+        psi0 = np.nanmax(psi[~insideCore])
+        psi1 = np.nanmin(psi[insideCore])
+    else:
+        psi0 = np.nanmin(psi[~insideCore])
+        psi1 = np.nanmax(psi[insideCore])
+    #     psi[insideCore] *= psi0/psi1 * 1.1 # scale inside # this changes the circulation!
+    psi[~insideCore] *= psi1 / psi0 * 1.045  # scale outside
+
+
+    if notebook:
+        from tqdm import tqdm as tqdm
+
+    if reference_frame == 'lab':
+        pass
+    elif reference_frame == 'vortex':
+        ucThinCoreApprox = -gamma / (4 * np.pi * R) * (np.log(8 * R / a) - 0.25)  # this is only valid for a thin-cored a<<R (practially a/R<<0.01)
+        if uc is None:
+            uc = ucThinCoreApprox
+            if verbose:
+                print(f'... Ring velocity (thin-core approx.) is {ucThinCoreApprox}')
+        else:
+            print(f'... Ring velocity (thin-core approx.) is {ucThinCoreApprox}. uc={uc}. uc/ucThinCoreApprox={uc/ucThinCoreApprox:.4f}')
+        psi = psi - 1 / 2. * uc * rrho ** 2
+    else:
+        raise ValueError('... Choose reference_frame from [lab, vortex]')
+
+    if return_cylindrical_coords:
+        if verbose:
+            print(
+                'get_streamfunction_thin_cored_vring: Use psi2udata_cylindrical(psi, rrho, zz) to get a velocity field')
+        # return psi_cylindrical, zz, yy-y0
+        return psi, zz, rrho
     else:
         if verbose:
             print('get_streamfunction_thin_cored_vring: Output in Cartesian coords is not implemented yet')
-        sys.exit()
+        return None
 
 # 3D streamlines
 ## Sample n streamlines (randomly)
@@ -14601,6 +15026,11 @@ def estimate_veff(sl, sv):
         - Velocity program factor P = Mean of the second moment / Square of the mean of the first moment (average)
 
     """
+
+    if isinstance(sl, np.ndarray):
+        if sl.ndim==0: sl=float(sl)
+    if isinstance(sv, np.ndarray):
+        if sv.ndim==0: sv=float(sv)
     if type(sl) in [int, float]:
         sl, sv = [sl], [sv]
     pts2estimate = list(zip(sl, sv))
@@ -15149,7 +15579,7 @@ def fft_nd(gx, axes=None):
     dim = len(gx.shape)
     if axes is None:
         axes = list(range(dim))
-    return np.fft.fftshift(np.fft.fftn(gx, axes=axes))
+    return np.fft.fftshift(np.fft.fftn(gx, axes=axes), axes=axes)
 
 
 def FFTOutput2CFTOutput_nd(gf, dxs, x0s, axes=None, return_freq=True):
@@ -15378,12 +15808,18 @@ def get_energy_spectrum_nd(udata,
     Parameters
     ----------
     udata
-    x0
-    x1
-    y0
-    y1
-    z0
-    z1
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
     dx
     dy
     dz
@@ -16922,7 +17358,7 @@ def read_pickle(filename):
     return obj
 
 
-def read_data_from_h5(h5path, keys, return_dict=False, grpname=None):
+def read_data_from_h5(h5path, keys, return_dict=False, grpname=None, verbose=True):
     """
     Grabs data in a simply organized h5 file
     ... Return the data stored at /keys[0], ... /keys[1], ...
@@ -16935,8 +17371,14 @@ def read_data_from_h5(h5path, keys, return_dict=False, grpname=None):
 
     Returns
     -------
-
+    data_read: list of data stroed in a h5 file- [data0, data1, data2, ...]
+    or
+    datadict: dictionary of data- {name0: data0, name1: data1, name2: data2, ...}
     """
+    if h5path[-3:] != '.h5':
+        h5path += '.h5'
+    if keys == 'all':
+        keys = get_h5_keys(h5path)
     if not return_dict:
         data_read = []
         with h5py.File(h5path, mode='r') as f:
@@ -16947,11 +17389,13 @@ def read_data_from_h5(h5path, keys, return_dict=False, grpname=None):
                     elif grpname in f.keys():
                         val = f[grpname][key][...]
                     else:
-                        print('... /%s does not exist in the given h5' % grpname)
+                        if verbose:
+                            print('... /%s does not exist in the given h5' % grpname)
                         sys.exit()
                     data_read.append(val)
                 except:
-                    print('read_data_from_h5: %s does not exist in %s' % (key, h5path))
+                    if verbose:
+                        print('read_data_from_h5: %s does not exist in %s' % (key, h5path))
                     data_read.append(None)
         return data_read
     else:
@@ -16964,11 +17408,13 @@ def read_data_from_h5(h5path, keys, return_dict=False, grpname=None):
                     elif grpname in f.keys():
                         val = f[grpname][key][...]
                     else:
-                        print('... /%s does not exist in the given h5' % grpname)
+                        if verbose:
+                            print('... /%s does not exist in the given h5' % grpname)
                         sys.exit()
                     datadict[key] = val
                 except:
-                    print('read_data_from_h5: %s does not exist in %s' % (key, h5path))
+                    if verbose:
+                        print('read_data_from_h5: %s does not exist in %s' % (key, h5path))
                     datadict[key] = None
         return datadict
 
@@ -17174,8 +17620,10 @@ def compute_ring_circulation_from_master_curve(l, veff, dp=160., do=25.6, N=8, s
     return circulation
 
 def estimate_ring_energy(sl, sv, dp=160., do=25.6, N=8, lowerGamma=2.2, setting='medium', rho=1e-3,
+                         veff=None,
                          a=1., alpha=None, beta=None, core_type='viscous',
                          circulation_option='master curve',
+                         model='thin_core',
                          verbose=False):
     """
     Given a stroke length, this function estimates energy of a vortex ring in a vortex ring collider in nJ
@@ -17210,7 +17658,7 @@ def estimate_ring_energy(sl, sv, dp=160., do=25.6, N=8, lowerGamma=2.2, setting=
 
     if alpha is None and beta is None:
         if core_type == 'viscous':
-            alpha,  beta = 2.04, 0.558
+            alpha, beta = 2.04, 0.558
         elif core_type == 'solid_const_volume':
             alpha, beta = 1.75, 0.25
         elif core_type == 'hollow_const_volume':
@@ -17228,27 +17676,46 @@ def estimate_ring_energy(sl, sv, dp=160., do=25.6, N=8, lowerGamma=2.2, setting=
         circulation = 4*np.pi * radius * vel / (np.log(8. * radius / a) - beta) # in mm2/s
     elif circulation_option=='master curve' or 'mc':
         circulation = compute_ring_circulation_from_master_curve(sl, veff, dp=dp, do=do, N=N, setting=setting)
-    energy = 0.5 * rho * circulation ** 2 * radius * (np.log(8. * radius / a) - alpha) # in mm= gmm2/s2 = nJ
+
+    if model=='spherical':
+        energy = 10/7.*np.pi*radius**3*vel**2
+    else:
+        energy = 0.5 * rho * circulation ** 2 * radius * (np.log(8. * radius / a) - alpha) # in mm= gmm2/s2 = nJ
+
     if verbose:
+        # ring_properties = {'core size(given by a user)': a,
+        #                    'core param alpha': alpha,
+        #                    'core param beta': beta,
+        #                    'radius in mm': radius,
+        #                    'self-induced vel in mm/s': vel,
+        #                    'circulation in mm2/s': circulation,
+        #                    'circulation approx- 4piRV': 4*np.pi*radius*vel,
+        #                    'energy in nJ': energy,
+        #                    'energy in nJ with Gamma=4piRV':  0.5 * rho * (4*np.pi*radius*vel) ** 2 * radius * (np.log(8. * radius / a) - alpha),
+        #                    'Impulse in gmm /s': rho * circulation * np.pi * radius**2,
+        #                    'Impulse with Gamma=4piRV in gmm /s': rho * (4*np.pi*radius*vel)  * np.pi * radius ** 2
+        #                    }
         ring_properties = {'core size(given by a user)': a,
                            'core param alpha': alpha,
                            'core param beta': beta,
                            'radius in mm': radius,
                            'self-induced vel in mm/s': vel,
-                           'circulation in mm2/s': circulation,
-                           'circulation approx- 4piRV': 4*np.pi*radius*vel,
-                           'energy in nJ': energy,
-                           'energy in nJ with Gamma=4piRV':  0.5 * rho * (4*np.pi*radius*vel) ** 2 * radius * (np.log(8. * radius / a) - alpha),
-                           'Impulse in gmm /s': rho * circulation * np.pi * radius**2,
-                           'Impulse with Gamma=4piRV in gmm /s': rho * (4*np.pi*radius*vel)  * np.pi * radius ** 2
+                           'circulation in m2/s': circulation*1e-6,
+                           'circulation approx- 4piRV in m2/s': 4*np.pi*radius*vel*1e-6,
+                           'energy in mJ': energy*1e-6,
+                           'energy in mJ with Gamma=4piRV':  0.5 * rho * (4*np.pi*radius*vel) ** 2 * radius * (np.log(8. * radius / a) - alpha)*1e-6,
+                           'Impulse in kg m /s': rho * circulation * np.pi * radius**2*1e-6,
+                           'Impulse with Gamma=4piRV in kg m /s': rho * (4*np.pi*radius*vel)  * np.pi * radius ** 2*1e-6
                            }
         for key in ring_properties.keys():
             print(key, ring_properties[key])
-
-    if len(energy) == 1:
-        return energy[0]
-    else:
+    if type(energy) == int or float:
         return energy
+    else:
+        if len(energy) == 1:
+            return energy[0]
+        else:
+            return energy
 
 
 def estimate_ringVRratio(sl, sv, dp=160., do=25.6, norfices=8, lowerGamma=2.2, setting='medium', method='master_curve',
@@ -17437,6 +17904,14 @@ def show_h5_keys(dpath):
     with h5py.File(dpath, mode='r') as f:
         print(f.keys())
 
+def show_h5_subkeys(dpath, key):
+    """Displays a list of dataset names in h5- only the datasets stored under the top"""
+    with h5py.File(dpath, mode='r') as f:
+        try:
+            print(f[key].keys())
+        except KeyError:
+            print(f'{key} does not exist in {dpath}')
+
 def get_h5_keys(dpath):
     """Returns a list of dataset names in h5- only the datasets stored under the top
     ... /Dataset1, /Dataset2, ... -> Returns ["Dataset1", "Dataset2"]
@@ -17572,6 +18047,14 @@ def resample2d(x, ys, n=100, mode='linear', return_x_in_2d=False):
         return x_resampled, y_resampled
     else:
         return x_resampled[:, 0], y_resampled
+
+def find_n_largest_values(arr, n):
+    """Returns n largest values in a given array"""
+    return np.partition(arr, -n)[-n:]
+
+def find_n_smallest_values(arr, n):
+    """Returns n smallest values in a given  array"""
+    return np.partition(arr, n)[:n]
 
 # IMAGE ANALYSIS
 import cv2, math
