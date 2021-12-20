@@ -12354,7 +12354,7 @@ def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT,
     return tp, udata_pavg
 
 
-def write_hdf5_dict(filename, data_dict, overwrite=False, verbose=True):
+def write_hdf5_dict(filename, datadict, attrdict=None, overwrite=False, verbose=True):
     """
     Stores data_dict = {'varname0': var0, 'varname1': var1, ...} in hdf5
     - A quick function to store multiple data into a single hdf5 file
@@ -12363,7 +12363,7 @@ def write_hdf5_dict(filename, data_dict, overwrite=False, verbose=True):
     ----------
     filepath :  str
                 file path where data will be stored. (Do not include extension- .h5)
-    data_dict : dictionary
+    datadict : dictionary
                 data should be stored as data_dict[key]= data_arrays
 
     Returns
@@ -12378,25 +12378,30 @@ def write_hdf5_dict(filename, data_dict, overwrite=False, verbose=True):
     if not filename[-3:] == ext:
         filename = filename + ext
 
-    hf = h5py.File(filename, mode='a')
-    for key in data_dict:
-        if key in hf.keys() and overwrite:
-            del hf[key]
-        try:
-            hf.create_dataset(key, data=data_dict[key])
-        except RuntimeError:
-            if overwrite:
+    with h5py.File(filename, mode='a') as hf:
+        for key in datadict:
+
+            if key in hf.keys() and overwrite:
                 del hf[key]
-                hf.create_dataset(key, data=data_dict[key])
-            else:
-                if verbose:
-                    print(key, ' already exists in the h5 file! It will NOT be overwriting the existing data')
+            try:
+                hf.create_dataset(key, data=datadict[key])
+            except RuntimeError:
+                if overwrite:
+                    del hf[key]
+                    hf.create_dataset(key, data=datadict[key])
+                else:
+                    if verbose:
+                        print(key, ' already exists in the h5 file! It will NOT be overwriting the existing data')
 
-    hf.close()
+        if attrdict is not None:
+            for key in attrdict:
+                for attrname, item in attrdict[key].items():
+                    hf[key][attrname] = item
+
     if verbose:
-        print('Data was successfully saved as ' + filename)
+        print('Data was successfully saved at ' + filename)
 
-def read_simple_hdf5(datapath):
+def read_simple_hdf5(datapath, grpname=None):
     """
     Returns a dictionary of data in a hdf5
     ... The hdf5 file must have a simple structure.
@@ -12418,13 +12423,15 @@ def read_simple_hdf5(datapath):
     """
     datadict = {}
     with h5py.File(datapath, 'r') as data:
+        if grpname is not None:
+            data = data[grpname]
         keys = list(data.keys())
         for key in keys:
             datadict[key] = data[key][...]
         print('Keys of the returning dictionary: ', keys)
     return datadict
 
-def add_data2udatapath(udatapath, datadict, grpname=None, overwrite=False, verbose=True):
+def add_data2udatapath(udatapath, datadict, attrdict=None, grpname=None, overwrite=False, verbose=True):
     """
     Writes a data stored in a dictionary into a hdf5 at udatatapth
     ... datadict = {"name1": value1, "name2":value2, ...} will be stored like /name1, /name2 in the hdf5 file
@@ -12503,6 +12510,14 @@ def add_data2udatapath(udatapath, datadict, grpname=None, overwrite=False, verbo
                     else:
                         f.create_dataset(new_key, data=datadict[new_key])
 
+        if attrdict is not None:
+            for key in attrdict:
+                for attrname, item in attrdict[key].items():
+                    if attrname not in f[key].attrs or overwrite:
+                        print(f'add_data2udatapath(): {key}.attrs[\'{attrname}\'] already exists. Overwriting...')
+                        f[key].attrs[attrname] = item
+                    else:
+                        print(f'add_data2udatapath(): {key}.attrs[\'{attrname}\'] already exists. Skipping...')
 
 
 def convert_dat2h5files(dpath, savedir=None, verbose=False, overwrite=True, start=0):
@@ -17361,7 +17376,7 @@ def read_pickle(filename):
 def read_data_from_h5(h5path, keys, return_dict=False, grpname=None, verbose=True):
     """
     Grabs data in a simply organized h5 file
-    ... Return the data stored at /keys[0], ... /keys[1], ...
+    ... Return the data stored at /keys[0], /keys[1], ...
 
     Parameters
     ----------
@@ -17417,6 +17432,12 @@ def read_data_from_h5(h5path, keys, return_dict=False, grpname=None, verbose=Tru
                         print('read_data_from_h5: %s does not exist in %s' % (key, h5path))
                     datadict[key] = None
         return datadict
+
+def remove_data_from_h5(h5path, keys,):
+    """Removes datasets from a h5 file"""
+    with h5py.File(h5path, mode='a') as f:
+        for key in keys:
+            del f[key]
 
 def merge_simple_hdf5s(path2masterh5, paths2h5s2add, overwrite=False):
     """
