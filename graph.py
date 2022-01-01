@@ -46,14 +46,14 @@ warnings.filterwarnings("ignore")
 __def_colors__ = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
 __color_cycle__ = itertools.cycle(['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'])  #matplotliv v2.0
 __old_color_cycle__ = itertools.cycle(['b', 'g', 'r', 'c', 'm', 'y', 'k'])  #matplotliv classic
-__fontsize__ = 16
-__figsize__ = (8, 8)
+__fontsize__ = 12
+__figsize__ = (7.54, 7.54)
 cmap = 'magma'
 
 # See all available arguments in matplotlibrc
 params = {'figure.figsize': __figsize__,
           'font.size': __fontsize__,  #text
-        'legend.fontsize': 12, # legend
+        'legend.fontsize': __fontsize__, # legend
          'axes.labelsize': __fontsize__, # axes
          'axes.titlesize': __fontsize__,
          'xtick.labelsize': __fontsize__, # tick
@@ -1749,7 +1749,7 @@ def plot_interpolated_curves(x, y, zoom=2, fignum=1, figsize=None, label='', col
 # (pcolormesh)
 def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None, vmax=None, log10=False, label=None,
                cbar=True, cmap='magma', symmetric=False, enforceSymmetric=True, aspect='equal', option='scientific', ntick=5, tickinc=None,
-               crop=None, fontsize=None, ticklabelsize=None,
+               crop=None, fontsize=None, ticklabelsize=None, cb_kwargs={},
                **kwargs):
     """
 
@@ -1830,13 +1830,13 @@ def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None
 
     if cbar:
         if vmin is None and vmax is None:
-            add_colorbar(cc, ax=ax, label=label, option=option, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize)
+            add_colorbar(cc, ax=ax, label=label, option=option, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize, **cb_kwargs)
         elif vmin is not None and vmax is None:
-            add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize)
+            add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize, **cb_kwargs)
         elif vmin is None and vmax is not None:
-            add_colorbar(cc, ax=ax, label=label, option=option, vmax=vmax, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize)
+            add_colorbar(cc, ax=ax, label=label, option=option, vmax=vmax, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize, **cb_kwargs)
         else:
-            add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, vmax=vmax, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize)
+            add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, vmax=vmax, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize, **cb_kwargs)
     ax.set_aspect(aspect)
     # set edge color to face color
     cc.set_edgecolor('face')
@@ -2831,7 +2831,8 @@ def add_colorbar_old(mappable, fig=None, ax=None, fignum=None, label=None, fonts
 
 
 def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', label=None, fontsize=None, option='normal',
-                 tight_layout=True, ticklabelsize=None, aspect='equal', ntick=5, tickinc=None, **kwargs):
+                 tight_layout=True, ticklabelsize=None, aspect='equal', ntick=5, tickinc=None,
+                 size='5%', pad=0.15, **kwargs):
     """
     Adds a color bar
 
@@ -2915,7 +2916,7 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
     reset_sfmt()
 
     divider = axes_grid.make_axes_locatable(ax)
-    cax = divider.append_axes(location, size='5%', pad=0.15)
+    cax = divider.append_axes(location, size=size, pad=pad)
     if option == 'scientific_custom':
         ticks = get_ticks_for_sfmt(mappable, n=ntick, inc=tickinc, **kwargs)
         kwargs = remove_vmin_vmax_from_kwargs(**kwargs)
@@ -2937,6 +2938,11 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
             cb.set_label(label, fontsize=fontsize)
     if ticklabelsize is not None:
         cb.ax.tick_params(labelsize=ticklabelsize)
+
+    # ALTERNATIVELY
+    # global __fontsize__
+    # cb.ax.tick_params(axis='both', which='major', labelsize=__fontsize__, length=5, width=0.2)
+    # cb.ax.yaxis.get_offset_text().set_fontsize(__fontsize__) # For scientific format
 
     # Adding a color bar may distort the aspect ratio. Fix it.
     if aspect=='equal':
@@ -3183,9 +3189,9 @@ def labelaxes_multicolor(ax, list_of_strings, list_of_colors, axis='x', anchorpa
 
 
 # Limits
-def setaxes(ax, xmin, xmax, ymin, ymax):
-    ax.set_xlim(xmin, xmax)
-    ax.set_ylim(ymin, ymax)
+def setaxes(ax, xmin, xmax, ymin, ymax, **kwargs):
+    ax.set_xlim(xmin, xmax, **kwargs)
+    ax.set_ylim(ymin, ymax, **kwargs)
     return ax
 
 ## Set axes to semilog or loglog
@@ -3232,6 +3238,44 @@ def set_ytick_interval(ax, tickint):
     """
     ax.yaxis.set_major_locator(ticker.MultipleLocator(tickint))
 
+def force2showLogMinorTicks(ax, subs='all', numticks=9, axis='both'):
+    """
+    Force to show the minor ticks in the logarithmic axes
+    ... the minor ticks could be suppressed in a limited space
+    Parameters
+    ----------
+    ax: Axes instance
+    subs: str, list, or np.array, 'all' is equivalent to np.arange(1, 10)
+    numticks: int, make this integer high to show the minor ticks
+
+    Returns
+    -------
+
+    """
+    if axis in ['x', 'both']:
+        ax.xaxis.set_minor_locator(ticker.LogLocator(subs=subs, numticks=numticks))  # set the ticks position
+    if axis in ['y', 'both']:
+        ax.yaxis.set_minor_locator(ticker.LogLocator(subs=subs, numticks=numticks))  # set the ticks position
+
+def force2showLogMajorTicks(ax, subs=[1.], numticks=9, axis='both'):
+    """
+    Force to show the minor ticks in the logarithmic axes
+    ... the minor ticks could be suppressed in a limited space
+    Parameters
+    ----------
+    ax: Axes instance
+    subs: str, list, or np.array, 'all' is equivalent to np.arange(1, 10)
+    ... to
+    numticks: int, make this integer high to show the minor ticks
+
+    Returns
+    -------
+
+    """
+    if axis in ['x', 'both']:
+        ax.xaxis.set_major_locator(ticker.LogLocator(subs=subs, numticks=numticks))  # set the ticks position
+    if axis in ['y', 'both']:
+        ax.yaxis.set_major_locator(ticker.LogLocator(subs=subs, numticks=numticks))  # set the ticks position
 
 
 ##Title
@@ -3490,6 +3534,10 @@ def draw_power_triangle(ax, x, y, exponent, w=None, h=None, facecolor='none', ed
 
     xmin, xmax = ax.get_xlim()
     ymin, ymax = ax.get_ylim()
+    if xmin < 0:
+        xmin = 1e-16
+    if ymin < 0:
+        ymin = 1e-16
     exp_xmax, exp_xmin = np.log10(xmax), np.log10(xmin)
     exp_ymax, exp_ymin = np.log10(ymax), np.log10(ymin)
     exp_x, exp_y = np.log10(x), np.log10(y)
@@ -3517,7 +3565,6 @@ def draw_power_triangle(ax, x, y, exponent, w=None, h=None, facecolor='none', ed
     patch = mpatches.PathPatch(path, facecolor=facecolor, edgecolor=edgecolor, alpha=alpha, zorder=zorder)
     ax.add_patch(patch)
 
-
     # annotate
     # beta = 20. # greater beta corresponds to less spacing between the texts and the triangle edges
     if exponent >= 0 and not flip:
@@ -3532,7 +3579,6 @@ def draw_power_triangle(ax, x, y, exponent, w=None, h=None, facecolor='none', ed
     else:
         x_base, y_base = 10 ** (exp_x + exp_w * 0.5), 10 ** (exp_y + exp_h - (exp_ymax - exp_ymin) / beta)
         x_height, y_height = 10 ** (exp_x - 0.6*(exp_xmax - exp_xmin) / beta), 10 ** (exp_y + exp_h * 0.6)
-
 
     if set_base_label_one:
         ax.text(x_base, y_base, '1', fontsize=fontsize)
@@ -4118,7 +4164,7 @@ def draw_box(ax, xx, yy, w_box=351., h_box=351., xoffset=0, yoffset=0, linewidth
         width, height = xmax - xmin, ymax - ymin
         ax.plot(x_sb, y_sb, linewidth=sb_lw, color=sb_txtcolor)
         if fontsize is None or fontsize>0:
-            ax.text(x_sb_txt, y_sb_txt, '%d %s' % (sb_length, sb_units), color=sb_txtcolor, fontsize=fontsize)
+            ax.text(x_sb_txt, y_sb_txt, '%d%s' % (sb_length, sb_units), color=sb_txtcolor, fontsize=fontsize)
     ax.get_xaxis().set_visible(False)
     ax.get_yaxis().set_visible(False)
 
@@ -4319,6 +4365,15 @@ def get_plot_data_from_fig(fig, axis_number=0):
         xlist.append(x)
         ylist.append(y)
     return xlist, ylist
+
+def get_data_from_fig_scatter(ax):
+    """Retrieves x, y from a scatter plot"""
+    ndata = len(ax.collections)
+    xs, ys = [], []
+    for item in ax.collections:
+        xs.append(item._offsets.data[:, 0])
+        ys.append(item._offsets.data[:, 1])
+    return xs, ys
 
 ## Interactive plotting
 class LineDrawer(object):
