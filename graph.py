@@ -4873,22 +4873,29 @@ def get_binned_stats(arg, var, n_bins=100, mode='linear', bin_center=True, retur
         return arg_bins, var_mean, var_err / np.sqrt(counts)
 
 
-def make_ax_symmetric(ax):
+def make_ax_symmetric(ax, axis='y'):
+    """Makes the plot symmetric about x- or y-axis"""
     """
-    Makes the y-axis symmetric about x=0
-
+    Makes the plot symmetric about the x- or y-axis
+    
     Parameters
     ----------
     ax: axes.Axes instance
-
+    axis: str, Choose from 'x', 'y', 'both'
+    
     Returns
     -------
     None
 
     """
-    ymin, ymax = ax.get_ylim()
-    yabs = max(-ymin, ymax)
-    ax.set_ylim(-yabs, yabs)
+    if axis in ['y', 'both']:
+        ymin, ymax = ax.get_ylim()
+        yabs = max(-ymin, ymax)
+        ax.set_ylim(-yabs, yabs)
+    if axis in ['x', 'both']:
+        xmin, xmax = ax.get_xlim()
+        xabs = max(-xmin, xmax)
+        ax.set_xlim(-xabs, xabs)
 
 def make_ticks_scientific(ax):
     """
@@ -4904,7 +4911,7 @@ def make_ticks_scientific(ax):
 
     Parameters
     ----------
-    ax
+    ax: axes.Axes instance
 
     Returns
     -------
@@ -4916,6 +4923,23 @@ def make_ticks_scientific(ax):
 def color_axis(ax, locs=['bottom', 'left', 'right'], colors=['k', 'C0', 'C1'],
                xlabel_color=None, ylabel_color=None,
                xtick_color=None, ytick_color=None):
+    """
+    Colors the axes (axis, ticks, and a label)
+
+    Parameters
+    ----------
+    ax: axes.Axes instance
+    locs: list of strings, locations of the axes. choose from 'bottom', 'left', 'right', 'top'
+    colors: list of strings, colors of the axes. e.g. ['k', 'C0', 'C1']
+    xlabel_color: str, color of xlabel. If None, the same colors as "colors" are used.
+    ylabel_color: str, color of ylabel. If None, the same colors as "colors" are used.
+    xtick_color: str, color of xtick. If None, the same colors as "colors" are used.
+    ytick_color: str, color of ytick. If None, the same colors as "colors" are used.
+
+    Returns
+    -------
+
+    """
     for loc, color in zip(locs, colors):
         ax.spines[loc].set_color(color)
         if loc in ['top', 'bottom'] and xlabel_color is None:
