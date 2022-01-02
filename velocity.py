@@ -13439,8 +13439,7 @@ def default_analysis_stb(dpath, inc=1, overwrite=False, time=None):
     if not all([target in keys for target in ['r_energy', 'eTimeThetaPhi_avg', 'eTimeThetaPhi_avg_err']]) or overwrite:
         udata, xxx, yyy, zzz = get_udata_from_path(dpath, t0=0, t1=1, return_xy=True)  # sample udata
         rr, theta, phi = cart2sph(xxx - xc, yyy - yc, zzz - zc)
-        radial_dist, eTimeThetaPhi_avg, eTimeThetaPhi_avg_err = get_binned_stats(rr,
-                                                                                     etavg)  # radial, time-averaged energy distritbuion
+        radial_dist, eTimeThetaPhi_avg, eTimeThetaPhi_avg_err = get_binned_stats(rr, etavg)  # radial, time-averaged energy distritbuion
         radial_dist_enst, enstTimeThetaPhi_avg, enstTimeThetaPhi_avg_err = get_binned_stats(rr,
                                                                                                 enst_tavg)  # radial, time-averaged energy distritbuion
 
@@ -17129,6 +17128,110 @@ def get_azimuthal_average(ef_nd, freqs, nkout=None, statistic='mean', mode='line
     ef1d_err = ef1d_err * cc
     return fr_binned, ef1d, ef1d_err
 
+# Vector calculus with udata format
+def dot(udata, vdata):
+    """
+    Returns a dot poduct of udata with vdata
+
+    Parameters
+    ----------
+    udata: nd array with shape (dim, height, width, (depth), (duration))
+    vdata: nd array with shape (dim, height, width, (depth), (duration))
+
+    Returns
+    -------
+    scaData: nd array with (height, width, (depth), (duration))
+    """
+    udim, vdim = udata.shape[0], vdata.shape[0]
+    if udim != vdim:
+        raise ValueError('udata and vdata must have the same number of components')
+    else:
+        if len(udata.shape) < len(vdata.shape):
+            udata, vdata = vdata, udata # udata always a greater dimension
+        if udata.shape == vdata.shape: # preferred
+            scaData = np.zeros_like(udata[0, ...])
+            for d in range(udim):
+                scaData += udata[d, ...] * vdata[d, ...]
+            return scaData
+        else:
+            if udata.shape[:-1] != vdata.shape:
+                raise ValueError('udata must have the same shape as vdata OR udata[..., 0] must have the shape as vdata')
+            else:
+                scaData = np.zeros_like(udata[0, ...])
+                for d in range(udim):
+                    for t in range(udata.shape[-1]):
+                        scaData[..., t] += udata[d, ..., t] * vdata[d, ...]
+                return scaData
+
+def cross(udata, vdata):
+    """
+    Returns an cross poduct of udata with vdata
+
+    Parameters
+    ----------
+    udata: nd array with shape (dim, height, width, (depth), (duration))
+    vdata: nd array with shape (dim, height, width, (depth), (duration))
+
+    Returns
+    -------
+    vecData: nd array with (dim, height, width, (depth), (duration)) if dim==3 OR (height, width, (depth), (duration)) if dim==2
+    """
+    udim, vdim = udata.shape[0], vdata.shape[0]
+    if udim != vdim:
+        raise ValueError('udata and vdata must have the same number of components')
+    else:
+        if len(udata.shape) < len(vdata.shape):
+            udata, vdata = vdata, -udata # udata always a greater dimension; flipping the order of u and v changes the sign
+        if udim == 3:
+            if udata.shape == vdata.shape: # preferred (udata and vdata are both time-series with the same shape)
+                vecData = np.empty_like(udata[...])
+                vecData[0, ...] = udata[1, ...] * vdata[2, ...] -  udata[2, ...] * vdata[1, ...]
+                vecData[1, ...] = udata[2, ...] * vdata[0, ...] -  udata[0, ...] * vdata[2, ...]
+                vecData[2, ...] = udata[0, ...] * vdata[1, ...] -  udata[1, ...] * vdata[0, ...]
+                return vecData
+            else:
+                if udata.shape[:-1] != vdata.shape:
+                    raise ValueError('udata must have the same shape as vdata OR udata[..., 0] must have the shape as vdata')
+                else:
+                    vecData = np.empty_like(udata[...])
+                    for d in range(udim):
+                        for t in range(udata.shape[-1]):
+                            vecData[0, ..., t] = udata[1, ..., t] * vdata[2, ...] -  udata[2, ..., t] * vdata[1, ...]
+                            vecData[1, ..., t] = udata[2, ..., t] * vdata[0, ...] -  udata[0, ..., t] * vdata[2, ...]
+                            vecData[2, ..., t] = udata[0, ..., t] * vdata[1, ...] -  udata[1, ..., t] * vdata[0, ...]
+                    return vecData
+        elif udim == 2:
+            if udata.shape == vdata.shape: # preferred (udata and vdata are both time-series with the same shape)
+                vecData = udata[0, ...] * vdata[1, ...] -  udata[1, ...] * vdata[0, ...]
+                return vecData
+            else:
+                if udata.shape[:-1] != vdata.shape:
+                    raise ValueError('udata must have the same shape as vdata OR udata[..., 0] must have the shape as vdata')
+                else:
+                    vecData = np.empty_like(udata[0, ...])
+                    for d in range(udim):
+                        for t in range(udata.shape[-1]):
+                            vecData[..., t] = udata[0, ..., t] * vdata[1, ...] -  udata[1, ..., t] * vdata[0, ...]
+                    return vecData
+
+def mag(udata):
+    """
+    Returns a norm of of udata
+
+    Parameters
+    ----------
+    udata: nd array with shape (dim, height, width, (depth), (duration))
+
+    Returns
+    -------
+    umag: np.array with shape () or (duration, )
+    """
+    umag = np.zeros_like(udata[0, ...])
+    dim = udata.shape[0]
+    for d in range(dim):
+        umag += udata[d, ...] ** 2
+    umag = np.sqrt(umag)
+    return umag
 
 # FLUX ANALYSIS
 def compute_energy_flux(udata, xx, yy, zz, xc, yc, zc, rho=0.000997, n=50, ntheta=100, nphi=100, flux_density=False):
