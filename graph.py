@@ -1375,6 +1375,7 @@ def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax
 
     x = np.array(x)
     y = np.array(y)
+    yerr = np.array(yerr)
 
     #ax = ax if ax is not None else plt.gca()
     # if color is None:
