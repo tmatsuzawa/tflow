@@ -12591,15 +12591,19 @@ def get_udata_dim(udatapath):
         shape = f['ux'].shape
     return shape
 
-def get_udata_phys_dim(udatapath):
+def get_udata_phys_dim(udatapath, x0=0, x1=-1, y0=0, y1=-1, z0=0, z1=-1):
     "Returns the width, height, and the depth of the udata in physical dimensions (probably in mm)"
+    if x1 is None: x1 = -1
+    if y1 is None: y1 = -1
+    if z1 is None: z1 = -1
+
     xxx, yyy, zzz = read_data_from_h5(udatapath, ['x', 'y', 'z'])
     if zzz is not None:
-        w, h, d = xxx[0, -1, 0] - xxx[0, 0, 0], yyy[0, 0, 0] - yyy[-1, 0, 0], zzz[0, 0, -1] - zzz[0, 0, 0]
+        w, h, d = xxx[y0, x1, z0] - xxx[y0, x0, z0], yyy[y0, x0, z0] - yyy[y1, x0, z0], zzz[y0, x0, z1] - zzz[y0, x0, z0]
         w, h, d = np.abs(w), np.abs(h), np.abs(d)
         return w, h, d
     else:
-        w, h = xxx[0, -1] - xxx[0, 0], yyy[0, 0] - yyy[-1, 0]
+        w, h = xxx[y0, x1] - xxx[y0, x0], yyy[y0, x0] - yyy[y1, x0]
         w, h = np.abs(w), np.abs(h)
         return w, h
 
