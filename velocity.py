@@ -15090,6 +15090,43 @@ def estimate_veff(sl, sv):
     return veff
 
 
+def isRingFormed(sl, sv, f, P=1.0, do=25.6, dp=160., n=8, amax=1.8e4):
+    """
+    Returns if a commanded ring is formed in the turbulent blob experiment
+    ... A ring is formed regardless of commanded stroke length and velocity; however, the piston may not move accordingly
+    ... This determines if a ring was formed cleanly
+    ... Condition 1: L/D<=4... Ring is accompanied by a jet if L/D>4
+    ... Condition 2: Piston moves with finite acceleration. Effective velocity, veff, is always less than a certain value.
+    ... Condition 3: Oscillatory motion sets the minimum velocity of the piston needs to be.
+
+
+    Parameters
+    ----------
+    sl: float/1d array, commanded stroke length in mm
+    sv: float/1d array, commanded stroke velocity in mm/s
+    f: float/1d array, driving frequency of the piston
+    P: float, velocity shape factor <v^2>/<v>^2>=1. Experimentally, this is around 1.2.
+    do: float, diameter of the orifice
+    dp: float, diameter of the piston
+    n: int, number of orifices of the chamber
+    amax: float, maximum acceleration of the piston. Experimentally, this is 1.8e4 mm/s2. Relevant to Condition2.
+
+    Returns
+    -------
+    isRingFormed: bool, True if the ring could be formed at the given driving frequency
+    (the formed ring would have the same or similar properties as the rings formed by a corresponding pulse)
+    False if the formed ring would have different properties from the rings formed by a corresponding pulse.
+    """
+    veff = estimate_veff(sl, sv)
+    ld = compute_form_no(sl, orifice_d=do, piston_d=dp, num_orifices=n)
+
+    cond1 = ld <= 4
+    # cond2 = veff <= (P / 2. * (amax * do) ** 0.5 * ld ** 0.5) #This just sets the upper bound
+    cond2 = True
+    cond3 = veff > (P * f * do) * ld
+
+    isRingFormed = cond1 * cond2 * cond3
+    return isRingFormed
 
 def smooth(x, window_len=11, window='hanning', log=False):
     """smooth the data using a window with requested size.
@@ -15211,11 +15248,16 @@ def coarse_grain_udata(udata, nrows_sub, ncolumns_sub, overwrap=0.5, xx=None, yy
 
 def coarse_grain_2darr(arr, nrows_sub, ncolumns_sub):
     """
-    Coarse-grain 2D arrays
+    Coarse-grain a 2D array
+    ... Coarse-graining a MxN array means a following procedure.
+        1. Divide an MxN array into blocks of (m x n) arrays
+        ... m=nrows_sub, n=ncolumns_sub
+        2. Replace each block by an average of the values in the block
+    ... If you are not familiar with coarse-graining, consult with Kadanoff's block-spin renormalization group.
 
     Parameters
     ----------
-    arr:
+    arr: 2d
     nrows_sub: int, Number of rows of blocks (over which values are averaged)
     ncolumns_sub: int, Number of columns of blocks
 
@@ -15250,26 +15292,26 @@ def coarse_grain_2darr_overwrap(arr, nrows_sub, ncolumns_sub, overwrap=0.5):
     """
     Coarse-grain 2D arrays with overwrap (mimics how PIVLab processes a velocity field)
 
-arr= [[ 0  1  2  3  4  5]
-     [ 6  7  8  9 10 11]
-     [12 13 14 15 16 17]
-     [18 19 20 21 22 23]
-     [24 25 26 27 28 29]
-     [30 31 32 33 34 35]]
+    arr= [[ 0  1  2  3  4  5]
+         [ 6  7  8  9 10 11]
+         [12 13 14 15 16 17]
+         [18 19 20 21 22 23]
+         [24 25 26 27 28 29]
+         [30 31 32 33 34 35]]
 
-    -> Make a new array. (nrows_sub=4, ncolumns_sub=4, overwrap=0.5)
-array([[  0.,   1.,   2.,   3.,   2.,   3.,   4.,   5.],
-       [  6.,   7.,   8.,   9.,   8.,   9.,  10.,  11.],
-       [ 12.,  13.,  14.,  15.,  14.,  15.,  16.,  17.],
-       [ 18.,  19.,  20.,  21.,  20.,  21.,  22.,  23.],
-       [ 12.,  13.,  14.,  15.,  14.,  15.,  16.,  17.],
-       [ 18.,  19.,  20.,  21.,  20.,  21.,  22.,  23.],
-       [ 24.,  25.,  26.,  27.,  26.,  27.,  28.,  29.],
-       [ 30.,  31.,  32.,  33.,  32.,  33.,  34.,  35.]])
+        -> Make a new array. (nrows_sub=4, ncolumns_sub=4, overwrap=0.5)
+    array([[  0.,   1.,   2.,   3.,   2.,   3.,   4.,   5.],
+           [  6.,   7.,   8.,   9.,   8.,   9.,  10.,  11.],
+           [ 12.,  13.,  14.,  15.,  14.,  15.,  16.,  17.],
+           [ 18.,  19.,  20.,  21.,  20.,  21.,  22.,  23.],
+           [ 12.,  13.,  14.,  15.,  14.,  15.,  16.,  17.],
+           [ 18.,  19.,  20.,  21.,  20.,  21.,  22.,  23.],
+           [ 24.,  25.,  26.,  27.,  26.,  27.,  28.,  29.],
+           [ 30.,  31.,  32.,  33.,  32.,  33.,  34.,  35.]])
 
-    -> Coarse-grain (output)
-array([[ 10.5,  12.5],
-       [ 22.5,  24.5]])
+        -> Coarse-grain (output)
+    array([[ 10.5,  12.5],
+           [ 22.5,  24.5]])
 
     Parameters
     ----------
@@ -15350,7 +15392,7 @@ array([[  0.,   1.,   2.,   3.,   4.,  nan],
     """
     arr = np.array(arr)
     shape = arr.shape
-    arr_ext = np.full(newarrshape, np.nan)
+    arr_ext = np.full(newarrshape, fill_value)
     arr_ext[0:shape[0], 0:shape[1]] = arr
     return arr_ext
 
