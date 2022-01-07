@@ -1309,7 +1309,7 @@ def get_energy_spectrum_nd_old(udata, x0=0, x1=None, y0=0, y1=None,
 
     # Apply a window to get lean FFT spectrum for aperiodic signals
     duration = udata.shape[-1]
-    if window is not None:
+    if window is not None or window!='rectangle':
         if dim == 2:
             xx, yy = get_equally_spaced_grid(udata, spacing=dx)
             windows = get_window_radial(xx, yy, wtype=window, duration=duration)
@@ -1932,7 +1932,7 @@ def get_energy_spectrum_nd_ver2(udata, x0=0, x1=None, y0=0, y1=None,
 
     # WINDOWING
     duration = udata.shape[-1]
-    if window is not None:
+    if window is not None or window!='rectangle':
         if dim == 2:
             xx, yy = get_equally_spaced_grid(udata, spacing=dx)
             windows = get_window_radial(xx, yy, wtype=window, duration=duration)
@@ -8180,7 +8180,7 @@ def get_window_radial(xx, yy, zz=None, wtype='hamming', rmax=None, duration=None
     ... Window types:
         boxcar, triang, blackman, hamming, hann, bartlett, flattop, parzen, bohman, blackmanharris, nuttall, barthann,
         kaiser (needs beta), gaussian (needs standard deviation), general_gaussian (needs power, width),
-        slepian (needs width), chebwin (needs attenuation), exponential (needs decay scale),
+        slepian (needs width), chebwin (needs attenuation), exponential (needs a decay scale),
         tukey (needs taper fraction)
 
     Parameters
@@ -10653,6 +10653,9 @@ def get_binned_stats3d(x, y, z, var, n_bins=100, nx_bins=None, ny_bins=None, nz_
     else:
         return xx_binned, yy_binned, zz_binned, var_mean, var_err
 
+def get_udata(*args, **kwargs):
+    """A short-hand for get_udata_from_path(). For docstring, see get_udata_from_path()"""
+    return get_udata_from_path(*args, **kwargs)
 
 def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                         t0=0, t1=None, inc=1, frame=None, return_xy=False, verbose=True,
@@ -10661,6 +10664,7 @@ def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
     """
     Returns udata from a path to udata
     If return_xy is True, it returns udata, xx(2d grid), yy(2d grid)
+
     Parameters
     ----------
     udatapath
@@ -10693,7 +10697,16 @@ def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
 
     Returns
     -------
-    udata, xx, yy
+    udata: nd array with shape (dim, height, width, (depth), duration)
+        ... udata[0, ...]: ux, udata[1, ...]: uy, udata[2, ...]: uz
+        ... udata[0, ..., t] is a 2D/3D array which stores the x-component of the velocity field.
+        ... Intuitively speaking, udata is organized like udata[direction, y, x, (z), time]
+
+    (optional)
+    xx: 2d/3d array of a positional grid (x) stored in the given file
+    yy: 2d/3d array of a positional grid (y) stored in the given file
+    zz: 2d/3d array of a positional grid (z) stored in the given file
+
 
     """
     ### Dummy to determine wheteher this file is a nested udata
@@ -13581,7 +13594,7 @@ def get_suggested_inds(udatapath):
     """
     x0, x1, y0, y1, z0, z1 = read_data_from_h5(udatapath, ['x0', 'x1', 'y0', 'y1', 'z0', 'z1'])
     if x0 is None:
-        print("read_suggested_inds: Cannot find the datasets (x0, x1, y0, y1,z0, z1")
+        print("read_suggested_inds: Cannot find the datasets (x0, x1, y0, y1,z0, z1)")
         inds = {"x0": 0, "x1": None, "y0": 0, "y1": None, "z0": 0, "z1": None}
     else:
         inds = {"x0": x0, "x1": x1, "y0": y0, "y1": y1, "z0": z0, "z1": z1}
@@ -15944,7 +15957,7 @@ def get_energy_spectrum_nd(udata,
         x0s = [- height / 2 * dy, -width / 2 * dx, -depth/2*dz]  # will be used to approximate CFT of a field using DFT (y0, x0, z0)
     # WINDOWING
     duration = udata.shape[-1]
-    if window is not None:
+    if window is not None or window!='rectangle':
         if dim == 2:
             xx, yy = get_equally_spaced_grid(udata, spacing=dx)
             windows = get_window_radial(xx, yy, wtype=window, duration=duration)
@@ -16006,7 +16019,7 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
                             dealiasing=True, padding_mode='edge', padding_kwargs={},
                         debug=False):
         """
-        Returns 1D energy spectrum from velocity field data
+        Returns an energy spectrum from velocity field data
         ... The algorithm implemented in this function is VERY QUICK because it does not use the two-point  autorcorrelation tensor.
         ... Instead, it converts u(kx, ky, kz)u*(kx, ky, kz) into u(kr)u*(kr). (here * dentoes the complex conjugate)
         ... CAUTION: Must provide udata with aspect ratio ~ 1
@@ -17266,7 +17279,7 @@ def mag(udata):
 
     Parameters
     ----------
-    udata: nd array with shape (dim, height, width, (depth), (duration))
+    udata: nd array with a shape (dim, height, width, (depth), (duration))
 
     Returns
     -------
@@ -17278,6 +17291,21 @@ def mag(udata):
         umag += udata[d, ...] ** 2
     umag = np.sqrt(umag)
     return umag
+
+def norm(udata):
+    """
+    Returns a normalized udata (a vector stored at every location is normalized)
+
+    Parameters
+    ----------
+    udata: nd array with a shape (dim, height, width, (depth), (duration))
+
+    Returns
+    -------
+    normalized udata: : nd array with the same shape as udata
+    """
+    umag = mag(udata)
+    return udata/umag
 
 # FLUX ANALYSIS
 def compute_energy_flux(udata, xx, yy, zz, xc, yc, zc, rho=0.000997, n=50, ntheta=100, nphi=100, flux_density=False):
