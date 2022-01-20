@@ -1760,7 +1760,7 @@ def plot_interpolated_curves(x, y, zoom=2, fignum=1, figsize=None, label='', col
 # (pcolormesh)
 def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None, vmax=None, log10=False, label=None,
                cbar=True, cmap='magma', symmetric=False, enforceSymmetric=True, aspect='equal', option='scientific', ntick=5, tickinc=None,
-               crop=None, fontsize=None, ticklabelsize=None, cb_kwargs={},
+               crop=None, fontsize=None, ticklabelsize=None, cb_kwargs={}, return_cb=False,
                **kwargs):
     """
 
@@ -1786,12 +1786,17 @@ def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None
     tickinc
     crop
     kwargs
+    cb_kwargs: dict, kwargs for add_colorbar()
+        ... e.g. {"fformat": %.0f}
+    return_cb: bool, default: False
+        ... if True, this function returns fig, ax, cc, cb (colorbar instance)
 
     Returns
     -------
     fig:
     ax:
-    cc: QuadMesh object
+    cc: QuadMesh instance
+    cb: colorbar instance (optional)
     """
 
     if ax is None:
@@ -1841,18 +1846,21 @@ def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None
 
     if cbar:
         if vmin is None and vmax is None:
-            add_colorbar(cc, ax=ax, label=label, option=option, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize, **cb_kwargs)
+            cb = add_colorbar(cc, ax=ax, label=label, option=option, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize, **cb_kwargs)
         elif vmin is not None and vmax is None:
-            add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize, **cb_kwargs)
+            cb = add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize, **cb_kwargs)
         elif vmin is None and vmax is not None:
-            add_colorbar(cc, ax=ax, label=label, option=option, vmax=vmax, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize, **cb_kwargs)
+            cb = add_colorbar(cc, ax=ax, label=label, option=option, vmax=vmax, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize, **cb_kwargs)
         else:
-            add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, vmax=vmax, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize, **cb_kwargs)
+            cb = add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, vmax=vmax, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize, **cb_kwargs)
     ax.set_aspect(aspect)
     # set edge color to face color
     cc.set_edgecolor('face')
 
-    return fig, ax, cc
+    if return_cb:
+        return fig, ax, cc, cb
+    else:
+        return fig, ax, cc
 
 #imshow
 def imshow(arr, xmin=0, xmax=1, ymin=0, ymax=1, cbar=True, vmin=0, vmax=0, \
@@ -2843,7 +2851,8 @@ def add_colorbar_old(mappable, fig=None, ax=None, fignum=None, label=None, fonts
 
 def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', label=None, fontsize=None, option='normal',
                  tight_layout=True, ticklabelsize=None, aspect='equal', ntick=5, tickinc=None,
-                 size='5%', pad=0.15, **kwargs):
+                 size='5%', pad=0.15, fformat="%03.1f", labelpad=1, **kwargs):
+
     """
     Adds a color bar
 
@@ -2924,7 +2933,7 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
     if fig is None:
         fig = plt.gcf()
 
-    reset_sfmt()
+    reset_sfmt(fformat=fformat)
 
     divider = axes_grid.make_axes_locatable(ax)
     cax = divider.append_axes(location, size=size, pad=pad)
@@ -2944,16 +2953,16 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
 
     if not label is None:
         if fontsize is None:
-            cb.set_label(label)
+            cb.set_label(label, labelpad=labelpad)
         else:
-            cb.set_label(label, fontsize=fontsize)
+            cb.set_label(label, labelpad=labelpad, fontsize=fontsize)
     if ticklabelsize is not None:
         cb.ax.tick_params(labelsize=ticklabelsize)
-
+        cb.ax.yaxis.get_offset_text().set_fontsize(ticklabelsize)
     # ALTERNATIVELY
     # global __fontsize__
     # cb.ax.tick_params(axis='both', which='major', labelsize=__fontsize__, length=5, width=0.2)
-    cb.ax.yaxis.get_offset_text().set_fontsize(ticklabelsize) # For scientific format
+    # cb.ax.yaxis.get_offset_text().set_fontsize(__fontsize__) # For scientific format
 
     # Adding a color bar may distort the aspect ratio. Fix it.
     if aspect=='equal':
@@ -3469,8 +3478,11 @@ def addtext(ax, text='text goes here', x=0, y=0, color='k',
         ax.text(xcenter, ycenter, text,  color=color, **kwargs)
     return ax
 
+
 def draw_power_triangle(ax, x, y, exponent, w=None, h=None, facecolor='none', edgecolor='r', alpha=1.0, flip=False,
-                        fontsize=__fontsize__, set_base_label_one=False, beta=20, zorder=100, **kwargs):
+                        fontsize=__fontsize__, set_base_label_one=False, beta=20, zorder=100,
+                        x_base=None, y_base=None, x_height=None, y_height=None,
+                        **kwargs):
     """
     Draws a triangle which indicates a power law in the log-log plot.
 
@@ -3515,6 +3527,7 @@ def draw_power_triangle(ax, x, y, exponent, w=None, h=None, facecolor='none', ed
     -------
 
     """
+
     def simplest_fraction_in_interval(x, y):
         """Return the fraction with the lowest denominator in [x,y]."""
         if x == y:
@@ -3578,18 +3591,19 @@ def draw_power_triangle(ax, x, y, exponent, w=None, h=None, facecolor='none', ed
 
     # annotate
     # beta = 20. # greater beta corresponds to less spacing between the texts and the triangle edges
-    if exponent >= 0 and not flip:
-        x_base, y_base = 10 ** (exp_x + exp_w * 0.5), 10 ** (exp_y - (exp_ymax - exp_ymin) / beta)
-        x_height, y_height = 10 ** (exp_w + exp_x + 0.4*(exp_xmax - exp_xmin) / beta), 10 ** (exp_y + exp_h * 0.5)
-    elif exponent < 0 and not flip:
-        x_base, y_base = 10 ** (exp_x + exp_w * 0.5), 10 ** (exp_y + 0.3*(exp_ymax - exp_ymin) / beta)
-        x_height, y_height = 10 ** (exp_w + exp_x + 0.4*(exp_xmax - exp_xmin) / beta), 10 ** (exp_y + exp_h * 0.5)
-    elif exponent >= 0 and flip:
-        x_base, y_base = 10 ** (exp_x + exp_w * 0.4), 10 ** (exp_y + exp_h + 0.3*(exp_ymax - exp_ymin) / beta)
-        x_height, y_height = 10 ** (exp_x - (exp_xmax - exp_xmin) / beta), 10 ** (exp_y + exp_h * 0.5)
-    else:
-        x_base, y_base = 10 ** (exp_x + exp_w * 0.5), 10 ** (exp_y + exp_h - (exp_ymax - exp_ymin) / beta)
-        x_height, y_height = 10 ** (exp_x - 0.6*(exp_xmax - exp_xmin) / beta), 10 ** (exp_y + exp_h * 0.6)
+    if any([item is None for item in [x_base, y_base, x_height, y_height]]):
+        if exponent >= 0 and not flip:
+            x_base, y_base = 10 ** (exp_x + exp_w * 0.5), 10 ** (exp_y - (exp_ymax - exp_ymin) / beta)
+            x_height, y_height = 10 ** (exp_w + exp_x + 0.4 * (exp_xmax - exp_xmin) / beta), 10 ** (exp_y + exp_h * 0.5)
+        elif exponent < 0 and not flip:
+            x_base, y_base = 10 ** (exp_x + exp_w * 0.5), 10 ** (exp_y + 0.3 * (exp_ymax - exp_ymin) / beta)
+            x_height, y_height = 10 ** (exp_w + exp_x + 0.4 * (exp_xmax - exp_xmin) / beta), 10 ** (exp_y + exp_h * 0.5)
+        elif exponent >= 0 and flip:
+            x_base, y_base = 10 ** (exp_x + exp_w * 0.4), 10 ** (exp_y + exp_h + 0.3 * (exp_ymax - exp_ymin) / beta)
+            x_height, y_height = 10 ** (exp_x - (exp_xmax - exp_xmin) / beta), 10 ** (exp_y + exp_h * 0.5)
+        else:
+            x_base, y_base = 10 ** (exp_x + exp_w * 0.5), 10 ** (exp_y + exp_h - (exp_ymax - exp_ymin) / beta)
+            x_height, y_height = 10 ** (exp_x - 0.6 * (exp_xmax - exp_xmin) / beta), 10 ** (exp_y + exp_h * 0.6)
 
     if set_base_label_one:
         ax.text(x_base, y_base, '1', fontsize=fontsize)
@@ -3599,7 +3613,6 @@ def draw_power_triangle(ax, x, y, exponent, w=None, h=None, facecolor='none', ed
         exponent_rational = approximate_fraction(exponent, 0.0001)
         ax.text(x_base, y_base, str(np.abs(exponent_rational.denominator)), fontsize=fontsize, **kwargs)
         ax.text(x_height, y_height, str(np.abs(exponent_rational.numerator)), fontsize=fontsize, **kwargs)
-
 
 
 ##Clear plot
@@ -3802,6 +3815,39 @@ def get_color_from_cmap(cmap='viridis', n=10, lut=None, reverse=False):
         cmap = cmap.reversed()
     colors = cmap(np.linspace(0, 1, n, endpoint=True))
     return colors
+
+def create_weight_shifted_cmap(cmapname, ratio=0.75, vmin=None, vmax=None, vcenter=None, n=500):
+    """
+    Creates a cmap instance of a weight-shifted colormap
+
+    Parameters
+    ----------
+    cmapname: str
+    ratio
+    vmin
+    vmax
+    vcenter
+    n
+
+    Returns
+    -------
+
+    """
+    if vmin is not None and vmax is not None and vcenter is not None:
+        if vmax <= vmin:
+            raise ValueError('... vmax must be greater than vmin')
+        if vcenter <= vmin or vcenter >= vmax:
+            raise ValueError('vcenter must take a value between vmin and vmax')
+        vrange = vmax - vmin
+        ratio = (vcenter - vmin) / vrange
+
+    cmap_ = mpl.cm.get_cmap(cmapname, n)
+    colorNeg = cmap_(np.linspace(0, 0.5, int(n * ratio)))
+    colorPos = cmap_(np.linspace(0.5, 1, n - int(n * ratio)))
+    newcolors = np.concatenate((colorNeg, colorPos), axis=0)
+    newcmap = mpl.colors.ListedColormap(newcolors, name='shifted_' + cmapname)  # custom cmap
+    return newcmap
+
 
 def choose_colors(**kwargs):
     """sns.choose_cubehelix_palette()"""
@@ -4353,7 +4399,11 @@ def get_scatter_data_from_fig(fig, axis_number=0):
         data_list.append(fig.axes[axis_number].collections[i].get_offsets())
     return data_list
 
-def get_plot_data_from_fig(fig, axis_number=0):
+def get_plot_data_from_fig(*args, **kwargs):
+    """Depricated. Use get_data_from_fig_plot"""
+    get_data_from_fig_plot(*args, **kwargs)
+
+def get_data_from_fig_plot(fig, axis_number=0):
     """
     Returns a list of data included in the figure
     ... this function extracts data points for fig.ax.lines
@@ -5034,19 +5084,19 @@ def smooth(x, window_len=11, window='hanning', log=False):
     else:
         return np.exp(y[(window_len // 2 - 1):(window_len // 2 - 1) + len(x)])
 
-def pc2float(x):
+def pc2float(s):
     """
     Converts a percentage expression (str) to float
     e.g. pc2float(5.2%) returns 0.0052
     Parameters
     ----------
-    x: str, e.g. "5.2%"
+    s: str, e.g. "5.2%"
 
     Returns
     -------
     a floating number  (e.g. 0.0052)
     """
-    return float(x.strip('%'))/100.
+    return float(s.strip('%'))/100.
 
 def float2pc(x):
     """
@@ -5062,12 +5112,34 @@ def float2pc(x):
     return "{0}%".format(x * 100.)
 
 
-def simple_legend(ax, **kwargs):
+
+def simple_legend(ax, facecolor='white', **kwargs):
     "Removes the errorbars from the legend"
     from matplotlib import container
     handles, labels = ax.get_legend_handles_labels()
     handles = [h[0] if isinstance(h, container.ErrorbarContainer) else h for h in handles]
-    ax.legend(handles, labels, **kwargs)
+    lg = ax.legend(handles, labels, **kwargs)
+    frame = lg.get_frame()
+    frame.set_color(facecolor)
+
+# adjuster/reminders
+## colorbar stuff
+def adjust_colorbar(cb,
+                    fontsize=__fontsize__,
+                    label=None, labelpad=1,
+                    tick_fontsize=__fontsize__,
+                    ticks=None, ):
+    """Adj"""
+    if label is None:
+        label = cb.get_label()
+    cb.set_label(label, fontsize=fontsize, labelpad=labelpad)
+    if ticks is not None:
+        cb.set_ticks(ticks)
+    cb.ax.tick_params(labelsize=tick_fontsize)
+    cb.ax.xaxis.get_offset_text().set_fontsize(tick_fontsize)
+
+
+
 
 
 def resample(x, y, n=100, mode='linear'):
