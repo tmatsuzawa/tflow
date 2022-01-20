@@ -8248,12 +8248,14 @@ def get_window_radial(xx, yy, zz=None, wtype='hamming', rmax=None, duration=None
     if rmax is None:
         xmax, ymax = np.nanmax(xx[0, :]), np.nanmax(yy[:, 0])
         rmax = min(xmax, ymax)
-
-    r = np.linspace(-rmax, rmax, n)
-    window_1d = signal.get_window(wtype, n)
-    window_func = interpolate.interp1d(r, window_1d, bounds_error=False, fill_value=0)
-    window = window_func(rr)
-    window[rr > rmax] = 0
+    if wtype is None:
+        window = np.ones_like(rr)
+    else:
+        r = np.linspace(-rmax, rmax, n)
+        window_1d = signal.get_window(wtype, n)
+        window_func = interpolate.interp1d(r, window_1d, bounds_error=False, fill_value=0)
+        window = window_func(rr)
+        window[rr > rmax] = 0
     if duration is not None:
         windows = np.repeat(window[..., np.newaxis], duration, axis=dim)
         return windows
@@ -10415,8 +10417,9 @@ def get_binned_stats2d(x, y, var, n_bins=100, nx_bins=None, ny_bins=None, bin_ce
 
     Parameters
     ----------
-    arg: 1d array, controlling variable
-    var: 1d array, data array to be binned
+    x: 2d array, control variable
+    y: 2d array, control variable
+    var: 2d array, data array to be binned
     n_bins: int, default: 100
     mode: str, deafult: 'linear'
         If 'linear', var will be sorted to equally spaced bins. i.e. bin centers increase linearly.
@@ -10545,6 +10548,29 @@ def get_binned_stats2d(x, y, var, n_bins=100, nx_bins=None, ny_bins=None, bin_ce
 
 def get_binned_stats3d(x, y, z, var, n_bins=100, nx_bins=None, ny_bins=None, nz_bins=None, bin_center=True,
                        xmin=None, xmax=None, ymin=None, ymax=None, zmin=None, zmax=None, return_count=False):
+    """
+    Make a histogram out of a trio of 1d arrays.
+    ... Returns arg_bins, var_mean, var_err
+    ... The given arrays could contain nans and infs. They will be ignored.
+
+    Parameters
+    ----------
+    arg: 1d array, controlling variable
+    var: 1d array, data array to be binned
+    n_bins: int, default: 100
+    mode: str, deafult: 'linear'
+        If 'linear', var will be sorted to equally spaced bins. i.e. bin centers increase linearly.
+        If 'log', the bins will be not equally spaced. Instead, they will be equally spaced in log.
+        ... bin centers will be like... 10**0, 10**0.5, 10**1.0, 10**1.5, ..., 10**9
+
+    Returns
+    -------
+    xx_binned: 2d array, bin centers about x
+    yy_binned: 2d array, bin centers about y
+    var_mean: 2d array,  mean values of data in each bin
+    var_err: 2d array, standard error of data in each bin
+
+    """
 
     def get_mask_for_nan_and_inf(U):
         """
@@ -11563,6 +11589,66 @@ def kolmogorov_53_uni(k, epsilon, c=1.6):
     e_k = c * epsilon ** (2. / 3) * k ** (-5. / 3)
     return e_k
 
+def model_energy_spectrum(k, epsilon, nu, L, c=1.6, p0=2, cL=6.78, ceta=0.4, beta=5.2):
+    """
+    Returns a model energy spectrum E(k)=c epsilon^(2/3) * k**(-5/3) f(kL) g(kEta)
+
+    Parameters
+    ----------
+    k: 1d array, wavenumbers
+    epsilon: float/1d array, dissipation rate
+    nu: float, viscosity
+    L: float, integral length scale
+    c: float, kolmogorov constant (default: 1.6)
+    p0: float, power in the energy containing regime (default: 2, p0=4: Karman spectrum)
+    cL: float, a parameter related to the onset of the inertial range (cL=6.78, Pope p233)
+    ceta: float, a parameter related to the onset of the inertial range (ceta=0.4, Pope p233)
+    beta: float: strength of the exponential in the dissipation range
+
+    Returns
+    -------
+    ek: 1d array, energy spectrum
+    """
+
+    if cL < 0: raise ValueError('... cL must be a postive constant')
+    eta = (nu**3/epsilon)**0.25
+    fL = lambda k, L, p0: ((k*L) / ((k*L)**2 + cL)**0.5) ** (5/3. + p0)
+    feta = lambda k, eta, neta, ceta: np.exp(-beta * ((k*eta)**4 + ceta **4)**0.25 - ceta)
+    ek = c * epsilon ** (2/3.) * k**(-5/3.) * fL(k, L, p0) * feta(k, eta, beta, ceta)
+    return ek
+
+def scaled_model_energy_spectrum(keta, epsilon, nu, L, c=1.6, p0=2, cL=0.1, ceta=0, beta=5.2):
+    """
+    Returns a model energy spectrum rescaled by eta and epsilon
+    ... model spectrum: E(k)=c epsilon^(2/3) * k**(-5/3) f(kL) g(kEta)
+
+    e.g.
+        keta = np.logspace(-3, 0)
+        plt.plot(keta, vel.scaled_model_energy_spectrum(keta, 1e5, 1.004, 10))
+
+    Parameters
+    ----------
+    keta: 1d array, wavenumbers * kolmogorov length
+    epsilon: float/1d array, dissipation rate
+    nu: float, viscosity
+    L: float, integral length scale
+    c: float, kolmogorov constant (default: 1.6)
+    p0: float, power in the energy containing regime (default: 2, p0=4: Karman spectrum)
+    cL: float, a parameter related to the onset of the inertial range (cL=6.78, Pope p233)
+    ceta: float, a parameter related to the onset of the inertial range (ceta=0.4, Pope p233)
+    beta: float: strength of the exponential in the dissipation range
+
+    Returns
+    -------
+    ek: 1d array, rescaled energy spectrum
+    """
+    if cL < 0: raise ValueError('... cL must be a postive constant')
+    eta = (nu**3/epsilon)**0.25
+    k = keta / eta
+    fL = lambda k, L, p0: ((k*L) / ((k*L)**2 + cL)**0.5) ** (5/3. + p0)
+    feta = lambda k, eta, neta, ceta: np.exp(-beta * ((k*eta)**4 + ceta **4)**0.25 - ceta)
+    eks = c * keta**(-5/3) * fL(k, L, p0) * feta(k, eta, beta, ceta)
+    return eks
 
 def compute_kolmogorov_lengthscale_simple(epsilon, nu):
     """
@@ -13263,8 +13349,10 @@ def default_analysis_piv(dpath, inc=1, overwrite=False, time=None, t0=0, t1=None
     if not all([target in keys for target in
                 ['etavg', 'esavg', 'esavg_err', 'enst_tavg', 'enst_savg', 'enst_savg_err', 'xc', 'yc', 'zc',
                  'xc_enst', 'yc_enst', 'zc_enst']]) or overwrite:
-        udata, xx, yy = get_udata_from_path(dpath, t0=0, t1=1, return_xy=True)  # sample udata
+        udata, xx, yy = get_udata_from_path(dpath, t0=0, t1=1, return_xy=True, verbose=False)  # dummy
+        print('... computing time-averaged energy...')
         etavg = get_time_avg_energy_from_udatapath(dpath, inc=inc, t0=t0, t1=t1)
+        print('... computing time-averaged enstrophy...')
         enst_tavg = get_time_avg_enstrophy_from_udatapath(dpath, inc=inc, t0=t0, t1=t1)
         results_e = process_large_udata(dpath, func=get_spatial_avg_energy, inc=inc, clean=True,
                                             cutoff=u_cutoff, t0=t0, t1=t1)
@@ -15880,7 +15968,7 @@ def get_energy_spectrum_nd(udata,
     ...
     Parameters
     ----------
-    udata
+    udata: nd array that contains a velocity field with a shape (dim, y, x, (z), duration)
     x0: int, default: 0
         ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
     x1 int, default: None
@@ -15893,12 +15981,13 @@ def get_energy_spectrum_nd(udata,
         ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
     z1 int, default: None
         ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
-    dx
-    dy
-    dz
+    dx: float, spacing of the x-grid
+    dy: float, spacing of the y-grid
+    dz: float, spacing of the z-grid
     window
     correct_signal_loss
-    return_in
+    return_in: str, Choose from 'wavenumber' and 'freq'
+        ... wavenumber:=2pi/L, freq:=1/L
 
     Returns
     -------
@@ -15949,7 +16038,7 @@ def get_energy_spectrum_nd(udata,
             udata = square_udata(udata, mode=padding_mode, **padding_kwargs)
             x0 = y0 = z0 = 0
             x1 = y1 = z1 = udata.shape[1]
-            volume = (x1-x0)*dx * (y1-y0)*dy * (z1-z0)*dz # Should the volume be the squared/cubic volume? This is a choice
+            volume = (x1-x0)*dx * (y1-y0)*dy * (z1-z0)*dz
 
         dxs = [dy, dx, dz]
 
@@ -15992,7 +16081,7 @@ def get_energy_spectrum_nd(udata,
 
     for i in range(dim):
         ef_nd[...] += np.abs(ufdata[i, ...]) ** 2
-    ef_nd /= 2. * volume # Energy spectrum is defined via Energy DENSITY. Divide a whole thing by volume
+    ef_nd /= 2. * volume # Energy spectrum is defined via Energy DENSITY. Divide the array by volume
 
     if correct_signal_loss:
         for t in range(duration):
@@ -16083,11 +16172,6 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
             Wavenumber with shape (number of data points, duration)
 
         """
-        if notebook:
-            from tqdm import tqdm_notebook as tqdm
-            print('Using tqdm_notebook. If this is a mistake, set notebook=False')
-        else:
-            from tqdm import tqdm
 
         def convert_nd_spec_to_1d(e_ks, ks, nkout=nkout, cc=cc, mode='linear'):
             dim, duration = len(ks.shape), e_ks.shape[-1]
@@ -16100,7 +16184,7 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
             return e_k, e_k_err, kk
         e_ks, ks = get_energy_spectrum_nd(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz,
                                           window=window, correct_signal_loss=correct_signal_loss, return_in='wavenumber',
-                                              dealiasing=dealiasing, padding_mode=padding_mode, padding_kwargs=padding_kwargs)
+                                          dealiasing=dealiasing, padding_mode=padding_mode, padding_kwargs=padding_kwargs)
         e_k, e_k_err, kk = convert_nd_spec_to_1d(e_ks, ks, nkout=nkout, cc=cc, mode=mode)
 
         if debug:
@@ -16109,8 +16193,6 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
             print("LHS =", np.trapz(e_k[:, 0], kk))
             print("(RHS (riemann sum), std )= ", get_spatial_avg_energy(udata[..., 0:1], x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1))
 
-        if notebook:
-            from tqdm import tqdm as tqdm
 
         return e_k, e_k_err, kk
 
@@ -16143,7 +16225,6 @@ def get_enstrophy_spectrum_nd(udata, sigma=None,
     ef_nd, np.asarray([fxx, fyy, fzz])
         ... If return_in=''wavenumber', it returns norm of ND-CFT of velocity field as a function of wavenumber (2pi/x) instead of frequency (1/x)
     """
-
     if xx is None or yy is None:
         print('ERROR: xx or yy is not provided! xx is a 2d/3dgrid')
         print('... To compute curl, one should always provide a grid. spacing may not be sufficient as vorticity is a pseudo-vector.')
@@ -16157,7 +16238,6 @@ def get_enstrophy_spectrum_nd(udata, sigma=None,
         y0 = 0
     if y1 is None:
         y1 = udata.shape[1]
-
 
     dim = udata.shape[0]
     udata = fix_udata_shape(udata)
@@ -16901,7 +16981,7 @@ def get_impulse_density(udata, xx, yy, zz=None, rho=1e-3, crop=2):
     #                                "integrand": s6,
     #                                "dS": dx*dy,
     #                                "n": n6}
-
+    hi *= rho
     return hi
 
 def get_impulse(udata, xx, yy, zz=None, rho=1e-3, crop=2,
@@ -16920,9 +17000,6 @@ def get_impulse(udata, xx, yy, zz=None, rho=1e-3, crop=2,
     yy
     zz
     rho
-    return_bulk_surface: bool, default: False
-        ... If True, it returns the bulk term, and surface term of the hydrodynamic impulse separately in addition to
-        hydrodynamic impulse
 
     Returns
     -------
@@ -18118,6 +18195,13 @@ def get_h5_keys(dpath):
         keys = [key for key in f.keys()]
     return keys
 
+def get_h5_subkeys(dpath, key):
+    """Returns a list of dataset names in h5- only the datasets stored under /key
+    ... key/Dataset1, key/Dataset2, ... -> Returns ["Dataset1", "Dataset2"]
+    """
+    with h5py.File(dpath, mode='r') as f:
+        subkeys = [subkey for subkey in f[key].keys()]
+    return subkeys
 # labeler
 def suggest_name2write(filepath):
     """
@@ -18205,7 +18289,22 @@ def resample(x, y, n=100, mode='linear'):
             x_new = 10 ** logx_new
             flog = interpolate.interp1d(logx, y[keep])
             y_rs = flog(logx_new)
-            #                 y_rs = scipy.signal.resample(y[keep], n)
+            return x_new, y_rs
+    elif mode == 'loglog':
+            if xmax < 0:
+                raise ValueError('... log sampling cannot be performed as the max. value of x is less than 0')
+            else:
+                if xmin > 0:
+                    keep = [True] * len(x)
+                else:
+                    keep = x > 0  # ignore data points s.t. x < 0
+            xmin = np.nanmin(x[keep])
+            logx = np.log10(x[keep])
+            logxmin, logxmax = np.log10(xmin), np.log10(xmax)
+            logx_new = np.linspace(logxmin, logxmax, n, endpoint=True)
+            x_new = 10 ** logx_new
+            flog = interpolate.interp1d(logx, np.log10(y[keep]))
+            y_rs = 10**flog(logx_new)
             return x_new, y_rs
     else:
         x_new = np.linspace(xmin, xmax, n, endpoint=True)
