@@ -46,7 +46,7 @@ warnings.filterwarnings("ignore")
 __def_colors__ = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
 __color_cycle__ = itertools.cycle(['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'])  #matplotliv v2.0
 __old_color_cycle__ = itertools.cycle(['b', 'g', 'r', 'c', 'm', 'y', 'k'])  #matplotliv classic
-__fontsize__ = 18
+__fontsize__ = 11
 __figsize__ = (7.54, 7.54)
 cmap = 'magma'
 
@@ -950,7 +950,9 @@ def pie(sizes, labels=None, explode=None, autopct='%1.1f%%', startangle=90, shad
 def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None,
                    # label='Re$_{\lambda} \\approx 600 $ \n Saddoughi and Veeravalli, 1994',
                    label='Re$_{\lambda} \\approx 600 $ \n SV, 1994',
-                   color='k', alpha=0.6, subplot=None, cc=1, legend=False, **kwargs):
+                   color='k', alpha=0.6, subplot=None, cc=1, legend=False,
+                   plotEk=False,
+                   **kwargs):
     """
     plot universal 1d energy spectrum (Saddoughi, 1992)
 
@@ -970,11 +972,19 @@ def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None,
     x = np.asarray([1.27151, 0.554731, 0.21884, 0.139643, 0.0648844, 0.0198547, 0.00558913, 0.00128828, 0.000676395, 0.000254346])
     y = np.asarray([0.00095661, 0.0581971, 2.84666, 11.283, 59.4552, 381.78, 2695.48, 30341.9, 122983, 728530])
     y *= cc
+
+    if plotEk:
+        x, y_ = resample(x, y, n=100, mode='loglog')
+        y = 0.5 * x ** 3 * np.gradient(1 / x * np.gradient(y_, x), x)
+
     ax.plot(x, y, color=color, label=label, alpha=alpha,**kwargs)
     if legend:
         ax.legend()
     tologlog(ax)
-    labelaxes(ax, '$\kappa \eta$', '$E_{11} / (\epsilon\\nu^5)^{1/4}$')
+    if plotEk:
+        labelaxes(ax, '$\kappa \eta$', '$E / (\epsilon\\nu^5)^{1/4}$')
+    else:
+        labelaxes(ax, '$\kappa_1 \eta$', '$E_{11} / (\epsilon\\nu^5)^{1/4}$')
     return fig, ax
 
 def plot_saddoughi_struc_func(fignum=1, fig=None, ax=None, figsize=None,
@@ -2943,7 +2953,7 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
     # ALTERNATIVELY
     # global __fontsize__
     # cb.ax.tick_params(axis='both', which='major', labelsize=__fontsize__, length=5, width=0.2)
-    # cb.ax.yaxis.get_offset_text().set_fontsize(__fontsize__) # For scientific format
+    cb.ax.yaxis.get_offset_text().set_fontsize(ticklabelsize) # For scientific format
 
     # Adding a color bar may distort the aspect ratio. Fix it.
     if aspect=='equal':
@@ -3242,7 +3252,7 @@ def set_ytick_interval(ax, tickint):
 def force2showLogMinorTicks(ax, subs='all', numticks=9, axis='both'):
     """
     Force to show the minor ticks in the logarithmic axes
-    ... the minor ticks could be suppressed in a limited space
+    ... the minor ticks could be suppressed due to the limited space
     Parameters
     ----------
     ax: Axes instance
@@ -3261,7 +3271,7 @@ def force2showLogMinorTicks(ax, subs='all', numticks=9, axis='both'):
 def force2showLogMajorTicks(ax, subs=[1.], numticks=9, axis='both'):
     """
     Force to show the minor ticks in the logarithmic axes
-    ... the minor ticks could be suppressed in a limited space
+    ... the minor ticks could be suppressed due to the limited space
     Parameters
     ----------
     ax: Axes instance
@@ -5058,3 +5068,100 @@ def simple_legend(ax, **kwargs):
     handles, labels = ax.get_legend_handles_labels()
     handles = [h[0] if isinstance(h, container.ErrorbarContainer) else h for h in handles]
     ax.legend(handles, labels, **kwargs)
+
+
+def resample(x, y, n=100, mode='linear'):
+    """
+    Resample x, y
+    ... this is particularly useful to crete a evenly spaced data in log from a linearly spaced data, and vice versa
+
+    Parameters
+    ----------
+    x: 1d array
+    y: 1d array
+    n: int, number of points to resample
+    mode: str, options are "linear" and "log"
+
+    Returns
+    -------
+    x_new, y_rs: 1d arrays of new x and new y
+    """
+    def get_mask_for_nan_and_inf(U):
+        """
+        Returns a mask for nan and inf values in a multidimensional array U
+        Parameters
+        ----------
+        U: N-d array
+
+        Returns
+        -------
+
+        """
+        U = np.array(U)
+        U_masked_invalid = ma.masked_invalid(U)
+        return U_masked_invalid.mask
+
+    # x, y = copy.deepcopy(x_), copy.deepcopy(y_)
+    x, y = np.array(x), np.array(y) # np.array creates a new object unlike np.asarray
+
+    # remove nans and infs
+    hidex = get_mask_for_nan_and_inf(x)
+    hidey = get_mask_for_nan_and_inf(y)
+    keep = ~hidex * ~hidey
+    x, y = x[keep], y[keep]
+
+    xmin, xmax = np.nanmin(x), np.nanmax(x)
+    if mode == 'log':
+        if xmax < 0:
+            raise ValueError('... log sampling cannot be performed as the max. value of x is less than 0')
+        else:
+            if xmin > 0:
+                keep = [True] * len(x)
+            else:
+                keep = x > 0  # ignore data points s.t. x < 0
+            xmin = np.nanmin(x[keep])
+            logx = np.log10(x[keep])
+            logxmin, logxmax = np.log10(xmin), np.log10(xmax)
+            logx_new = np.linspace(logxmin, logxmax, n, endpoint=True)
+            x_new = 10 ** logx_new
+            flog = interpolate.interp1d(logx, y[keep])
+            y_rs = flog(logx_new)
+            return x_new, y_rs
+    elif mode == 'loglog':
+            if xmax < 0:
+                raise ValueError('... log sampling cannot be performed as the max. value of x is less than 0')
+            else:
+                if xmin > 0:
+                    keep = [True] * len(x)
+                else:
+                    keep = x > 0  # ignore data points s.t. x < 0
+            xmin = np.nanmin(x[keep])
+            logx = np.log10(x[keep])
+            logxmin, logxmax = np.log10(xmin), np.log10(xmax)
+            logx_new = np.linspace(logxmin, logxmax, n, endpoint=True)
+            x_new = 10 ** logx_new
+            flog = interpolate.interp1d(logx, np.log10(y[keep]))
+            y_rs = 10**flog(logx_new)
+            return x_new, y_rs
+    else:
+        x_new = np.linspace(xmin, xmax, n, endpoint=True)
+        #         y_rs = scipy.signal.resample(y, n)
+        f = interpolate.interp1d(x, y)
+        y_rs = f(x_new)
+
+        return x_new, y_rs
+
+
+def set_fontsize_scientific_text(ax, fontsize):
+    """
+    Set fontsize for the scientific format
+
+    Parameters
+    ----------
+    fontsize: int
+
+    Returns
+    -------
+
+    """
+    ax.yaxis.get_offset_text().set_fontsize(fontsize)
