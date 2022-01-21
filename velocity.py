@@ -305,7 +305,7 @@ def get_mean_flow_field_using_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None,
 
     Returns
     -------
-
+    udata_m: 2d or 3d arrya
     """
     if notebook:
         from tqdm import tqdm_notebook as tqdm
@@ -10565,10 +10565,10 @@ def get_binned_stats3d(x, y, z, var, n_bins=100, nx_bins=None, ny_bins=None, nz_
 
     Returns
     -------
-    xx_binned: 2d array, bin centers about x
-    yy_binned: 2d array, bin centers about y
-    var_mean: 2d array,  mean values of data in each bin
-    var_err: 2d array, standard error of data in each bin
+    xx_binned: 3d array, bin centers about x
+    yy_binned: 3d array, bin centers about y
+    var_mean: 3d array,  mean values of data in each bin
+    var_err: 3d array, standard error of data in each bin
 
     """
 
