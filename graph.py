@@ -18,7 +18,7 @@ import mpl_toolkits
 import seaborn as sns
 from cycler import cycler
 from skimage import measure
-
+import pylab as pl
 
 import itertools
 from scipy.optimize import curve_fit
@@ -1857,7 +1857,7 @@ def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None
     # set edge color to face color
     cc.set_edgecolor('face')
 
-    if return_cb:
+    if return_cb and cbar:
         return fig, ax, cc, cb
     else:
         return fig, ax, cc
@@ -2418,6 +2418,117 @@ def get_contours(ctrs, close_ctr=True, thd=0.5, min_length=0,
                 else:
                     level_list.append(levels[i])
     return verts, level_list
+
+
+
+def embed_2dplot_in_3d(pp, qq, qty, zdir='z', offset=0, cmap='viridis', vmin=None, vmax=None,
+                       fignum=1, subplot=111, ax=None, figsize=None, zorder=0, alpha=1.,
+                       edgecolors='none', lw=0):
+    """
+    This embeds a 2d plot/image in 3D plot. The 2d plot points in +z(+y, or +x) direction.
+    ... This function should be used for a visualization purposes since it is not scientifically informative!
+    ... Use ax.plot_surface to insert a 2d plot on an arbitrary surface embedded in 3D.
+    ... This function can be usd to show three 2D projections of a 3D data.
+
+    Parameters
+    ----------
+    pp: 2d array, x coordinate of the 2d plot
+    qq: 2d array, y coordinate of the 2d plot
+    qty: 2d array, data of the 2d plot
+    zdir: str, direction of the normal vector. choices are 'z', 'x', 'y'
+    offset: float,
+    cmap: str, cmap instance,
+    vmin: float, colormap spans from vmin to vmap
+    vmax: float, colormap spans from vmin to vmap
+    fignum: int, number of the figure
+    subplot: int, subplot of the figure (three digit notation, default: 111)
+    figsize: tuple, figure size in inches
+    zorder: int, zorder of the produced surface
+    alpha: float, alpha of the embedded plot
+    edgecolors: str, edge color that is passed to ax.plot_surface()- default: 'none'
+    lw: float, linewidth that is passed to ax.plot_surface()- default: 0
+
+    Returns
+    -------
+    fig, ax, surf
+
+    """
+    if zdir == 'z':
+        xx, yy = pp, qq
+        zz = np.zeros_like(pp) + offset  # dummy height for plot_surface
+    elif zdir == 'x':
+        yy, zz = pp, qq
+        xx = np.zeros_like(pp) + offset
+    else:
+        zz, xx = pp, qq
+        yy = np.zeros_like(pp) + offset
+
+    cmap = plt.get_cmap(cmap, 100)
+    if vmin is None:
+        vmin = np.nanmin(qty)
+    if vmax is None:
+        vmax = np.nanmax(qty)
+
+    if ax is None:
+        fig, ax = set_fig(fignum=fignum, subplot=subplot, figsize=figsize, projection='3d')
+    else:
+        fig = plt.gcf()
+    norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+    colors = cmap(norm(qty))
+
+    surf = ax.plot_surface(xx, yy, zz, cstride=1, rstride=1,
+                           facecolors=colors, shade=False,
+                           zorder=zorder, alpha=alpha,
+                           edgecolors=edgecolors, lw=lw, antialiased=False,
+                           )
+    #     graph.add_colorbar_alone(ax, [vmin, vmax], cmap=cmap, label=label)
+    #     ax.contourf(xx, yy, rr, color=colors)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_zlabel('z')
+
+    set_pane_invisible(ax)
+    set_grid_invisible(ax)
+
+    return fig, ax, surf
+
+
+def set_pane_invisible(ax):
+    """
+    Makes the background pane invisible
+
+    Parameters
+    ----------
+    ax: axes.Axes instance
+
+    Returns
+    -------
+    None
+    """
+    # make the panes transparent
+    ax.xaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+    ax.yaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+    ax.zaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+
+
+def set_grid_invisible(ax):
+    """
+    Makes the background grid invisible
+    Parameters
+    ----------
+    ax: axes.Axes instance
+
+    Returns
+    -------
+    None
+    """
+    # make the grid lines transparent
+    ax.xaxis._axinfo["grid"]['color'] = (1, 1, 1, 0)
+    ax.yaxis._axinfo["grid"]['color'] = (1, 1, 1, 0)
+    ax.zaxis._axinfo["grid"]['color'] = (1, 1, 1, 0)
+
+
+
 
 ## Miscellanies
 def show():
@@ -3115,49 +3226,10 @@ def add_colorbar_alone(ax, values, cmap=cmap, label=None, fontsize=None, option=
         fig.tight_layout()
     return cb
 
-# def add_colorbar_alone(fig=None, ax=None, ax_loc=[0.05, 0.80, 0.9, 0.15], vmin=0, vmax=1, cmap=cmap, orientation='horizontal',
-#                        label=None, fontsize=__fontsize__, *kwargs):
-#     """
-#     Add a colorbar alone to a canvas.
-#     Use a specified figure and axis object if given. Otherwise, create one at location "ax_loc"
-#     Parameters
-#     ----------
-#     fig
-#     ax
-#     ax_loc
-#     vmin
-#     vmax
-#     cmap
-#     orientation
-#     label
-#
-#     Returns
-#     -------
-#     ax: axis object
-#     cb: colorbarbase object
-#
-#     """
-#
-#
-#     if fig is None:
-#         fig = plt.gcf()
-#     if ax is None:
-#         ax = fig.add_axes(ax_loc)
-#     norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
-#     cb = mpl.colorbar.ColorbarBase(ax, cmap=cmap,
-#                                     norm=norm,
-#                                     orientation=orientation)
-#     if label is not None:
-#         cb.set_label(label, fontsize=fontsize)
-#     return ax, cb
-
-
-
-
 
 def colorbar(fignum=None, label=None, fontsize=__fontsize__):
     """
-    Use is DEPRECIATED. This method is replaced by add_colorbar(mappable)
+    Use is DEPRICATED. This method is replaced by add_colorbar(mappable)
     I keep this method for old codes which might have used this method
     Parameters
     ----------
@@ -3173,6 +3245,50 @@ def colorbar(fignum=None, label=None, fontsize=__fontsize__):
         c.set_label(label, fontsize=fontsize)
     return c
 
+def create_colorbar(values, cmap='viridis', figsize=None, orientation='vertical', label='qty (mm)', fontsize=11,
+                    labelpad=0, ticks=None, **kwargs):
+    """
+    Creates a horizontal/vertical colorbar for reference using pylab.colorbar()
+
+    Parameters
+    ----------
+    values: 1d array-like, used to specify the min and max of the colorbar
+    cmap: cmap instance or str, default: 'viridis'
+    figsize: tuple, figure size in inches, default: None
+    orientation: str, 'horizontal' or 'vertical'
+    label: str, label of the color bar
+    fontsize: fontsize for the label and the ticklabel
+    labelpad: float, padding for the label
+    ticks: 1d array, tick locations
+
+    Returns
+    -------
+
+    """
+    values = np.array(values)
+    if len(values.shape) == 1:
+        values = np.expand_dims(values, axis=0)
+    #     values = np.array([[-1.5, 1]])
+    if orientation == 'horizontal' and figsize is None:
+        figsize = (7.54 * 0.5, 1)
+    elif orientation == 'vertical' and figsize is None:
+        figsize = (1, 7.54 * 0.5)
+    fig = pl.figure(figsize=figsize)
+    img = pl.imshow(values, cmap=cmap)
+    ax = pl.gca()
+    ax.set_visible(False)
+
+    if orientation == 'horizontal':
+        cax = pl.axes([0.1, 0.8, 0.8, 0.1])
+    else:
+        cax = pl.axes([0.8, 0.1, 0.1, 0.8])
+    cb = pl.colorbar(orientation=orientation, cax=cax, **kwargs)
+    cb.set_label(label=label, fontsize=fontsize, labelpad=labelpad)
+    if ticks is not None:
+        cb.set_ticks(np.arange(-1.5, 1.5, 0.5))
+    cb.ax.tick_params(labelsize=fontsize)
+    fig.tight_layout()
+    return fig, ax, cb
 
 ### Axes
 # Label
