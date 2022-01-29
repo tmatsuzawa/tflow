@@ -1172,7 +1172,7 @@ def pdf(data, nbins=100, return_data=False, vmax=None, vmin=None,
     Parameters
     ----------
     data: nd-array, list, or tuple, data used to get a histogram/pdf
-    nbins: int, umber of bins
+    nbins: int, number of bins
     return_data: bool, If True, it returns  fig, ax, bins (centers of the bins), hist (counts or probability density values)
     vmax: float, data[data>vmax] will be ignored during counting.
     vmin: float, data[data<vmin] will be ignored during counting.
@@ -1209,14 +1209,18 @@ def pdf(data, nbins=100, return_data=False, vmax=None, vmin=None,
         cond1 = np.asarray(data) < vmax # if nan exists in data, the condition always gives False for that data point
     else:
         cond1 = np.ones(data.shape, dtype=bool)
+        vmax = np.nanmax(data)
     if vmin is not None:
         cond2 = np.asarray(data) > vmin
     else:
+        vmin = np.nanmin(data)
         cond2 = np.ones(data.shape, dtype=bool)
     data = data[cond1 * cond2]
+    delta = (vmax - vmin) / nbins
+    bins = np.arange(vmin, vmax+delta, delta)
 
     # compute a pdf
-    bins, hist = compute_pdf(data, nbins=nbins)
+    bins, hist = compute_pdf(data, nbins=bins)
     fig, ax = plot(bins, hist, fignum=fignum, figsize=figsize, subplot=subplot, **kwargs)
 
     if analyze:
@@ -1998,8 +2002,7 @@ def imgScatter(x, y, imgs, img_x=None, img_y=None, subax_size=0.06,
 # quiver
 def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
            inc_x=1, inc_y=1, inc=None, color='k',
-           vmin=None, vmax=None,
-           absolute=False,
+           vmin=None, vmax=None, units='inches', scale=None,
            key=True, key_loc=[0.08, 1.06], key_length=None,
            key_label=None, key_units='mm/s', key_labelpos='E',
            key_pad=25., key_fmt='.1f',
@@ -2075,17 +2078,23 @@ def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
     hide = np.logical_or(np.logical_or(hide1, hide2), hide3)
     cond = ~hide
 
-    Q = ax.quiver(x_tmp[cond], y_temp[cond], u_tmp[cond], v_tmp[cond], color=color, **kwargs)
+    if units=='inches':
+        if key_length is None:
+            U_absMean = np.nanmean(u_norm[cond])
+            scale = U_absMean * 2
+        else:
+            scale = key_length * 2
+    Q = ax.quiver(x_tmp[cond], y_temp[cond], u_tmp[cond], v_tmp[cond], color=color, units=units, scale=scale, **kwargs)
 
     if key:
+        U_absMean = np.nanmean(u_norm[cond])
+        print('quiver: mean of vector magnitudes is %f' % U_absMean +
+              '. To match the scale of two quiver plots, scale one plot by passing scale=U_absMean_A / U_absMean_B')
         if key_length is None:
-            U_rms = np.nanmean(u_norm[cond])
-            U_rmedians = np.nanmedian(u_norm[cond])
-
             # key_length = 10 ** round(np.log10(U_rms))
             # key_length = 10 ** round(np.log10(U_rmedians))
             # key_length = round(U_rmedians, int(-round(np.log10(U_rmedians))) + 1) * 5
-            key_length = round(u_rms, int(-round(np.log10(U_rms))) + 1)
+            key_length = round(u_rms, int(-round(np.log10(U_absMean))) + 1)
         if key_label is None:
             key_label = '{:' + key_fmt + '} '
             key_label = key_label.format(key_length) + key_units
@@ -2093,8 +2102,9 @@ def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
         ax._set_title_offset_trans(key_pad)
         # print(key_length)
         # print(Q.scale)
-        ax.quiverkey(Q, key_loc[0], key_loc[1], key_length, key_label, labelpos=key_labelpos, coordinates='axes',
+        ax.quiverkey(Q, key_loc[0], key_loc[1], U=key_length, label=key_label, labelpos=key_labelpos, coordinates='axes',
                      color=color, **key_kwargs)
+
     ax.set_aspect(aspect)
     return fig, ax, Q
 
@@ -2128,7 +2138,7 @@ def quiver3d(udata, normalize=False, mag=1, inc=1, xinc=None, yinc=None, zinc=No
 
     Returns
     -------
-    None
+    plobj, a: pyvista.Plotter instance,  returned object of pyvista.Plotter.add_arrows()
 
     """
     import pyvista
@@ -4226,6 +4236,8 @@ def draw_circle(ax, x, y, r, linewidth=1, edgecolor='r', facecolor='none', fill=
     ax.add_artist(circle)
     return circle
 
+
+
 def draw_rectangle(ax, x, y, width, height, angle=0.0, linewidth=1, edgecolor='r', facecolor='none', **kwargs):
     """
     Draws a rectangle in a figure (ax)
@@ -4348,7 +4360,7 @@ def draw_box(ax, xx, yy, w_box=351., h_box=351., xoffset=0, yoffset=0, linewidth
 
 
 def draw_cuboid(ax, xx, yy, zz, color='c', lw=2, **kwargs):
-
+    """Draws a cuboid (projection='3d')"""
 
     xmin, xmax = np.nanmin(xx), np.nanmax(xx)
     ymin, ymax = np.nanmin(yy), np.nanmax(yy)
