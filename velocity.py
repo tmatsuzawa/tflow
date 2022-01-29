@@ -346,6 +346,7 @@ def get_mean_flow_field_using_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None,
         from tqdm import tqdm
     return udata_m
 
+
 ########## vector operations ##########
 def div(udata, dx=1., dy=1., dz=1., xyz_orientations=np.asarray([1, -1, 1]), xx=None, yy=None, zz=None):
     """
@@ -865,6 +866,74 @@ def get_turbulence_intensity_local(udata):
     for t in range(u_t_rms.shape[-1]):
         ti_local[..., t] = u_t_rms[..., t] / u_rms
     return ti_local
+
+def get_turbulence_intensity_from_path(dpath, writeData=False, overwrite=False, notebook=True):
+    """
+
+    Parameters
+    ----------
+    dpath
+
+    Returns
+    -------
+    """
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+
+    keys = get_h5_keys(dpath)
+    dummy = get_mean_flow_field_using_udatapath(dpath, t0=0, t1=1)
+    dim, duration = dummy.shape[0], get_udata_dim(dpath)[-1]
+
+    if 'ti' in keys and not overwrite:
+        ti = read_data_from_h5(dpath, ['ti'])[0]
+
+        if notebook:
+            from tqdm import tqdm as tqdm
+        return ti
+    else:
+        if not all([item in keys for item in ['ux_m', 'uy_m']]):
+            udata_m = get_mean_flow_field_using_udatapath(dpath)
+            if dim==3:
+                add_data2udatapath(dpath, {'ux_m': udata_m[0, ...], 'uy_m': udata_m[1, ...], 'uz_m': udata_m[2, ...]})
+            else:
+                add_data2udatapath(dpath, {'ux_m': udata_m[0, ...], 'uy_m': udata_m[1, ...]})
+        else:
+            if dim == 3:
+                keys2load = ['ux_m', 'uy_m', 'uz_m']
+                ux_m, uy_m, uz_m = read_data_from_h5(dpath, keys2load)
+            else:
+                keys2load = ['ux_m', 'uy_m']
+                ux_m, uy_m = read_data_from_h5(dpath, keys2load)
+
+            if dim==3:
+                udata_m = np.stack((ux_m, uy_m, uz_m))
+            else:
+                udata_m = np.stack((ux_m, uy_m))
+
+        for t in tqdm(range(duration), desc='turb. intensity'):
+            udata = get_udata_from_path(dpath, t0=t, t1=t + 1, verbose=False)[..., 0]
+            udata_t = udata - udata_m
+            if t == 0:
+                ut2_sum = np.zeros_like(udata_m)
+                counts = np.zeros_like(udata_m)
+            keep = ~np.isnan(udata_t)
+            counts += keep
+            ut2_sum[keep] = ut2_sum[keep] + udata_t[keep] ** 2
+        ut_rms = ut2_sum / counts
+        U_rms = np.sqrt(udata_m ** 2)
+
+        ti = np.nanmean(ut_rms, axis=0) / np.nanmean(U_rms, axis=0)
+        datadict = {
+                    'ui_rms': U_rms,  # depends on (dim, x,y,z)
+                    'ui_t_rms': ut_rms,  # depends on (dim, x,y,z)
+                    'ti': ti,  # depends on (x,y,z)
+                    }
+        if writeData:
+            add_data2udatapath(dpath, datadict, overwrite=overwrite)
+
+        if notebook:
+            from tqdm import tqdm as tqdm
+        return ti
 
 
 # Circulation computation (Use of spatially 2D udata is recommended)
@@ -6554,9 +6623,11 @@ def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
 
 def get_time_avg_energy_from_udatapath(udatapath,
                                        x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
-                                       t0=0, t1=None, slicez=None, inc=1, thd=np.inf, fill_value=np.nan,
+                                       t0=0, t1=None, slicez=None, inc=1,
+                                       clean=False, median_filter=False, verbose=False,
+                                       thd=np.inf, fill_value=np.nan,
                                        udata_mean=None,
-                                       notebook=True):
+                                       notebook=True, **kwargs):
     """
     Returns time-averaged energy when a path to udata is provided
     ... recommended to use if udata is large (> half of your memory size)
@@ -6640,6 +6711,8 @@ def get_time_avg_energy_from_udatapath(udatapath,
                                       f['uz'][y0:y1, x0:x1, slicez - z0, t]))
                     if udata_mean is not None:
                         udata -= udata_mean
+                    if clean:
+                        udata=clean_udata(udata, median_filter=median_filter, **kwargs, verbose=False)[..., 0]
                     energy_inst = get_energy(udata)
                     energy_inst[energy_inst > thd] = fill_value
                     eavg = np.nansum(np.stack((eavg, energy_inst)), 0)
@@ -6653,6 +6726,8 @@ def get_time_avg_energy_from_udatapath(udatapath,
                                   f['uy'][y0:y1, x0:x1, t]))
                 if udata_mean is not None:
                     udata -= udata_mean
+                if clean:
+                    udata=clean_udata(udata, median_filter=median_filter, **kwargs, verbose=False)[..., 0]
                 energy_inst = get_energy(udata)
                 energy_inst[energy_inst > thd] = fill_value
                 eavg = np.nansum(np.stack((eavg, energy_inst)), 0)
@@ -7143,10 +7218,163 @@ def export_raw_file(data2save, savepath, dtype='uint32', thd=np.inf, interpolate
 
 
 ######### Helper for volumetric data ########
+def slicer(xxx, yyy, zzz, n, pt, basis=None, spacing=None, notebook=True, **kwargs):
+    def get_intersecting_vertices(xxx, yyy, zzz, a, b, c, x0, y0, z0):
+        """
+        Returns the vertices of the cross-section
+        A plane is defined by ax+by+cz=ax0 + by0 + cz0 := d
+        A cuboid is expressed by xxx, yyy, zzz
+        """
+
+        def insideBox(x, y, z, xmin, xmax, ymin, ymax, zmin, zmax):
+            return x >= xmin and x <= xmax and y >= ymin and y <= ymax and z >= zmin and z <= zmax
+
+        d = a * x0 + b * y0 + c * z0
+
+        xmin, xmax, ymin, ymax, zmin, zmax = xxx.min(), xxx.max(), yyy.min(), yyy.max(), zzz.min(), zzz.max()
+
+        # Right plane (x=xmax)
+        vert01 = [xmax, (d - a * xmax - c * zmin) / b, zmin]
+        vert02 = [xmax, (d - a * xmax - c * zmax) / b, zmax]
+        vert03 = [xmax, ymin, (d - a * xmax - b * ymin) / c]
+        vert04 = [xmax, ymax, (d - a * xmax - b * ymax) / c]
+
+        # Left plane (x=xmin)
+        vert05 = [xmin, (d - a * xmin - c * zmin) / b, zmin]
+        vert06 = [xmin, (d - a * xmin - c * zmax) / b, zmax]
+        vert07 = [xmin, ymin, (d - a * xmin - b * ymin) / c]
+        vert08 = [xmin, ymax, (d - a * xmin - b * ymax) / c]
+
+        # Top plane (y=ymax)
+        vert09 = [xmin, ymax, (d - b * ymax - a * xmin) / c]
+        vert10 = [(d - b * ymax - c * zmin) / a, ymax, zmin]
+        vert11 = [xmax, ymax, (d - b * ymax - a * xmax) / c]
+        vert12 = [(d - b * ymax - c * zmax) / a, ymax, zmax]
+        # Bottom plane (y=ymin)
+        vert13 = [xmin, ymin, (d - b * ymin - a * xmin) / c]
+        vert14 = [(d - b * ymin - c * zmin) / a, ymin, zmin]
+        vert15 = [xmax, ymin, (d - b * ymin - a * xmax) / c]
+        vert16 = [(d - b * ymin - c * zmax) / a, ymin, zmax]
+
+        # Front plane (z=zmax)
+        vert17 = [xmin, (d - a * xmin - c * zmax) / b, zmax]
+        vert18 = [(d - b * ymin - c * zmax) / a, ymin, zmax]
+        vert19 = [xmax, (d - a * xmax - c * zmax) / b, zmax]
+        vert20 = [(d - b * ymax - c * zmax) / a, ymax, zmax]
+
+        # Back plane (z=zmin)
+        vert21 = [xmin, (d - a * xmin - c * zmin) / b, zmin]
+        vert22 = [(d - b * ymin - c * zmin) / a, ymin, zmin]
+        vert23 = [xmax, (d - a * xmax - c * zmin) / b, zmin]
+        vert24 = [(d - b * ymax - c * zmin) / a, ymax, zmin]
+
+        verts = [vert01, vert02, vert03, vert04,
+                 vert05, vert06, vert07, vert08,
+                 vert09, vert10, vert11, vert12,
+                 vert13, vert14, vert15, vert16,
+                 vert17, vert18, vert19, vert20,
+                 vert21, vert22, vert23, vert24]
+        verts = set([tuple(item) for item in verts])
+        verts = [vert for vert in verts if insideBox(vert[0], vert[1], vert[2], xmin, xmax, ymin, ymax, zmin, zmax)]
+        if verts == []:
+            raise ValueError('Given plane does not intersect with the cuboid')
+        else:
+            verts = np.stack(verts)
+            return verts
+
+    def mag(x, axis=-1):
+        return np.sum(np.asarray(x) ** 2, axis=axis) ** 0.5
+
+    def get_change_of_basis_matrix(basisA, basisB):
+        """
+        Returns a change-of-basis matrix from basis A to basis B
+        ... each basis must consist of linearly independent vectors
+
+        e.g.
+            basis_A = np.asarray([[1, 0, 0],
+                                  [0, 1, 0],
+                                  [0, 0, 1]])#standard basis
+            basis_B = np.asarray([[1,0, 1],
+                                  [1,2,4],
+                                  [1,-1,-1]])
+        """
+        a, b = basisA, basisB
+        Mae = a  # change of basis from a to a standard basis
+        Mbe = b  # change of basis from b to a standard basis
+        if np.linalg.det(Mbe) == 0:
+            #         print('... change-of-basis matrix is proven to be ALWAYS invertible but the code says it is.')
+            print(
+                '... You supplied a inappropriate basis for basis B! Probably it is not linearly indepenent. Please check.')
+            sys.exit()
+
+        Mab = np.matmul(np.linalg.inv(Mbe),
+                        Mae)  # change of basis from a to b, which is equal to the inverse of Mbe since a is a standard basis
+        return Mab
+
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+        # print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+    else:
+        from tqdm import tqdm
+
+    if spacing is None:
+        dx, dy, dz = get_grid_spacing(xxx, yyy, zzz)
+        spacing = min([dx, dy, dz])
+    n = np.asarray(n) / mag(n) # normal vector of the plane
+    ro = np.asarray(pt) # a point on the plane
+    verts = get_intersecting_vertices(xxx, yyy, zzz, n[0], n[1], n[2], pt[0], pt[1], pt[2])
+    roi = verts - np.repeat(ro[np.newaxis, :], verts.shape[0],
+                            axis=0)  # relative vectors from the reference to the intersecting vertices
+    dists = mag(roi)
+
+    # Basis A (Standard basis)
+    basis_std = np.asarray([[1, 0, 0],
+                            [0, 1, 0],
+                            [0, 0, 1]])  # udata uses a standard basis (y, x, z)
+
+    # Basis B (New orthonormal basis)
+    if basis is None:
+        e1 = n  # normal vector
+        e2 = verts[np.argmax(dists)] - ro
+        e2 /= mag(e2)
+        e3 = np.cross(e1, e2)
+    else:
+        e1, e2, e3 = basis[:, 0], basis[:, 1], basis[:, 2]
+        e1 /= mag(e1)
+        e2 /= mag(e2)
+        e3 /= mag(e3)
+    basis_npq = np.stack([e1, e2, e3]).T # New coordinates: (n, p, q)
+
+    # Get a change-of_basis matrix
+    Mab = get_change_of_basis_matrix(basis_std, basis_npq)
+    Mba = np.linalg.inv(Mab)
+
+    # Let the coordinates in the e2-e3 basis be p and q
+    pmin, pmax = np.min(np.dot(roi, e2)), np.max(np.dot(roi, e2))
+    qmin, qmax = np.min(np.dot(roi, e3)), np.max(np.dot(roi, e3))
+    # nmin, nmax = np.min(np.dot(roi, e1)), np.max(np.dot(roi, e1)) # nmin and nmax should be always zero!
+
+    # Now make a grid with the new basis
+    p = np.linspace(pmin, pmax, int((pmax - pmin) // spacing))
+    q = np.linspace(qmin, qmax, int((qmax - qmin) // spacing))
+    pp, qq = np.meshgrid(p, q)
+
+    # Coordinates of points on the plane in the standard basis
+    xxp = ro[0] + pp * e2[0] + qq * e3[0]
+    yyp = ro[1] + pp * e2[1] + qq * e3[1]
+    zzp = ro[2] + pp * e2[2] + qq * e3[2]
+
+    if notebook:
+        from tqdm import tqdm as tqdm
+
+    return xxp, yyp, zzp, pp, qq, Mab, Mba, basis_npq
+
 ## Generate a 2D slice from a 3D data
-def slicer(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, show=False, notebook=True,
+def slicer_old(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, show=False, notebook=True,
            debug=False):
     """
+    DEPRICATED (this slicer function uses a brute-force approach. Use slicer() instead.
+
     Samples points on the cross section of a volume defined by 3D grid (xx, yy, zz) in two different bases and transformation matrices
     ... The area vector (normal to the cross section) and a point on the cross section must be supplied.
     ... It returns xs, ys, zs, ps, qs, ns, Mac, Mca, basisC
@@ -7175,6 +7403,10 @@ def slicer(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, s
             (c) Enforce the basisC to be right-handed. n x p  = q
         7. Transform the xyz coordinates into npq coordinates using the matrix obtained in Step 6
         8. Return xyz coordinates and npq coordinates and tranformation matrices (Mac: change-of-basis matrix FROM basisA to basisC)
+
+    NEW (Dec 2022):
+        Efficient algorithm:
+
 
     e.g.
     1.
@@ -7212,7 +7444,7 @@ def slicer(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, s
     n: 1d array-like, area vector in the standard basis (no need to be normalized)
     pt: 1d array-like, a Cartesian coordinate of a point which lives on the cross section (x, y, z)
     basis: 1d array-like, use a user-specified basis instead of a randomly created orthonormal basis for basisB
-        ... I do not recomment passing a basis unless there is a reason such as repeatability.
+        ... I do not recommend passing a basis unless there is a reason such as repeatability.
         This might give you unexpected errors.
     spacing: float, value must be greater than 0. Spatial resolution of the sampled grid. If None, it uses the spacing of xx
     show: bool, If True, it plots sampled points on the cross section as well as a cuboid (in a wire frame) both in 3D and 2D.
@@ -7486,8 +7718,7 @@ def slicer(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, s
 ## Get a slice of a 3D velocity field
 def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
                    method='nn', max_iter=10, tol=0.05, median_filter=True,
-                   basis=None, apply_convention=True,
-                   u_basis='npq', notebook=True):
+                   basis=None, u_basis='npq', showtqdm=True, verbose=False, notebook=True, **kwargs):
     """
     Returns a spatially 2D udata which is on the cross section of a volumetric data
     ... There are two ways to return the velocity field on the cross section.
@@ -7505,7 +7736,7 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
             2. Coordinates in the pq basis (technically npq basis, but the coordinate in the basis vector n is always zero so I don't return it)
     ... You CAN retrieve the velocity field in the standard basis (xyz, i.e. ux, uy, uz).
         Just set "u_basis" equal to "xyz"
-        If you want both (in npq and xyz basses), set  "u_basis" equal to "both"
+        If you want both (in npq and xyz basses), set  "u_basis" as "both"
     ... If you want a change-of-basis matrix from basis A to basis B, use ilpm.vector.get_change_of_basis_matrix(basisA, basisB)
         e.g.
             Mab = vec.get_change_of_basis_matrix(basis_xyz, basis_npq) # transformation matrix from xyz coords to npq coords
@@ -7527,6 +7758,14 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
             vdata, pp, qq = vel.slice_udata_3d(udata, xxx, yyy, zzz, n, pt, basis=basis, show=True)
             enst = vel.get_enstrophy(vdata[1:, ...], xx=pp, yy=qq)
             graph.color_plot(pp, qq, enst[..., 0], fignum=1+i)
+    ... e.g. Get a slice whose normal vector gets rotated about the y-axis gradually
+            t = 0 # slice the udata in the 1st frame
+            thetas = np.linspace(0, 2*np.pi, 101)
+            for i, theta in enumerate(thetas):
+                n = [np.sin(theta), 0, np.cos(theta)]
+                vdata, pp, qq = vel.slice_udata_3d(udata[..., t], xxx, yyy, zzz, n, [xc, yc, zc],
+                                                   basis = np.asarray([n, [np.cos(theta), 0, -np.sin(theta)], [0, 1, 0]]).T,
+                                                   apply_convention=False)
     Example:
 
     Parameters
@@ -7549,9 +7788,183 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
     tol: float, parameter for replacng nans in udata clean_udata()
     basis: 3x3 matrix, column vectors are the basis vectors.
         ... If given, these basis vectors are used to span the crosss section.
-        ... The basis vectors may be rotated or converted to right-handed at the end.
+        ... The basis vectors may be rotated or converted to be right-handed at the end.
         ... See the example above for a sample input
-    apply_convention: bool, If True, it enforces the new basis to follow the convention (right-handed etc.)
+    apply_convention: bool, If True, it enforces the new basis to follow a convention that is
+        ... right-handed (n x p // q)
+    u_basis: str, default: "npq", options: "npq", "xyz" / "standard" "std", "both"
+        ... the basis used to represent a velocity field on the plane
+        ... "npq": It returns velocity vectors in the npq basis. Returning udata[i, ...] = (un, up, uq)
+            (un, up, uq) = (velocity component parallel to the area vector,
+                            vel comp parallel to the second basis vector p,
+                            vel comp parallel to the second basis vector q)
+        ... "xyz". "standard", or "std": It returns velocity vectors in the npq basis. Returning udata[i, ...] = (ux, uy, uz)
+
+
+
+    Returns
+    -------
+    udata_si_npq_basis: udata in the npq basis on the plane spanned by the basis vectors p and q.
+        ... its shape is (dim, height, width, duration) = (3, height, width, duration)
+        ... udata_si_npq_basis[0, ...] is velocity u \cdot \hat{n}
+        ... udata_si_npq_basis[1, ...] is velocity u \cdot \hat{p}
+        ... udata_si_npq_basis[2, ...] is velocity u \cdot \hat{q}
+    pp: 2d nd array, p-grid
+    qq: 2d nd array, q-grid
+    """
+
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+        # print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+    else:
+        from tqdm import tqdm
+
+    if spacing is None:
+        dx, dy, dz = get_grid_spacing(xx, yy, zz)
+        spacing = min([dx, dy, dz])
+    udata = fix_udata_shape(udata)
+    dim, duration = udata.shape[0], udata.shape[-1]
+
+    # Clean udata
+    udata = clean_udata(udata, method=method, max_iter=max_iter, tol=tol, median_filter=median_filter, showtqdm=verbose)
+    # Extract info about the cross section
+    xx_plane, yy_plane, zz_plane, pp, qq, Mab, Mba, basis = slicer(xx, yy, zz, n, pt, spacing=spacing, basis=basis,)
+    #
+    pmin, pmax, qmin, qmax = np.nanmin(pp), np.nanmax(pp), np.nanmin(qq), np.nanmax(qq)
+    p = np.linspace(pmin, pmax, int((pmax - pmin) // spacing))
+    q = np.linspace(qmin, qmax, int((qmax - qmin) // spacing))
+    n = [0]
+    pp, qq, nn = np.meshgrid(p, q, n)  # THIS WORKS! DO not touch this
+    shape = pp.shape
+
+    for i, t in tqdm(enumerate(range(duration)), disable=not showtqdm):
+        # udata_s_tmp = clean_udata(udata[..., t:t + 1])
+        fs = interpolate_udata_at_instant_of_time(udata, xx, yy, zz, t=t, bounds_error=False)
+        uxi = fs[0]((yy_plane, xx_plane, zz_plane))
+        uyi = fs[1]((yy_plane, xx_plane, zz_plane))
+        uzi = fs[2]((yy_plane, xx_plane, zz_plane))
+        # shape = uxi.shape
+        uis_xyz = np.stack((uxi.flatten(), uyi.flatten(), uzi.flatten()))
+        uis_npq = np.matmul(Mab, uis_xyz).reshape((3, ) + shape)
+
+        pts_b = np.stack((nn.flatten(), pp.flatten(), qq.flatten()))  # npq
+
+        pts_a = np.matmul(Mba, pts_b)  # x, y, z
+        pts_a[[0, 1], :] = pts_a[[1, 0], :]  # interpolating function takes (y, x, z) not (x, y, z). Swap axes.
+
+        ux_si = fs[0](pts_a.T).reshape(shape)
+        uy_si = fs[1](pts_a.T).reshape(shape)
+        uz_si = fs[2](pts_a.T).reshape(shape)
+
+        uis_si = np.stack((ux_si.flatten(), uy_si.flatten(), uz_si.flatten()))
+        uis_si_npq = np.matmul(Mab, uis_si)
+        un_si, up_si, uq_si = uis_si_npq[0, ...].reshape(shape), uis_si_npq[1, ...].reshape(shape), uis_si_npq[
+            2, ...].reshape(shape)
+        if i == 0:
+            master_shape = (3,) + shape + (duration,)
+            udata_si_xyz_basis = np.empty(master_shape)
+            udata_si_npq_basis = np.empty(master_shape)
+
+        udata_si_xyz_basis[..., t] = np.stack((ux_si, uy_si, uz_si))
+        udata_si_npq_basis[..., t] = np.stack((un_si, up_si, uq_si))  # un, up, uq- velocity also obeys the transformation rule as position
+    udata_si_xyz_basis = np.squeeze(udata_si_xyz_basis)  # ux, uy, uz
+    udata_si_npq_basis = np.squeeze(udata_si_npq_basis)  # un, up, uq
+
+    pp, qq = np.squeeze(pp), np.squeeze(qq)  # Make it into 2D grids
+
+    if notebook:
+        from tqdm import tqdm as tqdm
+
+    if u_basis == 'npq':
+        return udata_si_npq_basis, pp, qq
+    elif u_basis in ['standard', 'std', 'xyz']:
+        return udata_si_xyz_basis, pp, qq
+    elif u_basis == 'both':
+        return udata_si_npq_basis, udata_si_xyz_basis, pp, qq
+    else:
+        print('... Pass which basis is used to represent the extraceted velocity field on the slice')
+        print('... Choices: "npq"- (un, up, uq) velocity parallel to the surface vector, and its transverse directions')
+        print('... Choices: "xyz"- (ux, uy, uz) velocity in the standard basis')
+        return None
+
+
+def slice_udata_3d_old(udata, xx, yy, zz, n, pt, spacing=None, show=False,
+                   method='nn', max_iter=10, tol=0.05, median_filter=True,
+                   basis=None, apply_convention=True,
+                   u_basis='npq', notebook=True):
+    """
+    Returns a spatially 2D udata which is on the cross section of a volumetric data
+    ... There are two ways to return the velocity field on the cross section.
+        1. In the standard basis (xyz, i.e. ux, uy, uz)
+        2. In the NEW basis (which I call npq basis, i.e. un, up, uq)
+            the basis vector n is identical to the unit area vector of the cross section
+    ... By default, this function returns a 2D velocity field in the NEW basis (npq) as well as its coordinates in the same basis.
+        ... This is a natural choice since the cross section is spanned by the new basis vectors p and q.
+        ... Any postional vector on the cross section is expresed by its linear combinations.
+            r = c1 \hat{p} + c2 \hat{q}
+            (c1, c2) are the coordinates in the pq basis.
+            (Technically, the basis vectors are n, p, q but the coefficient of the n basis vector is always zero on the cross section.)
+            By default, this function returns...
+            1. velocity field in the NEW basis (npq) on the cross section
+            2. Coordinates in the pq basis (technically npq basis, but the coordinate in the basis vector n is always zero so I don't return it)
+    ... You CAN retrieve the velocity field in the standard basis (xyz, i.e. ux, uy, uz).
+        Just set "u_basis" equal to "xyz"
+        If you want both (in npq and xyz basses), set  "u_basis" as "both"
+    ... If you want a change-of-basis matrix from basis A to basis B, use ilpm.vector.get_change_of_basis_matrix(basisA, basisB)
+        e.g.
+            Mab = vec.get_change_of_basis_matrix(basis_xyz, basis_npq) # transformation matrix from xyz coords to npq coords
+            Mba = np.linalg.inv(Mab) # the change-of-basis matrix is ALWAYS unitary.
+    ... e.g. You want a v-field on a slice whose normal vector is obtained by rotating the unit z vector rotated by +45 degrees
+            theta = np.pi/180.*-45 # Convert degrees to rad
+            n = [np.cos(theta), np.sin(theta), 0] # This is the normal vector of the slice
+            pt = [0, 0, 0] # A point on the slice
+            # Providing the new basis (npq basis) is optional
+            # but this helps to speed up the process to find all available points on the slice
+            basis = np.asarray([n, [0, 0, 1], [np.sin(theta), -np.cos(theta), 0]]).T # The transpose is necessary
+            vdata, pp, qq = vel.slice_udata_3d(udata, xxx, yyy, zzz, n, pt, basis=basis, show=True)
+            enst = vel.get_enstrophy(vdata[1:, ...], xx=pp, yy=qq)
+            graph.color_plot(pp, qq, enst[..., 0], fignum=1+i)
+    ... e.g. get a v-field on the xy plane (z=0)
+            n = [0, 0, 1] # area vector // unit z vector
+            pt = [0, 0, 0] # the plane contains the origin
+            basis = np.asarray([n, [1, 0, 0], [0, 1, 0]]).T
+            vdata, pp, qq = vel.slice_udata_3d(udata, xxx, yyy, zzz, n, pt, basis=basis, show=True)
+            enst = vel.get_enstrophy(vdata[1:, ...], xx=pp, yy=qq)
+            graph.color_plot(pp, qq, enst[..., 0], fignum=1+i)
+    ... e.g. Get a slice whose normal vector gets rotated about the y-axis gradually
+            t = 0 # slice the udata in the 1st frame
+            thetas = np.linspace(0, 2*np.pi, 101)
+            for i, theta in enumerate(thetas):
+                n = [np.sin(theta), 0, np.cos(theta)]
+                vdata, pp, qq = vel.slice_udata_3d(udata[..., t], xxx, yyy, zzz, n, [xc, yc, zc],
+                                                   basis = np.asarray([n, [np.cos(theta), 0, -np.sin(theta)], [0, 1, 0]]).T,
+                                                   apply_convention=False)
+    Example:
+
+    Parameters
+    ----------
+    udata: spatially 3d udata (4D or 5D array) with shape (dim, height, width, depth, duration) or  (dim, height, width, depth)
+    xx: 3d array, grid of x-coordinate
+    yy: 3d array, grid of y-coordinate
+    zz: 3d array, grid of z-coordinate
+    n: 1d array-like, area vector (it does not have to be normalized)
+    pt: 1d array-like, xyz coordinates of a point on the plane (Note that n and pt uniquely defines a plane)
+    spacing: float, must be greater than 0. Sampling spatial resolution on the plane
+    show: bool, tflow.graph or takumi.graph is required. If True, it will automatically plot the sampled points on the
+        cross section in a 3D view as well as the new basis vectors
+    method: str, interpolation method of udata, options: 'nn', 'localmean', 'idw'
+        ... volumetric udata may contain lots of np.nan, and cleaning udata often results better results.
+        ... 'nn': nearest neighbor filling
+        ... 'localmean': filling using a direct covolution (inpainting with a neighbor averaging kernel)
+        ... 'idw': filling using a direct covolution (inpainting with a Gaussian kernel)
+    max_iter: int, parameter for replacng nans in udata clean_udata()
+    tol: float, parameter for replacng nans in udata clean_udata()
+    basis: 3x3 matrix, column vectors are the basis vectors.
+        ... If given, these basis vectors are used to span the crosss section.
+        ... The basis vectors may be rotated or converted to be right-handed at the end.
+        ... See the example above for a sample input
+    apply_convention: bool, If True, it enforces the new basis to follow a convention that is
+        ... right-handed (n x p // q)
     u_basis: str, default: "npq", options: "npq", "xyz" / "standard" "std", "both"
         ... the basis used to represent a velocity field on the plane
         ... "npq": It returns velocity vectors in the npq basis. Returning udata[i, ...] = (un, up, uq)
@@ -7588,11 +8001,9 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
     # Clean udata
     udata = clean_udata(udata, method=method, max_iter=max_iter, tol=tol, median_filter=median_filter)
     # Extract info about the cross section
-    xs, ys, zs, ps, qs, ns, Mab, Mba, basis = slicer(xx, yy, zz, n, pt, spacing=spacing,
+    xs, ys, zs, ps, qs, ns, Mab, Mba, basis = slicer_old(xx, yy, zz, n, pt, spacing=spacing,
                                                      basis=basis, apply_convention=apply_convention,
                                                      show=show)
-
-    udata_si = np.empty_like(udata)
     udata_si_npq_basis = np.empty_like(udata)
     for i, t in tqdm(enumerate(range(duration))):
         # udata_s_tmp = clean_udata(udata[..., t:t + 1])
@@ -7736,7 +8147,7 @@ def slice_3d_scalar_field(field, xx, yy, zz, n, pt, spacing=None, show=False,
     duration = field.shape[-1]
 
     # Extract info about the cross section
-    xs, ys, zs, ps, qs, ns, Mab, Mba, basis = slicer(xx, yy, zz, n, pt, spacing=spacing,
+    xs, ys, zs, ps, qs, ns, Mab, Mba, basis = slicer_old(xx, yy, zz, n, pt, spacing=spacing,
                                                      basis=basis, apply_convention=apply_convention,
                                                      show=show)
     for i, t in tqdm(enumerate(range(duration))):
@@ -8534,10 +8945,10 @@ def clean_udata(udata,
     max_iter
     tol
     kernel_radius
-    kernel_sigma
-    fill_value
-    cutoff
-    median_filter
+    kernel_sigma:
+    fill_value: float, If method=='fill', the errorneous valeus are replaced by this fill_value.
+    cutoff: float, a positive real number- Any velocity vector whose norm is greater than this cutoff is subject to cleaning.
+    median_filter: bool, default: True. If True, a median filter is applied to the velocity field after inpainting/nearest-neighbor filling
     replace_zeros: bool default: True
         ... Some softwares assign 0 as a velocity instead of na or np.nan
     showtqdm: bool, default: True
@@ -8601,7 +9012,6 @@ def clean_udata(udata,
         for t in tqdm(range(duration), desc='median filter', disable=not showtqdm):
             for i in range(ncomp):
                 udata_i[i, ..., t] = medfilt(udata_i[i, ..., t], 2*kernel_radius+1)
-
 
     if notebook:
         from tqdm import tqdm as tqdm
@@ -10385,7 +10795,7 @@ def get_binned_stats(arg, var, n_bins=100, mode='linear',
     if not bin_center:
         arg_means, arg_edges, binnumber = binned_statistic(arg[mask], arg[mask], statistic=statistic, bins=bins)
     var_mean, bin_edges, binnumber = binned_statistic(arg[mask], var[mask], statistic=statistic, bins=bins)
-    var_err, _, _ = binned_statistic(arg[mask], var[mask], statistic='std', bins=bins)
+    var_std, _, _ = binned_statistic(arg[mask], var[mask], statistic='std', bins=bins)
     counts, _, _ = binned_statistic(arg[mask], var[mask], statistic='count', bins=bins)
 
     # bin centers
@@ -10398,14 +10808,14 @@ def get_binned_stats(arg, var, n_bins=100, mode='linear',
     # Sort arrays
     if bin_center:
         arg_bins, var_mean = sort2arr(bin_centers, var_mean)
-        arg_bins, var_err = sort2arr(bin_centers, var_err)
+        arg_bins, var_std = sort2arr(bin_centers, var_std)
     else:
         arg_bins, var_mean = sort2arr(arg_means, var_mean)
-        arg_bins, var_err = sort2arr(arg_means, var_err)
+        arg_bins, var_std = sort2arr(arg_means, var_std)
     if return_std:
-        return arg_bins, var_mean, var_err
+        return arg_bins, var_mean, var_std
     else:
-        return arg_bins, var_mean, var_err / np.sqrt(counts)
+        return arg_bins, var_mean, var_std / np.sqrt(counts)
 
 
 def get_binned_stats2d(x, y, var, n_bins=100, nx_bins=None, ny_bins=None, bin_center=True,
@@ -12279,9 +12689,9 @@ def get_phase_average(x, period_ind=None,
     Parameters
     ----------
     x: ND array, data
-        ... one of the array shape must must match len(time)
+        ... one of the array shape must must match len(time) if time is given
     period_ind: int
-        ... period as the number of indices
+        ... period in the unit of index
     time: 1d array, default: None
         ... time of data
     freq: float
@@ -12369,7 +12779,7 @@ def get_phase_average(x, period_ind=None,
 
 
 
-def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT,
+def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT=None,
                                        x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                                        t0=0, t1=None, notebook=True, use_masked_array=True):
     """
@@ -12381,7 +12791,6 @@ def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT,
     freq
     time
     deltaT
-    n
     x0: int, default: 0
         ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
     x1 int, default: None
@@ -12420,6 +12829,8 @@ def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT,
     period = 1. / freq # period T
     if t1 is None:
         t1 = duration
+    if deltaT is None:
+        deltaT = period
     time_mod_period = time % period
     nt = int(np.floor(period / deltaT))
     tp = time[:nt]
@@ -12435,7 +12846,7 @@ def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT,
     for i in tqdm(range(nt)):
         cond1 = time_mod_period >= i * deltaT
         cond2 = time_mod_period < (i+1) * deltaT
-        cond = cond1 * cond2 # If True, load the data
+        cond = cond1 * cond2 # If True, load data
         counter = 0
         for t in range(t0, t1):
             if cond[t]:
@@ -12445,8 +12856,7 @@ def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT,
         udata_pavg[..., i] /= float(counter)
 
     if use_masked_array:
-        x_pavg = np.ma.masked_array(x_pavg)
-        x_perr = np.ma.masked_array(x_perr)
+        udata_pavg = np.ma.masked_array(udata_pavg)
 
     if notebook:
         from tqdm import tqdm
@@ -18400,3 +18810,4 @@ def computeImageDistanceUsingHuMoments(img1, img2, method=cv2.CONTOURS_MATCH_I2,
     """
     imgDist = cv2.matchShapes(img1,img2, method, 0)
     return imgDist
+
