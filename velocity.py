@@ -7219,6 +7219,24 @@ def export_raw_file(data2save, savepath, dtype='uint32', thd=np.inf, interpolate
 
 ######### Helper for volumetric data ########
 def slicer(xxx, yyy, zzz, n, pt, basis=None, spacing=None, notebook=True, **kwargs):
+    """
+
+    Parameters
+    ----------
+    xxx
+    yyy
+    zzz
+    n
+    pt
+    basis
+    spacing
+    notebook
+    kwargs
+
+    Returns
+    -------
+    xxp, yyp, zzp, pp, qq, Mab, Mba, basis_npq
+    """
     def mag(x, axis=-1):
         return np.sum(np.asarray(x) ** 2, axis=axis) ** 0.5
 
@@ -7371,19 +7389,22 @@ def get_intersecting_vertices(xxx, yyy, zzz, a, b, c, x0, y0, z0):
         raise ValueError('Given plane does not intersect with the cuboid')
     else:
         verts = np.stack(verts)
+        rg = np.nanmean(verts, axis=0) # centroid will be used to fiugre out the order of the vertices
         # sort vertices
         n = np.asarray([a, b, c])
         e1 = n = n/mag(n)
-        e2 = copy.deepcopy(verts[0])
+        e2 = verts[0]-rg # consider a relative vector to a vertex from the centroid as one of the basis vectors
         e2 /= mag(e2)
         e3 = np.cross(e1, e2)
-        ps = np.dot(e2, verts.T)
-        qs = np.dot(e3, verts.T)
+        ps = np.dot(e2, (verts-rg).T)
+        qs = np.dot(e3, (verts-rg).T)
         angles = np.arctan2(qs, ps)
 
         angles, verts = sort_n_arrays_using_order_of_first_array([angles, verts])
         verts = np.asarray(verts)
         return verts
+
+
 
 
 ## Generate a 2D slice from a 3D data
@@ -18299,7 +18320,6 @@ def sort_n_arrays_using_order_of_first_array(list_of_arrays, element_dtype=tuple
     list_of_sorted_arrays: list of sorted lists/1D arrays
 
     """
-
     list_of_sorted_arrays = list(zip(*sorted(zip(*list_of_arrays))))
     if element_dtype == list:
         list_of_sorted_arrays = [list(a) for a in list_of_sorted_arrays]
