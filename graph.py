@@ -1762,8 +1762,11 @@ def plot_interpolated_curves(x, y, zoom=2, fignum=1, figsize=None, label='', col
 
 ## 2D plotsFor the plot you showed at group meeting of lambda converging with resolution, can you please make a version with two x axes (one at the top, one below) one pixel spacing, other PIV pixel spacing, and add a special tick on each for the highest resolution point.
 # (pcolormesh)
-def color_plot(x, y, z, subplot=None, fignum=1, figsize=None, ax=None, vmin=None, vmax=None, log10=False, label=None,
-               cbar=True, cmap='magma', symmetric=False, enforceSymmetric=True, aspect='equal', option='scientific', ntick=5, tickinc=None,
+def color_plot(x, y, z,
+               subplot=None, fignum=1, figsize=None, ax=None,
+               vmin=None, vmax=None, log10=False, label=None,
+               cbar=True, cmap='magma', symmetric=False, enforceSymmetric=True,
+               aspect='equal', option='scientific', ntick=5, tickinc=None,
                crop=None, fontsize=None, ticklabelsize=None, cb_kwargs={}, return_cb=False,
                **kwargs):
     """
@@ -2077,6 +2080,14 @@ def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
     hide3 = np.isinf(u_norm)
     hide = np.logical_or(np.logical_or(hide1, hide2), hide3)
     cond = ~hide
+    if type(color) != str:
+        color = np.asarray(color)
+        color = color[::inc_y, ::inc_x, :]
+        if color.shape != cond.shape:
+            for d in range(color.shape[-1]):
+                color[..., d] = color[..., d][cond].reshape(cond.shape)
+        color = color.reshape((-1, color.shape[-1]))
+
 
     if units=='inches':
         if key_length is None:
@@ -2088,8 +2099,6 @@ def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
 
     if key:
         U_absMean = np.nanmean(u_norm[cond])
-        print('quiver: mean of vector magnitudes is %f' % U_absMean +
-              '. To match the scale of two quiver plots, scale one plot by passing scale=U_absMean_A / U_absMean_B')
         if key_length is None:
             # key_length = 10 ** round(np.log10(U_rms))
             # key_length = 10 ** round(np.log10(U_rmedians))
@@ -3823,6 +3832,10 @@ def create_cmap_using_values(colors=None, color1='greenyellow', color2='darkgree
     return newcmap
 
 
+def create_cmap_from_colors(colors_list, name='newmap'):
+    from matplotlib.colors import LinearSegmentedColormap
+    return LinearSegmentedColormap.from_list(name, colors_list)
+
 def get_colors_and_cmap_using_values(values, cmap=None, color1='greenyellow', color2='darkgreen', color3=None,
                                      vmin=None, vmax=None, n=100):
     """
@@ -4042,6 +4055,7 @@ def set_default_color_cycle(name='tab10', n=10, colors=None, reverse=False):
         if reverse:
             colors.reverse()
     sns.set_palette(colors)
+    return colors
 
 def set_color_cycle(cmapname='tab10', ax=None, n=10, colors=None):
     """

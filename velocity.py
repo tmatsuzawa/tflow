@@ -7219,69 +7219,6 @@ def export_raw_file(data2save, savepath, dtype='uint32', thd=np.inf, interpolate
 
 ######### Helper for volumetric data ########
 def slicer(xxx, yyy, zzz, n, pt, basis=None, spacing=None, notebook=True, **kwargs):
-    def get_intersecting_vertices(xxx, yyy, zzz, a, b, c, x0, y0, z0):
-        """
-        Returns the vertices of the cross-section
-        A plane is defined by ax+by+cz=ax0 + by0 + cz0 := d
-        A cuboid is expressed by xxx, yyy, zzz
-        """
-
-        def insideBox(x, y, z, xmin, xmax, ymin, ymax, zmin, zmax):
-            return x >= xmin and x <= xmax and y >= ymin and y <= ymax and z >= zmin and z <= zmax
-
-        d = a * x0 + b * y0 + c * z0
-
-        xmin, xmax, ymin, ymax, zmin, zmax = xxx.min(), xxx.max(), yyy.min(), yyy.max(), zzz.min(), zzz.max()
-
-        # Right plane (x=xmax)
-        vert01 = [xmax, (d - a * xmax - c * zmin) / b, zmin]
-        vert02 = [xmax, (d - a * xmax - c * zmax) / b, zmax]
-        vert03 = [xmax, ymin, (d - a * xmax - b * ymin) / c]
-        vert04 = [xmax, ymax, (d - a * xmax - b * ymax) / c]
-
-        # Left plane (x=xmin)
-        vert05 = [xmin, (d - a * xmin - c * zmin) / b, zmin]
-        vert06 = [xmin, (d - a * xmin - c * zmax) / b, zmax]
-        vert07 = [xmin, ymin, (d - a * xmin - b * ymin) / c]
-        vert08 = [xmin, ymax, (d - a * xmin - b * ymax) / c]
-
-        # Top plane (y=ymax)
-        vert09 = [xmin, ymax, (d - b * ymax - a * xmin) / c]
-        vert10 = [(d - b * ymax - c * zmin) / a, ymax, zmin]
-        vert11 = [xmax, ymax, (d - b * ymax - a * xmax) / c]
-        vert12 = [(d - b * ymax - c * zmax) / a, ymax, zmax]
-        # Bottom plane (y=ymin)
-        vert13 = [xmin, ymin, (d - b * ymin - a * xmin) / c]
-        vert14 = [(d - b * ymin - c * zmin) / a, ymin, zmin]
-        vert15 = [xmax, ymin, (d - b * ymin - a * xmax) / c]
-        vert16 = [(d - b * ymin - c * zmax) / a, ymin, zmax]
-
-        # Front plane (z=zmax)
-        vert17 = [xmin, (d - a * xmin - c * zmax) / b, zmax]
-        vert18 = [(d - b * ymin - c * zmax) / a, ymin, zmax]
-        vert19 = [xmax, (d - a * xmax - c * zmax) / b, zmax]
-        vert20 = [(d - b * ymax - c * zmax) / a, ymax, zmax]
-
-        # Back plane (z=zmin)
-        vert21 = [xmin, (d - a * xmin - c * zmin) / b, zmin]
-        vert22 = [(d - b * ymin - c * zmin) / a, ymin, zmin]
-        vert23 = [xmax, (d - a * xmax - c * zmin) / b, zmin]
-        vert24 = [(d - b * ymax - c * zmin) / a, ymax, zmin]
-
-        verts = [vert01, vert02, vert03, vert04,
-                 vert05, vert06, vert07, vert08,
-                 vert09, vert10, vert11, vert12,
-                 vert13, vert14, vert15, vert16,
-                 vert17, vert18, vert19, vert20,
-                 vert21, vert22, vert23, vert24]
-        verts = set([tuple(item) for item in verts])
-        verts = [vert for vert in verts if insideBox(vert[0], vert[1], vert[2], xmin, xmax, ymin, ymax, zmin, zmax)]
-        if verts == []:
-            raise ValueError('Given plane does not intersect with the cuboid')
-        else:
-            verts = np.stack(verts)
-            return verts
-
     def mag(x, axis=-1):
         return np.sum(np.asarray(x) ** 2, axis=axis) ** 0.5
 
@@ -7368,6 +7305,86 @@ def slicer(xxx, yyy, zzz, n, pt, basis=None, spacing=None, notebook=True, **kwar
         from tqdm import tqdm as tqdm
 
     return xxp, yyp, zzp, pp, qq, Mab, Mba, basis_npq
+
+def get_intersecting_vertices(xxx, yyy, zzz, a, b, c, x0, y0, z0):
+    """
+    Returns the vertices of the cross-section
+    A plane is defined by ax+by+cz=ax0 + by0 + cz0 := d
+    A cuboid is expressed by xxx, yyy, zzz
+    """
+    def mag(x, axis=-1):
+        return np.sum(np.asarray(x) ** 2, axis=axis) ** 0.5
+
+    def insideBox(x, y, z, xmin, xmax, ymin, ymax, zmin, zmax):
+        return x >= xmin and x <= xmax and y >= ymin and y <= ymax and z >= zmin and z <= zmax
+
+    d = a * x0 + b * y0 + c * z0
+
+    xmin, xmax, ymin, ymax, zmin, zmax = xxx.min(), xxx.max(), yyy.min(), yyy.max(), zzz.min(), zzz.max()
+
+    # Right plane (x=xmax)
+    vert01 = [xmax, (d - a * xmax - c * zmin) / b, zmin]
+    vert02 = [xmax, (d - a * xmax - c * zmax) / b, zmax]
+    vert03 = [xmax, ymin, (d - a * xmax - b * ymin) / c]
+    vert04 = [xmax, ymax, (d - a * xmax - b * ymax) / c]
+
+    # Left plane (x=xmin)
+    vert05 = [xmin, (d - a * xmin - c * zmin) / b, zmin]
+    vert06 = [xmin, (d - a * xmin - c * zmax) / b, zmax]
+    vert07 = [xmin, ymin, (d - a * xmin - b * ymin) / c]
+    vert08 = [xmin, ymax, (d - a * xmin - b * ymax) / c]
+
+    # Top plane (y=ymax)
+    vert09 = [xmin, ymax, (d - b * ymax - a * xmin) / c]
+    vert10 = [(d - b * ymax - c * zmin) / a, ymax, zmin]
+    vert11 = [xmax, ymax, (d - b * ymax - a * xmax) / c]
+    vert12 = [(d - b * ymax - c * zmax) / a, ymax, zmax]
+    # Bottom plane (y=ymin)
+    vert13 = [xmin, ymin, (d - b * ymin - a * xmin) / c]
+    vert14 = [(d - b * ymin - c * zmin) / a, ymin, zmin]
+    vert15 = [xmax, ymin, (d - b * ymin - a * xmax) / c]
+    vert16 = [(d - b * ymin - c * zmax) / a, ymin, zmax]
+
+    # Front plane (z=zmax)
+    vert17 = [xmin, (d - a * xmin - c * zmax) / b, zmax]
+    vert18 = [(d - b * ymin - c * zmax) / a, ymin, zmax]
+    vert19 = [xmax, (d - a * xmax - c * zmax) / b, zmax]
+    vert20 = [(d - b * ymax - c * zmax) / a, ymax, zmax]
+
+    # Back plane (z=zmin)
+    vert21 = [xmin, (d - a * xmin - c * zmin) / b, zmin]
+    vert22 = [(d - b * ymin - c * zmin) / a, ymin, zmin]
+    vert23 = [xmax, (d - a * xmax - c * zmin) / b, zmin]
+    vert24 = [(d - b * ymax - c * zmin) / a, ymax, zmin]
+
+    verts = [vert01, vert02, vert03, vert04,
+             vert05, vert06, vert07, vert08,
+             vert09, vert10, vert11, vert12,
+             vert13, vert14, vert15, vert16,
+             vert17, vert18, vert19, vert20,
+             vert21, vert22, vert23, vert24]
+    verts = set([tuple(item) for item in verts])
+    verts = [vert for vert in verts if insideBox(vert[0], vert[1], vert[2], xmin, xmax, ymin, ymax, zmin, zmax)]
+    inds = [i for i, vert in enumerate(verts) if insideBox(vert[0], vert[1], vert[2], xmin, xmax, ymin, ymax, zmin, zmax)]
+
+    if verts == []:
+        raise ValueError('Given plane does not intersect with the cuboid')
+    else:
+        verts = np.stack(verts)
+        # sort vertices
+        n = np.asarray([a, b, c])
+        e1 = n = n/mag(n)
+        e2 = copy.deepcopy(verts[0])
+        e2 /= mag(e2)
+        e3 = np.cross(e1, e2)
+        ps = np.dot(e2, verts.T)
+        qs = np.dot(e3, verts.T)
+        angles = np.arctan2(qs, ps)
+
+        angles, verts = sort_n_arrays_using_order_of_first_array([angles, verts])
+        verts = np.asarray(verts)
+        return verts
+
 
 ## Generate a 2D slice from a 3D data
 def slicer_old(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, show=False, notebook=True,
@@ -7718,7 +7735,8 @@ def slicer_old(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=Tru
 ## Get a slice of a 3D velocity field
 def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
                    method='nn', max_iter=10, tol=0.05, median_filter=True,
-                   basis=None, u_basis='npq', showtqdm=True, verbose=False, notebook=True, **kwargs):
+                   basis=None, u_basis='npq', showtqdm=True, verbose=False, notebook=True,
+                   **kwargs):
     """
     Returns a spatially 2D udata which is on the cross section of a volumetric data
     ... There are two ways to return the velocity field on the cross section.
@@ -7846,27 +7864,28 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
         # shape = uxi.shape
         uis_xyz = np.stack((uxi.flatten(), uyi.flatten(), uzi.flatten()))
         uis_npq = np.matmul(Mab, uis_xyz).reshape((3, ) + shape)
+        uis_xyz = uis_xyz.reshape((3, ) + shape)
 
-        pts_b = np.stack((nn.flatten(), pp.flatten(), qq.flatten()))  # npq
-
-        pts_a = np.matmul(Mba, pts_b)  # x, y, z
-        pts_a[[0, 1], :] = pts_a[[1, 0], :]  # interpolating function takes (y, x, z) not (x, y, z). Swap axes.
-
-        ux_si = fs[0](pts_a.T).reshape(shape)
-        uy_si = fs[1](pts_a.T).reshape(shape)
-        uz_si = fs[2](pts_a.T).reshape(shape)
-
-        uis_si = np.stack((ux_si.flatten(), uy_si.flatten(), uz_si.flatten()))
-        uis_si_npq = np.matmul(Mab, uis_si)
-        un_si, up_si, uq_si = uis_si_npq[0, ...].reshape(shape), uis_si_npq[1, ...].reshape(shape), uis_si_npq[
-            2, ...].reshape(shape)
+        # pts_b = np.stack((nn.flatten(), pp.flatten(), qq.flatten()))  # npq
+        #
+        # pts_a = np.matmul(Mba, pts_b)  # x, y, z
+        # pts_a[[0, 1], :] = pts_a[[1, 0], :]  # interpolating function takes (y, x, z) not (x, y, z). Swap axes.
+        #
+        # ux_si = fs[0](pts_a.T).reshape(shape)
+        # uy_si = fs[1](pts_a.T).reshape(shape)
+        # uz_si = fs[2](pts_a.T).reshape(shape)
+        #
+        # uis_si = np.stack((ux_si.flatten(), uy_si.flatten(), uz_si.flatten()))
+        # uis_si_npq = np.matmul(Mab, uis_si)
+        # un_si, up_si, uq_si = uis_si_npq[0, ...].reshape(shape), uis_si_npq[1, ...].reshape(shape), uis_si_npq[
+        #     2, ...].reshape(shape)
         if i == 0:
             master_shape = (3,) + shape + (duration,)
             udata_si_xyz_basis = np.empty(master_shape)
             udata_si_npq_basis = np.empty(master_shape)
 
-        udata_si_xyz_basis[..., t] = np.stack((ux_si, uy_si, uz_si))
-        udata_si_npq_basis[..., t] = np.stack((un_si, up_si, uq_si))  # un, up, uq- velocity also obeys the transformation rule as position
+        udata_si_xyz_basis[..., t] = uis_xyz
+        udata_si_npq_basis[..., t] = uis_npq  # un, up, uq- velocity also obeys the transformation rule as position
     udata_si_xyz_basis = np.squeeze(udata_si_xyz_basis)  # ux, uy, uz
     udata_si_npq_basis = np.squeeze(udata_si_npq_basis)  # un, up, uq
 
@@ -8057,7 +8076,126 @@ def slice_udata_3d_old(udata, xx, yy, zz, n, pt, spacing=None, show=False,
         return None
 
 ## Get a slice of a 3D scalar field
-def slice_3d_scalar_field(field, xx, yy, zz, n, pt, spacing=None, show=False,
+def slice_3d_scalar_field(field, xx, yy, zz, n, pt, spacing=None,
+                          basis=None,
+                          showtqdm=True, verbose=False, notebook=True, **kwargs):
+    """
+    Returns a spatially 2D udata which is on the cross section of a volumetric data
+    ... There are two ways to return the velocity field on the cross section.
+        1. In the standard basis (xyz, i.e. ux, uy, uz)
+        2. In the NEW basis (which I call npq basis, i.e. un, up, uq)
+            the basis vector n is identical to the unit area vector of the cross section
+    ... By default, this function returns a 2D velocity field in the NEW basis (npq) as well as its coordinates in the same basis.
+        ... This is a natural choice since the cross section is spanned by the new basis vectors p and q.
+        ... Any postional vector on the cross section is expresed by its linear combinations.
+            r = c1 \hat{p} + c2 \hat{q}
+            (c1, c2) are the coordinates in the pq basis.
+            (Technically, the basis vectors are n, p, q but the coefficient of the n basis vector is always zero on the cross section.)
+            By default, this function returns...
+            1. velocity field in the NEW basis (npq) on the cross section
+            2. Coordinates in the pq basis (technically npq basis, but the coordinate in the basis vector n is always zero so I don't return it)
+    ... You CAN retrieve the velocity field in the standard basis (xyz, i.e. ux, uy, uz).
+        Just set "u_basis" equal to "xyz"
+        If you want both (in npq and xyz basses), set  "u_basis" equal to "both"
+    ... If you want a change-of-basis matrix from basis A to basis B, use ilpm.vector.get_change_of_basis_matrix(basisA, basisB)
+        e.g.
+            Mab = vec.get_change_of_basis_matrix(basis_xyz, basis_npq) # transformation matrix from xyz coords to npq coords
+            Mba = np.linalg.inv(Mab) # the change-of-basis matrix is ALWAYS unitary.
+
+    Example:
+
+    Parameters
+    ----------
+    filed: spatially 3d udata (3D or 4D array) with shape (height, width, depth, duration) or  (dim, height, width, depth)
+    xx: 3d array, grid of x-coordinate
+    yy: 3d array, grid of y-coordinate
+    zz: 3d array, grid of z-coordinate
+    n: 1d array-like, area vector (it does not have to be normalized)
+    pt: 1d array-like, xyz coordinates of a point on the plane (Note that n and pt uniquely defines a plane)
+    spacing: float, must be greater than 0. Sampling spatial resolution on the plane
+    show: bool, tflow.graph or takumi.graph is required. If True, it will automatically plot the sampled points on the
+        cross section in a 3D view as well as the new basis vectors
+    method: str, interpolation method of udata, options: 'nn', 'localmean', 'idw'
+        ... volumetric udata may contain lots of np.nan, and cleaning udata often results better results.
+        ... 'nn': nearest neighbor filling
+        ... 'localmean': filling using a direct covolution (inpainting with a neighbor averaging kernel)
+        ... 'idw': filling using a direct covolution (inpainting with a Gaussian kernel)
+    max_iter: int, parameter for replacng nans in udata clean_udata()
+    tol: float, parameter for replacng nans in udata clean_udata()
+    basis: 3x3 matrix, column vectors are the basis vectors.
+        ... If given, the basis vectors are used to span the crosss section.
+        ... The basis vectors may be rotated or converted to right-handed at the end.
+        ...
+    apply_convention: bool, If True, it enforces the new basis to follow the convention (right-handed etc.)
+    u_basis: str, default: "npq", options: "npq", "xyz" / "standard" "std", "both"
+        ... the basis used to represent a velocity field on the plane
+        ... "npq": It returns velocity vectors in the npq basis. Returning udata[i, ...] = (un, up, uq)
+            (un, up, uq) = (velocity component parallel to the area vector,
+                            vel comp parallel to the second basis vector p,
+                            vel comp parallel to the second basis vector q)
+        ... "xyz". "standard", or "std": It returns velocity vectors in the npq basis. Returning udata[i, ...] = (ux, uy, uz)
+
+
+
+    Returns
+    -------
+    udata_si_npq_basis: udata in the npq basis on the plane spanned by the basis vectors p and q.
+        ... its shape is (dim, height, width, duration) = (3, height, width, duration)
+        ... udata_si_npq_basis[0, ...] is velocity u \cdot \hat{n}
+        ... udata_si_npq_basis[1, ...] is velocity u \cdot \hat{p}
+        ... udata_si_npq_basis[2, ...] is velocity u \cdot \hat{q}
+    pp: 2d nd array, p-grid
+    qq: 2d nd array, q-grid
+    """
+
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+        # print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+    else:
+        from tqdm import tqdm
+
+    if spacing is None:
+        dx, dy, dz = get_grid_spacing(xx, yy, zz)
+        spacing = min([dx, dy, dz])
+        print('slice_3d_scalar_field:')
+        print('... spacing: ', spacing)
+
+    field = np.asarray(field)
+    if len(field.shape) == 3:
+        field = field.reshape(field.shape + (1,))
+    duration = field.shape[-1]
+
+    # Extract info about the cross section
+    # Extract info about the cross section
+    xx_plane, yy_plane, zz_plane, pp, qq, Mab, Mba, basis = slicer(xx, yy, zz, n, pt, spacing=spacing, basis=basis, )
+    #
+    pmin, pmax, qmin, qmax = np.nanmin(pp), np.nanmax(pp), np.nanmin(qq), np.nanmax(qq)
+    p = np.linspace(pmin, pmax, int((pmax - pmin) // spacing))
+    q = np.linspace(qmin, qmax, int((qmax - qmin) // spacing))
+    n = [0]
+    pp, qq, nn = np.meshgrid(p, q, n)  # THIS WORKS! DO not touch this
+    shape = pp.shape
+
+    for i, t in tqdm(enumerate(range(duration)), disable=not showtqdm):
+        fi = interpolate_scalar_field_at_instant_of_time(field, xx, yy, zz, t=t, bounds_error=False) # interpolating function
+        field_si = fi((yy_plane, xx_plane, zz_plane))
+
+        if i == 0:
+            master_shape = pp.shape[:-1] + (duration,)
+            field_si_xyz_basis = np.empty(master_shape)
+
+        field_si_xyz_basis[..., t] = field_si
+
+    field_si_xyz_basis = np.squeeze(field_si_xyz_basis)  # ux, uy, uz
+
+    pp, qq = np.squeeze(pp), np.squeeze(qq)  # 2D grid
+
+    if notebook:
+        from tqdm import tqdm as tqdm
+
+    return field_si_xyz_basis, pp, qq
+
+def slice_3d_scalar_field_old(field, xx, yy, zz, n, pt, spacing=None, show=False,
                           basis=None, apply_convention=True,
                           notebook=True):
     """
