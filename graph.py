@@ -1377,7 +1377,7 @@ def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', lin
     return fig, ax
 
 def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax=None, label=None,
-              legend=False, figsize=None, color_cycle=__color_cycle__, maskon=False, thd=1,
+              legend=False, figsize=None, maskon=False, thd=1,
               xmin=None, xmax=None, smooth=False, smoothlog=False, window_len=5, window='hanning',
               set_bottom_zero=False, set_left_zero=False, symmetric=False, return_xy=False,
               **kwargs):
@@ -1520,9 +1520,9 @@ def bin_and_errorbar(x_, y_, xerr=None,
     # Make sure that xerr and yerr are numpy arrays
     ## x, y, xerr, yerr do not have to be numpy arrays. It is just a convention. - takumi 04/01/2018
     x_, y_ = np.array(x_), np.array(y_)
-    x, y, yerr = get_binned_stats(x_, y_, n_bins = n_bins, mode = mode, bin_center=bin_center, return_std = return_std)
+    x, y, yerr = get_binned_stats(x_, y_, n_bins=n_bins, mode = mode, bin_center=bin_center, return_std = return_std)
     if xerr is None:
-        xerr = np.ones_like(x) * (x[1] - x[0])
+        xerr = np.ones_like(x) * (x[1] - x[0]) / 2.
     elif type(xerr) in [int, float]:
         xerr = np.ones_like(x) * xerr
     xerr[xerr == 0] = np.nan
@@ -1905,10 +1905,10 @@ def imshow(arr, xmin=0, xmax=1, ymin=0, ymax=1, cbar=True, vmin=0, vmax=0, \
         fig = plt.gcf()
     if vmin == vmax == 0:
         ima = ax.imshow(arr, extent=(xmin, xmax, ymin, ymax),\
-                   interpolation=interpolation, cmap=cmap)
+                   interpolation=interpolation, cmap=cmap, **kwargs)
     else:
         ima = ax.imshow(arr, extent=(xmin, xmax, ymin, ymax),\
-                   interpolation=interpolation, cmap=cmap, vmin=vmin, vmax=vmax)
+                   interpolation=interpolation, cmap=cmap, vmin=vmin, vmax=vmax, **kwargs)
     if cbar:
         cc = fig.colorbar(ima, **cb_kwargs)
     else:
@@ -1981,21 +1981,25 @@ def imgScatter(x, y, imgs, img_x=None, img_y=None, subax_size=0.06,
     pad, size = pc2float(cb_pad), pc2float(cb_size)
 
     for i, (x_, y_) in enumerate(zip(x, y)):
+        aspectRatio = imgs[i].shape[0] / imgs[i].shape[1]
         if cbar:
             subax = add_subplot_axes(ax, [(x_ - xmin) / ((xmax - xmin) * (1. + pad + size)) - subax_size / 2.,
                                                 (y_ - ymin) / (ymax - ymin) - subax_size / 2.,
-                                                subax_size, subax_size],
+                                                subax_size, subax_size*aspectRatio],
                                            zorder=0, )
         else:
             subax = add_subplot_axes(ax, [(x_ - xmin) / (xmax - xmin) - subax_size / 2.,
                                                 (y_ - ymin) / (ymax - ymin) - subax_size / 2.,
-                                                subax_size, subax_size],
+                                                subax_size, subax_size*aspectRatio],
                                            zorder=0, )
         if img_x is not None and img_y is not None:
             color_plot(img_x, img_y, imgs[i], ax=subax,
                              cbar=False, cmap=cmap, vmin=vmin, vmax=vmax, **kwargs)
         else:
-            imshow(imgs[i], ax=subax, cmap=cmap, vmin=vmin, vmax=vmax, cbar=False, aspect='equal', **kwargs)
+            imshow(imgs[i], ax=subax, cmap=cmap, vmin=vmin, vmax=vmax, cbar=False,
+                   aspect='equal',
+                   xmax=1, ymax=aspectRatio,
+                   **kwargs)
         subax.axis('off')
         subaxes.append(subax)
 
@@ -4230,17 +4234,19 @@ def add_subplot_axes(ax, rect, axisbg='w', alpha=1, **kwargs):
 # sketches
 def draw_circle(ax, x, y, r, linewidth=1, edgecolor='r', facecolor='none', fill=False, **kwargs):
     """
-    Draws a circle in a figure (ax)
+    Draws a circle on the axes (ax)
+
     Parameters
     ----------
-    ax
-    x
-    y
-    r
-    linewidth
-    edgecolor
+    ax: matplotlib axes object
+    x: float
+    y: float
+    r: float
+    linewidth: float
+    edgecolor:
     facecolor
     fill
+    kwargs
 
     Returns
     -------
@@ -5073,7 +5079,7 @@ def get_binned_stats(arg, var, n_bins=100, mode='linear', bin_center=True, retur
     if return_std:
         return arg_bins, var_mean, var_err
     else:
-        return arg_bins, var_mean, var_err / np.sqrt(counts)
+        return arg_bins, var_mean, var_err / np.sqrt(counts-1)
 
 
 def make_ax_symmetric(ax, axis='y'):
@@ -5271,16 +5277,91 @@ def adjust_colorbar(cb,
                     label=None, labelpad=1,
                     tick_fontsize=__fontsize__,
                     ticks=None, ):
-    """Adj"""
+    """A helper to modify basic features of a matplotlib Colorbar object """
     if label is None:
-        label = cb.get_label()
+        label = cb.ax.get_ylabel()
     cb.set_label(label, fontsize=fontsize, labelpad=labelpad)
     if ticks is not None:
         cb.set_ticks(ticks)
     cb.ax.tick_params(labelsize=tick_fontsize)
     cb.ax.xaxis.get_offset_text().set_fontsize(tick_fontsize)
+    cb.ax.yaxis.get_offset_text().set_fontsize(tick_fontsize)
 
 
+def plot_colorbar(values, cmap='viridis', colors=None, ncolors=100,
+                  fignum=1, figsize=None,
+                  orientation='vertical', label=None, labelpad=5,
+                  fontsize=__fontsize__, option='normal', fformat=None,
+                  ticks=None, tick_params=None, **kwargs):
+    """
+    Plots a stand-alone colorbar
+
+    Parameters
+    ----------
+    values: 1d array-like, these values are used to create a colormap
+    cmap: str, cmap object
+    colors: list of colors, if given, it overwrites 'cmap'.
+        ... For custom colors/colormaps, the functions below could be handy.
+        ...... colors = graph.choose_colors() # sns.choose_cubehelix_palette()
+        ...... colors = graph.get_color_list_gradient(color1='red', color2='blue') # linearly segmented colors
+    ncolors
+    fignum
+    figsize
+    orientation
+    label
+    labelpad
+    fontsize
+    option: str, if 'scientific', it uses a scientific format for the ticks
+    fformat
+    ticks
+    tick_params
+    kwargs
+
+    Returns
+    -------
+    fig, cax, cb: Figure instance, axes.Axes instance, Colorbar instance
+    """
+    global sfmt
+    if figsize is None:
+        if orientation == 'horizontal':
+            figsize =(7.54 * 0.5, 1)
+        else:
+            figsize = (1, 7.54 * 0.5)
+
+    if orientation == 'horizontal':
+        cax_spec = [0.1, 0.8, 0.8, 0.1]
+    else:
+        cax_spec = [0.1, 0.1, 0.1, 0.8]
+
+    if colors is not None:
+        cmap = mpl.colors.LinearSegmentedColormap.from_list('cutom_cmap', colors, N=ncolors)
+
+    fig = pl.figure(fignum, figsize=figsize)
+    img = pl.imshow(np.array([values]), cmap=cmap)
+    pl.gca().set_visible(False)
+
+    cax = pl.axes(cax_spec)
+
+    if option == 'scientific':
+        if fformat is not None:
+            sfmt.fformat = fformat
+        fmt = sfmt
+    else:
+        if fformat is not None:
+            fmt = fformat
+        else:
+            fmt = None
+    cb = pl.colorbar(orientation=orientation, cax=cax, format=fmt, **kwargs)
+    cb.set_label(label=label,
+                 fontsize=fontsize, labelpad=labelpad)
+    if ticks is not None:
+        cb.set_ticks(ticks)
+
+    if tick_params is None:
+        tick_params = {'labelsize': fontsize}
+    cb.ax.tick_params(**tick_params)
+    fig.tight_layout()
+    return fig, cax, cb
 
 
 
