@@ -1377,7 +1377,7 @@ def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', lin
     return fig, ax
 
 def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax=None, label=None,
-              legend=False, figsize=None, color_cycle=__color_cycle__, maskon=False, thd=1,
+              legend=False, figsize=None, maskon=False, thd=1,
               xmin=None, xmax=None, smooth=False, smoothlog=False, window_len=5, window='hanning',
               set_bottom_zero=False, set_left_zero=False, symmetric=False, return_xy=False,
               **kwargs):
@@ -1520,9 +1520,9 @@ def bin_and_errorbar(x_, y_, xerr=None,
     # Make sure that xerr and yerr are numpy arrays
     ## x, y, xerr, yerr do not have to be numpy arrays. It is just a convention. - takumi 04/01/2018
     x_, y_ = np.array(x_), np.array(y_)
-    x, y, yerr = get_binned_stats(x_, y_, n_bins = n_bins, mode = mode, bin_center=bin_center, return_std = return_std)
+    x, y, yerr = get_binned_stats(x_, y_, n_bins=n_bins, mode = mode, bin_center=bin_center, return_std = return_std)
     if xerr is None:
-        xerr = np.ones_like(x) * (x[1] - x[0])
+        xerr = np.ones_like(x) * (x[1] - x[0]) / 2.
     elif type(xerr) in [int, float]:
         xerr = np.ones_like(x) * xerr
     xerr[xerr == 0] = np.nan
@@ -1905,10 +1905,10 @@ def imshow(arr, xmin=0, xmax=1, ymin=0, ymax=1, cbar=True, vmin=0, vmax=0, \
         fig = plt.gcf()
     if vmin == vmax == 0:
         ima = ax.imshow(arr, extent=(xmin, xmax, ymin, ymax),\
-                   interpolation=interpolation, cmap=cmap)
+                   interpolation=interpolation, cmap=cmap, **kwargs)
     else:
         ima = ax.imshow(arr, extent=(xmin, xmax, ymin, ymax),\
-                   interpolation=interpolation, cmap=cmap, vmin=vmin, vmax=vmax)
+                   interpolation=interpolation, cmap=cmap, vmin=vmin, vmax=vmax, **kwargs)
     if cbar:
         cc = fig.colorbar(ima, **cb_kwargs)
     else:
@@ -1981,21 +1981,25 @@ def imgScatter(x, y, imgs, img_x=None, img_y=None, subax_size=0.06,
     pad, size = pc2float(cb_pad), pc2float(cb_size)
 
     for i, (x_, y_) in enumerate(zip(x, y)):
+        aspectRatio = imgs[i].shape[0] / imgs[i].shape[1]
         if cbar:
             subax = add_subplot_axes(ax, [(x_ - xmin) / ((xmax - xmin) * (1. + pad + size)) - subax_size / 2.,
                                                 (y_ - ymin) / (ymax - ymin) - subax_size / 2.,
-                                                subax_size, subax_size],
+                                                subax_size, subax_size*aspectRatio],
                                            zorder=0, )
         else:
             subax = add_subplot_axes(ax, [(x_ - xmin) / (xmax - xmin) - subax_size / 2.,
                                                 (y_ - ymin) / (ymax - ymin) - subax_size / 2.,
-                                                subax_size, subax_size],
+                                                subax_size, subax_size*aspectRatio],
                                            zorder=0, )
         if img_x is not None and img_y is not None:
             color_plot(img_x, img_y, imgs[i], ax=subax,
                              cbar=False, cmap=cmap, vmin=vmin, vmax=vmax, **kwargs)
         else:
-            imshow(imgs[i], ax=subax, cmap=cmap, vmin=vmin, vmax=vmax, cbar=False, aspect='equal', **kwargs)
+            imshow(imgs[i], ax=subax, cmap=cmap, vmin=vmin, vmax=vmax, cbar=False,
+                   aspect='equal',
+                   xmax=1, ymax=aspectRatio,
+                   **kwargs)
         subax.axis('off')
         subaxes.append(subax)
 
@@ -2981,7 +2985,7 @@ def add_colorbar_old(mappable, fig=None, ax=None, fignum=None, label=None, fonts
 
 def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', label=None, fontsize=None, option='normal',
                  tight_layout=True, ticklabelsize=None, aspect='equal', ntick=5, tickinc=None,
-                 size='5%', pad=0.15, fformat="%03.1f", labelpad=1, **kwargs):
+                 size='5%', pad=0.15, caxAspect=None, fformat="%03.1f", labelpad=1, **kwargs):
 
     """
     Adds a color bar
@@ -3067,6 +3071,8 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
 
     divider = axes_grid.make_axes_locatable(ax)
     cax = divider.append_axes(location, size=size, pad=pad)
+    if caxAspect is not None:
+        cax.set_aspect(caxAspect)
     if option == 'scientific_custom':
         ticks = get_ticks_for_sfmt(mappable, n=ntick, inc=tickinc, **kwargs)
         kwargs = remove_vmin_vmax_from_kwargs(**kwargs)
@@ -3308,6 +3314,28 @@ def create_colorbar(values, cmap='viridis', figsize=None, orientation='vertical'
     cb.ax.tick_params(labelsize=fontsize)
     fig.tight_layout()
     return fig, ax, cb
+
+def dummy_scalarMappable(values, cmap):
+    """
+    Returns a dummy scalarMappable that can be used to make a stand-alone color bar
+    e.g.
+        sm = dummy_scalarMappable([0, 100], 'viridis')
+        fig = plt.figure(1)
+        fig.colorbar(sm, pad=0.1)
+    Parameters
+    ----------
+    values: list, array, this is used to specify the range of the color bar
+    cmap: str, cmap object
+
+    Returns
+    -------
+    sm
+    """
+    vmin, vmax = np.nanmin(values), np.nanmax(values)
+    norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+    sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+    sm.set_array([])  # dummy mappable
+    return sm
 
 ### Axes
 # Label
@@ -3989,9 +4017,36 @@ def create_weight_shifted_cmap(cmapname, ratio=0.75, vmin=None, vmax=None, vcent
 
 
 def choose_colors(**kwargs):
-    """sns.choose_cubehelix_palette()"""
-    colors = sns.choose_cubehelix_palettee(**kwargs)
+    """
+    Equivalent of sns.choose_cubehelix_palette()
+
+    Example: COLOR CURVES BASED ON A QUANTITY 'Z'
+        # What is Z?
+        z = [0, 0.25, 0.5, 0.75, 1]
+        # Choose colors
+        colors = graph.choose_colors()
+        # Set the colors as a default color cycle
+        set_default_color_cycle(n=len(z), colors=colors)
+        # Plot your data...
+        plot(x1, y1) # color1
+        plot(x2, y2) # color2
+        ...
+        # Add a colorbar (On the same figure)
+        add_colorbar_alone(plt.gca(), z, colors=colors) # plot a stand-alone colorbar in the figure
+        # Add a colorbar (On the different figure)
+        plot_colorbar(z, colors=colors, fignum=2) # plot a stand-alone colorbar on a new figure
+
+    Parameters
+    ----------
+    kwargs
+
+    Returns
+    -------
+    colors
+    """
+    colors = sns.choose_cubehelix_palette(**kwargs)
     return colors
+
 
 def hex2rgb(hex):
     """
@@ -4230,17 +4285,19 @@ def add_subplot_axes(ax, rect, axisbg='w', alpha=1, **kwargs):
 # sketches
 def draw_circle(ax, x, y, r, linewidth=1, edgecolor='r', facecolor='none', fill=False, **kwargs):
     """
-    Draws a circle in a figure (ax)
+    Draws a circle on the axes (ax)
+
     Parameters
     ----------
-    ax
-    x
-    y
-    r
-    linewidth
-    edgecolor
+    ax: matplotlib axes object
+    x: float
+    y: float
+    r: float
+    linewidth: float
+    edgecolor:
     facecolor
     fill
+    kwargs
 
     Returns
     -------
@@ -4393,7 +4450,36 @@ def draw_cuboid(ax, xx, yy, zz, color='c', lw=2, **kwargs):
     ax.set_zlim(rz)
     set_axes_equal(ax)
 
-def draw_sphere(ax, xc, yc, zc, r, color='r', lw=1, **kwargs):
+def draw_sphere(ax, xc, yc, zc, r, color='r', **kwargs):
+    # Make data
+    u = np.linspace(0, 2 * np.pi, 100)
+    v = np.linspace(0, np.pi, 100)
+    x = xc + r * np.outer(np.cos(u), np.sin(v))
+    y = yc + r * np.outer(np.sin(u), np.sin(v))
+    z = zc + r * np.outer(np.ones(np.size(u)), np.cos(v))
+
+    # Plot the surface
+    surf = ax.plot_surface(x, y, z, color=color, **kwargs)
+    set_axes_equal(ax)
+
+def draw_sphere_wireframe(ax, xc, yc, zc, r, color='r', lw=1, **kwargs):
+    """
+    Draws a sphere using a wireframe
+    Parameters
+    ----------
+    ax
+    xc
+    yc
+    zc
+    r
+    color
+    lw
+    kwargs
+
+    Returns
+    -------
+
+    """
     # draw sphere
     u, v = np.mgrid[0:2 * np.pi:20j, 0:np.pi:10j]
     x = r * np.cos(u) * np.sin(v) + xc
@@ -4401,7 +4487,6 @@ def draw_sphere(ax, xc, yc, zc, r, color='r', lw=1, **kwargs):
     z = r * np.cos(v) + zc
     ax.plot_wireframe(x, y, z, color=color, lw=lw, **kwargs)
     set_axes_equal(ax)
-
 
 def add_color_wheel(fig=None, fignum=1, figsize=__figsize__,
          rect=[0.68, 0.65, 0.2, 0.2],
@@ -5073,7 +5158,7 @@ def get_binned_stats(arg, var, n_bins=100, mode='linear', bin_center=True, retur
     if return_std:
         return arg_bins, var_mean, var_err
     else:
-        return arg_bins, var_mean, var_err / np.sqrt(counts)
+        return arg_bins, var_mean, var_err / np.sqrt(counts-1)
 
 
 def make_ax_symmetric(ax, axis='y'):
@@ -5100,7 +5185,8 @@ def make_ax_symmetric(ax, axis='y'):
         xabs = max(-xmin, xmax)
         ax.set_xlim(-xabs, xabs)
 
-def make_ticks_scientific(ax):
+
+def make_ticks_scientific(ax, axis='both', **kwargs):
     """
     Make tick labels display in a scientific format
 
@@ -5120,8 +5206,7 @@ def make_ticks_scientific(ax):
     -------
 
     """
-    ax.ticklabel_format(style='sci', scilimits=(0, 0))
-
+    ax.ticklabel_format(style='sci', scilimits=(0, 0), axis=axis, **kwargs)
 
 def color_axis(ax, locs=['bottom', 'left', 'right'], colors=['k', 'C0', 'C1'],
                xlabel_color=None, ylabel_color=None,
@@ -5271,16 +5356,91 @@ def adjust_colorbar(cb,
                     label=None, labelpad=1,
                     tick_fontsize=__fontsize__,
                     ticks=None, ):
-    """Adj"""
+    """A helper to modify basic features of a matplotlib Colorbar object """
     if label is None:
-        label = cb.get_label()
+        label = cb.ax.get_ylabel()
     cb.set_label(label, fontsize=fontsize, labelpad=labelpad)
     if ticks is not None:
         cb.set_ticks(ticks)
     cb.ax.tick_params(labelsize=tick_fontsize)
     cb.ax.xaxis.get_offset_text().set_fontsize(tick_fontsize)
+    cb.ax.yaxis.get_offset_text().set_fontsize(tick_fontsize)
 
 
+def plot_colorbar(values, cmap='viridis', colors=None, ncolors=100,
+                  fignum=1, figsize=None,
+                  orientation='vertical', label=None, labelpad=5,
+                  fontsize=__fontsize__, option='normal', fformat=None,
+                  ticks=None, tick_params=None, **kwargs):
+    """
+    Plots a stand-alone colorbar
+
+    Parameters
+    ----------
+    values: 1d array-like, these values are used to create a colormap
+    cmap: str, cmap object
+    colors: list of colors, if given, it overwrites 'cmap'.
+        ... For custom colors/colormaps, the functions below could be handy.
+        ...... colors = graph.choose_colors() # sns.choose_cubehelix_palette()
+        ...... colors = graph.get_color_list_gradient(color1='red', color2='blue') # linearly segmented colors
+    ncolors
+    fignum
+    figsize
+    orientation
+    label
+    labelpad
+    fontsize
+    option: str, if 'scientific', it uses a scientific format for the ticks
+    fformat
+    ticks
+    tick_params
+    kwargs
+
+    Returns
+    -------
+    fig, cax, cb: Figure instance, axes.Axes instance, Colorbar instance
+    """
+    global sfmt
+    if figsize is None:
+        if orientation == 'horizontal':
+            figsize =(7.54 * 0.5, 1)
+        else:
+            figsize = (1, 7.54 * 0.5)
+
+    if orientation == 'horizontal':
+        cax_spec = [0.1, 0.8, 0.8, 0.1]
+    else:
+        cax_spec = [0.1, 0.1, 0.1, 0.8]
+
+    if colors is not None:
+        cmap = mpl.colors.LinearSegmentedColormap.from_list('cutom_cmap', colors, N=ncolors)
+
+    fig = pl.figure(fignum, figsize=figsize)
+    img = pl.imshow(np.array([values]), cmap=cmap)
+    pl.gca().set_visible(False)
+
+    cax = pl.axes(cax_spec)
+
+    if option == 'scientific':
+        if fformat is not None:
+            sfmt.fformat = fformat
+        fmt = sfmt
+    else:
+        if fformat is not None:
+            fmt = fformat
+        else:
+            fmt = None
+    cb = pl.colorbar(orientation=orientation, cax=cax, format=fmt, **kwargs)
+    cb.set_label(label=label,
+                 fontsize=fontsize, labelpad=labelpad)
+    if ticks is not None:
+        cb.set_ticks(ticks)
+
+    if tick_params is None:
+        tick_params = {'labelsize': fontsize}
+    cb.ax.tick_params(**tick_params)
+    fig.tight_layout()
+    return fig, cax, cb
 
 
 

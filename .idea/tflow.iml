@@ -6,6 +6,8 @@
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
+    <orderEntry type="module" module-name="tmatsuzawa.github.io" />
+    <orderEntry type="module" module-name="neko" />
   </component>
   <component name="PyDocumentationSettings">
     <option name="format" value="NUMPY" />
