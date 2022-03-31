@@ -467,35 +467,19 @@ def get_rotation_matrix_between_two_vectors(a, b):
 
     """
     a, b = norm(a), norm(b)
-    if all(a == b):
-        return np.identity(3)
-    elif all(a == -b):
-        # When a and b are complete opposite to each other, there is no unique rotation matrix in 3D!
-        ## Also, note that -np.identity(3) is not unitary.
-        R = np.identity(3)
-        if len(np.argwhere(a)) == 1:
-            cond1 = np.where(a!=0)[0][0]
-            cond2 = np.where(a==0)[0][0]
-            R[:, cond1] *= -1
-            R[:, cond2] *= -1
-        else:
-            cond1 = np.argmax(np.abs(a))
-            cond2 = [ind for ind in [0, 1, 2] if ind != cond1][0]
-            R[:, cond1] *= -1
-            R[:, cond2] *= -1
-        return R
-    else:
-        v = cross(a, b)
-        s = mag1(v)
-        c = dot(a, b)
-        A = np.asarray([[0, -v[2], v[1]],
-                        [v[2], 0, -v[0]],
-                        [-v[1], v[0], 0]])
-        I = np.asarray([[1, 0, 0],
-                        [0, 1, 0],
-                        [0, 0, 1]])
-        R = I + A + np.matmul(A, A) * (1 - c) / s ** 2
-        return R
+    v = cross(a, b)
+    s = mag1(v)
+    c = dot(a, b)
+
+    A = np.asarray([[0, -v[2], v[1]],
+                    [v[2], 0, -v[0]],
+                    [-v[1], v[0], 0]])
+    I = np.asarray([[1, 0, 0],
+                    [0, 1, 0],
+                    [0, 0, 1]])
+    R = I + A + np.matmul(A, A) * (1 - c) / s ** 2
+    return R
+
 
 def get_change_of_basis_matrix(basisA, basisB):
     """
