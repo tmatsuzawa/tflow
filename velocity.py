@@ -3994,23 +3994,57 @@ def get_two_point_vel_corr(udata, x, y, z=None,
     else:
         from tqdm import tqdm
 
+    # def get_rotation_matrix_between_two_vectors(a, b):
+    #     """
+    #     Returns a 3D rotation matrix R that rotates a unit vector onto a unit vector of b
+    #     """
+    #     a, b = vec.norm(a), vec.norm(b)
+    #     v = vec.cross(a, b)
+    #     s = vec.mag1(v)
+    #     c = vec.dot(a, b)
+    #
+    #     A = np.asarray([[0, -v[2], v[1]],
+    #                     [v[2], 0, -v[0]],
+    #                     [-v[1], v[0], 0]])
+    #     I = np.asarray([[1, 0, 0],
+    #                     [0, 1, 0],
+    #                     [0, 0, 1]])
+    #     R = I + A + np.matmul(A, A) * (1 - c) / s ** 2
+    #     return R
     def get_rotation_matrix_between_two_vectors(a, b):
         """
-        Returns a 3D rotation matrix R that rotates a unit vector onto a unit vector of b
+        Returns a 3D rotation matrix R that rotates a unit vector of "a" onto a unit vector of "b"
         """
         a, b = vec.norm(a), vec.norm(b)
-        v = vec.cross(a, b)
-        s = vec.mag1(v)
-        c = vec.dot(a, b)
-
-        A = np.asarray([[0, -v[2], v[1]],
-                        [v[2], 0, -v[0]],
-                        [-v[1], v[0], 0]])
-        I = np.asarray([[1, 0, 0],
-                        [0, 1, 0],
-                        [0, 0, 1]])
-        R = I + A + np.matmul(A, A) * (1 - c) / s ** 2
-        return R
+        if all(a == b):
+            return np.identity(3)
+        elif all(a == -b):
+            # When a and b are complete opposite to each other, there is no unique rotation matrix in 3D!
+            ## Also, note that -np.identity(3) is not unitary.
+            R = np.identity(3)
+            if len(np.argwhere(a)) == 1:
+                cond1 = np.where(v != 0)[0][0]
+                cond2 = np.where(v == 0)[0][0]
+                R[:, cond1] *= -1
+                R[:, cond2] *= -1
+            else:
+                cond1 = np.argmax(np.abs(v))
+                cond2 = [ind for ind in [0, 1, 2] if ind != cond1][0]
+                R[:, cond1] *= -1
+                R[:, cond2] *= -1
+            return R
+        else:
+            v = vec.cross(a, b)
+            s = vec.mag1(v)
+            c = vec.dot(a, b)
+            A = np.asarray([[0, -v[2], v[1]],
+                            [v[2], 0, -v[0]],
+                            [-v[1], v[0], 0]])
+            I = np.asarray([[1, 0, 0],
+                            [0, 1, 0],
+                            [0, 0, 1]])
+            R = I + A + np.matmul(A, A) * (1 - c) / s ** 2
+            return R
 
     udata = fix_udata_shape(udata)
     dim = len(udata)
@@ -17999,7 +18033,7 @@ def get_helicity_density(udata, xx, yy, zz, crop=2):
             helicity_density[..., t] += udata[d, ..., t] * omega[d, ..., t]
 
     if crop is not None:
-        bulk = np.zeros_like(ai).astype('bool')
+        bulk = np.zeros_like(helicity_density).astype('bool')
         bulk[:, crop:-crop, crop:-crop, crop:-crop, :] = True
         edges = ~bulk
         helicity_density[edges] = np.nan
