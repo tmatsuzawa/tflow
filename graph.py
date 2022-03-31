@@ -2985,7 +2985,7 @@ def add_colorbar_old(mappable, fig=None, ax=None, fignum=None, label=None, fonts
 
 def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', label=None, fontsize=None, option='normal',
                  tight_layout=True, ticklabelsize=None, aspect='equal', ntick=5, tickinc=None,
-                 size='5%', pad=0.15, fformat="%03.1f", labelpad=1, **kwargs):
+                 size='5%', pad=0.15, caxAspect=None, fformat="%03.1f", labelpad=1, **kwargs):
 
     """
     Adds a color bar
@@ -3071,6 +3071,8 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
 
     divider = axes_grid.make_axes_locatable(ax)
     cax = divider.append_axes(location, size=size, pad=pad)
+    if caxAspect is not None:
+        cax.set_aspect(caxAspect)
     if option == 'scientific_custom':
         ticks = get_ticks_for_sfmt(mappable, n=ntick, inc=tickinc, **kwargs)
         kwargs = remove_vmin_vmax_from_kwargs(**kwargs)
@@ -3312,6 +3314,28 @@ def create_colorbar(values, cmap='viridis', figsize=None, orientation='vertical'
     cb.ax.tick_params(labelsize=fontsize)
     fig.tight_layout()
     return fig, ax, cb
+
+def dummy_scalarMappable(values, cmap):
+    """
+    Returns a dummy scalarMappable that can be used to make a stand-alone color bar
+    e.g.
+        sm = dummy_scalarMappable([0, 100], 'viridis')
+        fig = plt.figure(1)
+        fig.colorbar(sm, pad=0.1)
+    Parameters
+    ----------
+    values: list, array, this is used to specify the range of the color bar
+    cmap: str, cmap object
+
+    Returns
+    -------
+    sm
+    """
+    vmin, vmax = np.nanmin(values), np.nanmax(values)
+    norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+    sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+    sm.set_array([])  # dummy mappable
+    return sm
 
 ### Axes
 # Label
@@ -3993,9 +4017,36 @@ def create_weight_shifted_cmap(cmapname, ratio=0.75, vmin=None, vmax=None, vcent
 
 
 def choose_colors(**kwargs):
-    """sns.choose_cubehelix_palette()"""
-    colors = sns.choose_cubehelix_palettee(**kwargs)
+    """
+    Equivalent of sns.choose_cubehelix_palette()
+
+    Example: COLOR CURVES BASED ON A QUANTITY 'Z'
+        # What is Z?
+        z = [0, 0.25, 0.5, 0.75, 1]
+        # Choose colors
+        colors = graph.choose_colors()
+        # Set the colors as a default color cycle
+        set_default_color_cycle(n=len(z), colors=colors)
+        # Plot your data...
+        plot(x1, y1) # color1
+        plot(x2, y2) # color2
+        ...
+        # Add a colorbar (On the same figure)
+        add_colorbar_alone(plt.gca(), z, colors=colors) # plot a stand-alone colorbar in the figure
+        # Add a colorbar (On the different figure)
+        plot_colorbar(z, colors=colors, fignum=2) # plot a stand-alone colorbar on a new figure
+
+    Parameters
+    ----------
+    kwargs
+
+    Returns
+    -------
+    colors
+    """
+    colors = sns.choose_cubehelix_palette(**kwargs)
     return colors
+
 
 def hex2rgb(hex):
     """
@@ -4399,7 +4450,36 @@ def draw_cuboid(ax, xx, yy, zz, color='c', lw=2, **kwargs):
     ax.set_zlim(rz)
     set_axes_equal(ax)
 
-def draw_sphere(ax, xc, yc, zc, r, color='r', lw=1, **kwargs):
+def draw_sphere(ax, xc, yc, zc, r, color='r', **kwargs):
+    # Make data
+    u = np.linspace(0, 2 * np.pi, 100)
+    v = np.linspace(0, np.pi, 100)
+    x = xc + r * np.outer(np.cos(u), np.sin(v))
+    y = yc + r * np.outer(np.sin(u), np.sin(v))
+    z = zc + r * np.outer(np.ones(np.size(u)), np.cos(v))
+
+    # Plot the surface
+    surf = ax.plot_surface(x, y, z, color=color, **kwargs)
+    set_axes_equal(ax)
+
+def draw_sphere_wireframe(ax, xc, yc, zc, r, color='r', lw=1, **kwargs):
+    """
+    Draws a sphere using a wireframe
+    Parameters
+    ----------
+    ax
+    xc
+    yc
+    zc
+    r
+    color
+    lw
+    kwargs
+
+    Returns
+    -------
+
+    """
     # draw sphere
     u, v = np.mgrid[0:2 * np.pi:20j, 0:np.pi:10j]
     x = r * np.cos(u) * np.sin(v) + xc
@@ -4407,7 +4487,6 @@ def draw_sphere(ax, xc, yc, zc, r, color='r', lw=1, **kwargs):
     z = r * np.cos(v) + zc
     ax.plot_wireframe(x, y, z, color=color, lw=lw, **kwargs)
     set_axes_equal(ax)
-
 
 def add_color_wheel(fig=None, fignum=1, figsize=__figsize__,
          rect=[0.68, 0.65, 0.2, 0.2],
@@ -5106,7 +5185,8 @@ def make_ax_symmetric(ax, axis='y'):
         xabs = max(-xmin, xmax)
         ax.set_xlim(-xabs, xabs)
 
-def make_ticks_scientific(ax):
+
+def make_ticks_scientific(ax, axis='both', **kwargs):
     """
     Make tick labels display in a scientific format
 
@@ -5126,8 +5206,7 @@ def make_ticks_scientific(ax):
     -------
 
     """
-    ax.ticklabel_format(style='sci', scilimits=(0, 0))
-
+    ax.ticklabel_format(style='sci', scilimits=(0, 0), axis=axis, **kwargs)
 
 def color_axis(ax, locs=['bottom', 'left', 'right'], colors=['k', 'C0', 'C1'],
                xlabel_color=None, ylabel_color=None,
