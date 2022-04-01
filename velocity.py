@@ -735,7 +735,7 @@ def get_spatial_avg_energy_inside_r_from_path(dpath, r, xc=0., yc=0.,
     return esavg_in, esavg_out, esavg_in_err, esavg_out_err
 
 
-def get_spatial_avg_enstrophy(udata, dx, dy, dz,x0=0, x1=None, y0=0, y1=None,
+def get_spatial_avg_enstrophy(udata, dx=1., dy=1., dz=1., x0=0, x1=None, y0=0, y1=None,
                               z0=0, z1=None, xx=None, yy=None, zz=None):
     """
     Returns spatially averaged enstrophy
@@ -14289,7 +14289,7 @@ def default_analysis_piv(dpath, inc=1, overwrite=False, time=None, t0=0, t1=None
                         radial_dist ** 2 * eTimeThetaPhi_avg, x=radial_dist),
                     'r_blob_enst': np.trapz(radial_dist_enst ** 3 * enstTimeThetaPhi_avg,
                                             x=radial_dist_enst) / np.trapz(radial_dist ** 2 * enstTimeThetaPhi_avg,
-                                                                           x=radial_dist_enst),
+                                            x=radial_dist_enst),
                     }
         add_data2udatapath(dpath, datadict, overwrite=overwrite, grpname=grpname)
     # else:
@@ -18034,7 +18034,7 @@ def get_helicity_density(udata, xx, yy, zz, crop=2):
 
     if crop is not None:
         bulk = np.zeros_like(helicity_density).astype('bool')
-        bulk[:, crop:-crop, crop:-crop, crop:-crop, :] = True
+        bulk[crop:-crop, crop:-crop, crop:-crop, :] = True
         edges = ~bulk
         helicity_density[edges] = np.nan
     return helicity_density
