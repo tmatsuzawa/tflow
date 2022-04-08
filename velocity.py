@@ -340,6 +340,7 @@ def get_mean_flow_field_using_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None,
             if clean:
                 udata_tmp = clean_udata(udata_tmp, cutoff=cutoff, method=method, median_filter=median_filter,
                                         replace_zeros=replace_zeros, verbose=verbose, showtqdm=verbose)
+                udata_tmp = fix_udata_shape(udata_tmp)
             else:
                 udata_tmp = fix_udata_shape(udata_tmp)
             udata_m += udata_tmp[..., 0]
@@ -6745,7 +6746,7 @@ def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
 def get_time_avg_energy_from_udatapath(udatapath,
                                        x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                                        t0=0, t1=None, slicez=None, inc=1,
-                                       clean=False, median_filter=False, verbose=False,
+                                       clean=False, median_filter=False,
                                        thd=np.inf, fill_value=np.nan,
                                        udata_mean=None,
                                        notebook=True, **kwargs):
@@ -6785,7 +6786,9 @@ def get_time_avg_energy_from_udatapath(udatapath,
         ... value used to fill the data when data value is greater than a threshold
     udata_mean: array, default: None
         ... It subtracts the given array from the udata. This feature can be used to compute the mean fluctuating energy.
-
+    clean: bool, if True, it runs clean_udata() before computing energy
+        ... it is often recommmended to pass an additional kwarg 'showtqdm=False' for concise output.
+        ... if method='idw', this process could take time so 'showtqdm=True' makes sense to monitor this cleaning process.
     Returns
     -------
     eavg: nd array, time-averaged energy
@@ -6818,6 +6821,8 @@ def get_time_avg_energy_from_udatapath(udatapath,
                                       f['uz'][y0:y1, x0:x1, z0:z1, t]))
                     if udata_mean is not None:
                         udata -= udata_mean
+                    if clean:
+                        udata = clean_udata(udata, median_filter=median_filter, **kwargs)
                     energy_inst = get_energy(udata)
                     energy_inst[energy_inst > thd] = fill_value
                     eavg = np.nansum(np.stack((eavg, energy_inst)), 0)
@@ -6833,7 +6838,7 @@ def get_time_avg_energy_from_udatapath(udatapath,
                     if udata_mean is not None:
                         udata -= udata_mean
                     if clean:
-                        udata = clean_udata(udata, median_filter=median_filter, **kwargs, verbose=False)[..., 0]
+                        udata = clean_udata(udata, median_filter=median_filter, **kwargs)
                     energy_inst = get_energy(udata)
                     energy_inst[energy_inst > thd] = fill_value
                     eavg = np.nansum(np.stack((eavg, energy_inst)), 0)
@@ -6848,7 +6853,7 @@ def get_time_avg_energy_from_udatapath(udatapath,
                 if udata_mean is not None:
                     udata -= udata_mean
                 if clean:
-                    udata = clean_udata(udata, median_filter=median_filter, **kwargs, verbose=False)[..., 0]
+                    udata = clean_udata(udata, median_filter=median_filter, **kwargs)[..., 0]
                 energy_inst = get_energy(udata)
                 energy_inst[energy_inst > thd] = fill_value
                 eavg = np.nansum(np.stack((eavg, energy_inst)), 0)
@@ -11974,6 +11979,32 @@ def fix_udata_shape(udata):
             uz = uz.reshape((uz.shape[0], uz.shape[1], uz.shape[2], duration))
             return np.stack((ux, uy, uz))
 
+def get_time_from_path(dpath, fps, inc=1, t0=0, t1=None, save=False, overwrite=False):
+    """
+    Returns real time that corresponds to udata
+    ... time = np.arange(t0, t1, inc) / fps
+
+    Parameters
+    ----------
+    dpath: str, a path where a velocity field is stored
+    fps: float, frame rate in FPS
+    inc: int, increment
+    t0: int, starting frame number
+    t1: int, ending frame number
+    save: bool, if True, it adds the created 1d array at /t
+    overwrite: bool, if True AND save is True, it saves the created 1d array at /t even if the data already exists there.
+
+    Returns
+    -------
+    realtimes: 1d array, time (in sec)
+    """
+    duration = get_udata_dim(dpath)[-1]
+    if t1 is None: t1 = duration
+    timesteps = np.arange(t0, t1, inc)
+    realtimes = timesteps / fps
+    if save:
+        add_data2udatapath(dpath, {'t': realtimes}, overwrite=overwrite)
+    return realtimes
 
 def fill_udata(udata, keep, duplicate=True, fill_value=np.nan):
     """
@@ -13136,7 +13167,7 @@ def get_phase_average(x, period_ind=None,
         x_perr = np.empty(shape_pavg)
 
         for i in range(nbins):
-            tmin, tmax = t_p[i] - dt / 2., t_p[i] + dt / 2,
+            tmin, tmax = t_p[i] - dt / 2., t_p[i] + dt / 2
             keep1, keep2 = time_mod >= tmin, time_mod < tmax
             keep = keep1 * keep2
             indices = np.arange(x.shape[axis])[keep]
@@ -14375,7 +14406,7 @@ def default_analysis_stb(dpath, inc=1, overwrite=False, time=None):
              ['abs_ui_median', 'abs_ui_avg', 'abs_ui_99', 'abs_ui_99p9', 'u_cutoff']]) or overwrite:
         udata, xxx, yyy, zzz = get_udata_from_path(dpath, inc=100, return_xy=True)  # sample udata
         abs_ui_median, abs_ui_avg = np.nanmedian(np.abs(udata)), np.nanmean(np.abs(udata))
-        bins, pdf = compute_pdf(np.abs(udata))
+        # bins, pdf = compute_pdf(np.abs(udata))
         bins, cdf = compute_cdf(np.abs(udata))
         u_cutoff = bins[find_nearest(cdf, 0.999)[0]]  # set u_cutoff at which only 0.1% will be rejected
         datadict = {'abs_ui_median': abs_ui_median,
@@ -14390,19 +14421,13 @@ def default_analysis_stb(dpath, inc=1, overwrite=False, time=None):
     else:
         u_cutoff = read_data_from_h5(dpath, ['u_cutoff'])
 
-    # Temporal/Spatial average quantities
+    # Temporally averaged quantities
     if not all([target in keys for target in
-                ['etavg', 'esavg', 'esavg_err', 'enst_tavg', 'enst_savg', 'enst_savg_err', 'xc', 'yc', 'zc',
-                 'xc_enst', 'yc_enst', 'zc_enst']]) or overwrite:
+                ['etavg', 'enst_tavg', 'xc', 'yc', 'zc', 'xc_enst', 'yc_enst', 'zc_enst']]) or overwrite:
         udata, xxx, yyy, zzz = get_udata_from_path(dpath, t0=0, t1=1, return_xy=True)  # sample udata
         etavg = get_time_avg_energy_from_udatapath(dpath, inc=inc)
         enst_tavg = get_time_avg_enstrophy_from_udatapath(dpath, inc=inc)
-        results_e = process_large_udata(dpath, func=get_spatial_avg_energy, inc=inc, clean=True,
-                                        cutoff=u_cutoff)
-        esavg, esavg_err = results_e
-        results_enst = process_large_udata(dpath, func=get_spatial_avg_enstrophy, inc=inc,
-                                           clean=True, cutoff=u_cutoff, xx=xxx, yy=yyy, zz=zzz)
-        enst_savg, enst_savg_err = results_enst
+
         # center of energy
         xc, yc, zc = np.nansum(xxx * etavg) / np.nansum(etavg), np.nansum(yyy * etavg) / np.nansum(
             etavg), np.nansum(zzz * etavg) / np.nansum(etavg)
@@ -14412,17 +14437,32 @@ def default_analysis_stb(dpath, inc=1, overwrite=False, time=None):
         datadict = {'xc': xc, 'yc': yc, 'zc': zc,  # Center of energy
                     'xc_enst': xc_enst, 'yc_enst': yc_enst, 'zc_enst': zc_enst,  # Center of enstrophy
                     'etavg': etavg,  # time-averaged energy
-                    'esavg': esavg,  # spatially averaged energy
-                    'esavg_err': esavg_err,  # standard error of spatially averaged energy
                     'enst_tavg': enst_tavg,  # time-averaged enstrophy
+                    }
+        add_data2udatapath(dpath, datadict, overwrite=overwrite)
+    else:
+        xc, yc, zc = read_data_from_h5(dpath, ['xc', 'yc', 'zc'])
+        etavg, enst_tavg = read_data_from_h5(dpath, ['etavg', 'enst_tavg'])
+
+    # Spatially averaged quantities
+    if not all([target in keys for target in
+                ['esavg', 'esavg_err', 'enst_savg', 'enst_savg_err', ]]) or overwrite:
+        results_e = process_large_udata(dpath, func=get_spatial_avg_energy, inc=inc, clean=True,
+                                        cutoff=u_cutoff)
+        esavg, esavg_err = results_e
+        results_enst = process_large_udata(dpath, func=get_spatial_avg_enstrophy, inc=inc,
+                                           clean=True, cutoff=u_cutoff, xx=xxx, yy=yyy, zz=zzz)
+        enst_savg, enst_savg_err = results_enst
+
+        datadict = {'esavg': esavg,  # spatially averaged energy
+                    'esavg_err': esavg_err,  # standard error of spatially averaged energy
                     'enst_savg': enst_savg,  # spatially averaged enstrophy
                     'enst_savg_err': enst_savg_err,  # standard error of spatially averaged enstrophy
                     }
         add_data2udatapath(dpath, datadict, overwrite=overwrite)
     else:
         xc, yc, zc = read_data_from_h5(dpath, ['xc', 'yc', 'zc'])
-        etavg, esavg = read_data_from_h5(dpath, ['etavg', 'esavg'])
-        enst_tavg, enst_savg = read_data_from_h5(dpath, ['etavg', 'esavg'])
+        esavg, enst_tavg = read_data_from_h5(dpath, ['esavg', 'enst_savg'])
 
     # Radial profile
     if not all([target in keys for target in ['r_energy', 'eTimeThetaPhi_avg', 'eTimeThetaPhi_avg_err']]) or overwrite:
