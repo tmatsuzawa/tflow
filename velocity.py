@@ -12006,6 +12006,48 @@ def get_time_from_path(dpath, fps, inc=1, t0=0, t1=None, save=False, overwrite=F
         add_data2udatapath(dpath, {'t': realtimes}, overwrite=overwrite)
     return realtimes
 
+def truncateXY(xx, yy, x0=0, x1=None, y0=0, y1=None):
+    """
+    Returns a truncated grid
+
+    Parameters
+    ----------
+    xxx: 2d array, x-coordinate
+    yyy: 2d array, y-coordinate
+    x0: int, index used to truncate a 2d array like xx[y0:y1, x0:x1]
+    x1: int, index used to truncate a 2d array like xx[y0:y1, x0:x1]
+    y0: int, index used to truncate a 2d array like xx[y0:y1, x0:x1]
+    y1: int, index used to truncate a 2d array like xx[y0:y1, x0:x1]
+
+    Returns
+    -------
+    xx[y0:y1, x0:x1], yy[y0:y1, x0:x1]
+    """
+    return xx[y0:y1, x0:x1], yy[y0:y1, x0:x1]
+
+def truncateXYZ(xxx, yyy, zzz, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None):
+    """
+    Returns a truncated grid
+
+    Parameters
+    ----------
+    xxx: 3d array, x-coordinate
+    yyy: 3d array, y-coordinate
+    zzz: 3d array, z-coordinate
+    x0: int, index used to truncate a 3d array like xxx[y0:y1, x0:x1, z0:z1]
+    x1: int, index used to truncate a 3d array like xxx[y0:y1, x0:x1, z0:z1]
+    y0: int, index used to truncate a 3d array like xxx[y0:y1, x0:x1, z0:z1]
+    y1: int, index used to truncate a 3d array like xxx[y0:y1, x0:x1, z0:z1]
+    z0: int, index used to truncate a 3d array like xxx[y0:y1, x0:x1, z0:z1]
+    z1: int, index used to truncate a 3d array like xxx[y0:y1, x0:x1, z0:z1]
+
+    Returns
+    -------
+    xxx[y0:y1, x0:x1, z0:z1], yyy[y0:y1, x0:x1, z0:z1], zzz[y0:y1, x0:x1, z0:z1]
+    """
+    return xxx[y0:y1, x0:x1, z0:z1], yyy[y0:y1, x0:x1, z0:z1], zzz[y0:y1, x0:x1, z0:z1]
+
+
 def fill_udata(udata, keep, duplicate=True, fill_value=np.nan):
     """
     Replaces values in ~keep with 'filled_value'
