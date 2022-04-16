@@ -1,8 +1,13 @@
-Welcome to tflow  documentation!
-===================================
+.. tflow documentation master file, created by
+   sphinx-quickstart on Sat Apr 16 15:31:57 2022.
+   You can adapt this file completely to your liking, but it should at least
+   contain the root `toctree` directive.
 
- tflow- a Python package to analyze 2D/3D (laminar/turbulent) velocity fields
-[Website](https://tmatsuzawa.github.io/tflow)
+Welcome to tflow's documentation!
+=================================
+
+Project webpage: https://tmatsuzawa.github.io/tflow
+
 As the name 'tflow' indicates, the package includes useful modules to analyze turbulent velocity fields.
 
 The only key assumption is the incompressibility of the medium; however, one should feel free to fork this repo to develop the package for the compressible fluids.
@@ -27,13 +32,15 @@ B. Numerics
 2. Import tflow.velocity
 3. Analyze and plot
 
-.. note::
-
-   This project is under active development.
-
-Contents
---------
 .. toctree::
+   :maxdepth: 2
+   :caption: Contents:
 
-   usage
-   api
+
+
+Indices and tables
+==================
+
+* :ref:`genindex`
+* :ref:`modindex`
+* :ref:`search`
