@@ -2695,7 +2695,8 @@ def add_arrow_to_line2D(
 
     Returns:
     --------
-    arrows: list of arrows
+    arrows: list
+        each element is a mpl.patches.FancyArrowPatch object
     """
     if not isinstance(line, mlines.Line2D):
         raise ValueError("expected a matplotlib.lines.Line2D object")
