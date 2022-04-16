@@ -7,7 +7,7 @@ Welcome to tflow documentation!
 =================================
 `Project website<https://tmatsuzawa.github.io/tflow>`
 
-As the name 'tflow' indicates, the package includes useful modules to analyze turbulent velocity fields.
+This package includes useful modules to analyze turbulent velocity fields.
 
 The only key assumption is the incompressibility of the medium; however, one should feel free to fork this repo to develop the package for the compressible fluids.
 It would require many but minor modifications overall.
@@ -39,7 +39,6 @@ This package is perhaps more attractive to experimentally obtained velocity fiel
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
-
 
 
 Index
