@@ -34,7 +34,7 @@ extensions = [
               'sphinx.ext.napoleon', # Support for numpy and google style doc
               'sphinx.ext.autodoc', # Automatic documentation from docstrings
               'sphinx_rtd_theme', # Read The Docs theme
-              'myst_parser', # support for Markdown use in Sphinx
+              # 'myst_parser', # support for Markdown use in Sphinx
              ]
 
 # Add any paths that contain templates here, relative to this directory.
