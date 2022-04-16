@@ -11319,8 +11319,56 @@ def get_binned_stats3d(x, y, z, var, n_bins=100, nx_bins=None, ny_bins=None, nz_
         return xx_binned, yy_binned, zz_binned, var_mean, var_err
 
 # LOADING UDATA
-def get_udata(*args, **kwargs):
-    """A short-hand for get_udata_from_path(). For the docstring, see get_udata_from_path()"""
+def get_udata(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
+                        t0=0, t1=None, inc=1, frame=None, return_xy=False, verbose=True,
+                        slicez=None, crop=None, mode='r',
+                        reverse_x=False, reverse_y=False, reverse_z=False, ind=0):
+    """
+    Returns udata from a path to udata
+    If return_xy is True, it returns udata, xx(2d grid), yy(2d grid)
+
+    Parameters
+    ----------
+    udatapath
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    t0 int, default: 0
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+    t1 int, default: None
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+
+    inc: int
+        time increment of data to load from udatapath, default: 1
+    frame: array-like or int, default: None
+        If an integer is given, it returns a velocity field at that instant of time
+        If an array or a list is given, it returns a velocity field at the given time specified by the array/list.
+
+        By default, it loads data by a specified increment "inc".
+        If "frame" is given, it is prioritized over the incremental loading.
+    return_xy: bool, defualt: False
+    verbose: bool
+        If True, return the time it took to load udata to memory
+    ind: int, id for a file with multiple piv data (udata)
+        ... A file may include ux, uy, x, y under /piv/piv000/, /piv/piv001, /piv/piv001, ... when piv is conducted on the same footage.
+
+    Returns
+    -------
+    udata: nd array with shape (dim, height, width, (depth), duration)
+        ... udata[0, ...]: ux, udata[1, ...]: uy, udata[2, ...]: uz
+        ... udata[0, ..., t] is a 2D/3D array which stores the x-component of the velocity field.
+        ... Intuitively speaking, udata is organized like udata[dim, y, x, (z), time]
+
+    (optional)
+    xx: 2d/3d array of a positional grid (x) stored in the given file
+    yy: 2d/3d array of a positional grid (y) stored in the given file
+    zz: 2d/3d array of a positional grid (z) stored in the given file
+    """
     return get_udata_from_path(*args, **kwargs)
 
 
