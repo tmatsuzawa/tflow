@@ -34,8 +34,7 @@ To make the package compatible for theoretical and experimental studies, the inp
 ... For DaVis (ver.10.1-, LaVision Inc.) users, you may use davis2hdf5.py.
 2. ```import tflow.velocity as vel```
 3. Load your velocity field data like ```udata = vel.get_udata(path2udata)```
-4. Run analysis functions such as '''get_energy(udata)'''
-
+4. Run analysis functions such as ```get_energy(udata)```
 
 
 
