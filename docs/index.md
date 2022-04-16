@@ -32,8 +32,8 @@ To make the package compatible for theoretical and experimental studies, the inp
 ### Example analysis pipeline
 1. Format your PIV-/PTV-extracted velocity field in the format above
 ... For DaVis (ver.10.1-, LaVision Inc.) users, you may use davis2hdf5.py.
-2. '''import tflow.velocity as vel'''
-3. Load your velocity field data like '''udata = vel.get_udata(path2udata)'''
+2. ```import tflow.velocity as vel```
+3. Load your velocity field data like ```udata = vel.get_udata(path2udata)```
 4. Run analysis functions such as '''get_energy(udata)'''
 
 
