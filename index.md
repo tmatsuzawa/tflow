@@ -37,6 +37,11 @@ To make the package compatible for theoretical and experimental studies, the inp
 4. Run analysis functions such as ```get_energy(udata)```
 
 
+### Documentation
+The documentation to the key modules (velocity, graph, davis2hdf5) can be found [here](/docs/build/html/index.html).
+
+
+
 
 ### Contact
 If you have questions or suggestions, contact me on my [Github](https://github.com/tmatsuzawa/tflow) or by email (tmatsuzawa_at_uchicago.edu)
