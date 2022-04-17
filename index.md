@@ -38,7 +38,8 @@ To make the package compatible for theoretical and experimental studies, the inp
 
 
 ### Documentation
-The documentation to the key modules (velocity, graph, davis2hdf5) can be found [here](https://github.com/tmatsuzawa/tflow/docs/build/html/index.html).
+The documentation to the key modules (velocity, graph, davis2hdf5) can be found [here](https://github.com/tmatsuzawa/tflow/tree/gh-pages/docs/build/html/index.html).
+[1](tflow/docs/build/html/index.html), [2](tflow/tree/gh-pages/docs/build/html/index.html), 
 
 
 
