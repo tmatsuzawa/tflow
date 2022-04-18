@@ -6,10 +6,6 @@
 Welcome to tflow documentation!
 =================================
 
-.. toctree::
-   :maxdepth: 2
-   :caption: Contents:
-
 tflow: analysis package for experimental 2D PIV/3D PTV data
 
 "tflow" contains modules to process 2D PIV/3D PTV data and analyze various flows (from laminar to turbulent).
@@ -112,3 +108,8 @@ Index
    * :ref:`modindex`
    * :ref:`search`
 
+
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Contents:

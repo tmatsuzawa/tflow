@@ -216,13 +216,23 @@ title="Print to PDF"
   </a>
  </li>
  <li class="toc-h1 nav-item toc-entry">
-  <a class="reference internal nav-link" href="#philosiohy">
-   Philosiohy
+  <a class="reference internal nav-link" href="#philosophy">
+   Philosophy
   </a>
  </li>
  <li class="toc-h1 nav-item toc-entry">
   <a class="reference internal nav-link" href="#example-analysis-pipeline">
-   ### Example analysis pipeline
+   Example analysis pipeline
+  </a>
+ </li>
+ <li class="toc-h1 nav-item toc-entry">
+  <a class="reference internal nav-link" href="#notes">
+   Notes
+  </a>
+ </li>
+ <li class="toc-h1 nav-item toc-entry">
+  <a class="reference internal nav-link" href="#contact">
+   Contact
   </a>
  </li>
  <li class="toc-h1 nav-item toc-entry">
@@ -255,13 +265,23 @@ title="Print to PDF"
   </a>
  </li>
  <li class="toc-h1 nav-item toc-entry">
-  <a class="reference internal nav-link" href="#philosiohy">
-   Philosiohy
+  <a class="reference internal nav-link" href="#philosophy">
+   Philosophy
   </a>
  </li>
  <li class="toc-h1 nav-item toc-entry">
   <a class="reference internal nav-link" href="#example-analysis-pipeline">
-   ### Example analysis pipeline
+   Example analysis pipeline
+  </a>
+ </li>
+ <li class="toc-h1 nav-item toc-entry">
+  <a class="reference internal nav-link" href="#notes">
+   Notes
+  </a>
+ </li>
+ <li class="toc-h1 nav-item toc-entry">
+  <a class="reference internal nav-link" href="#contact">
+   Contact
   </a>
  </li>
  <li class="toc-h1 nav-item toc-entry">
@@ -282,7 +302,8 @@ title="Print to PDF"
   <section id="welcome-to-tflow-documentation">
 <h1>Welcome to tflow documentation!<a class="headerlink" href="#welcome-to-tflow-documentation" title="Permalink to this headline"></a></h1>
 <p>tflow: analysis package for experimental 2D PIV/3D PTV data</p>
-<p>“tflow” contains modules to process 2D PIV/3D PTV data and analyze various flows (from laminar to turbulent). Basic features include</p>
+<p>“tflow” contains modules to process 2D PIV/3D PTV data and analyze various flows (from laminar to turbulent).</p>
+<p><strong>Basic features (velocity module)</strong></p>
 <ul class="simple">
 <li><p>temporal averaging of energy/enstrophy</p></li>
 <li><p>spacial averaging of energy/enstrophy</p></li>
@@ -292,6 +313,7 @@ title="Print to PDF"
 <li><p>computing 1D/3D energy spectra and n-th orderstructure functions (turbulent flow)</p></li>
 <li><p>computing two-point velocity correlction function (spatial autocorrelation function) (turbulent flow)</p></li>
 <li><p>computing quadratic inviscid invariants of hydrodynamics (energy, helicity, linear momentum, and angular momentum)</p></li>
+<li><p>slicing an arbitrary plane of a 3D velocity field</p></li>
 </ul>
 <p><strong>Key modules</strong></p>
 <ul class="simple">
@@ -300,14 +322,14 @@ title="Print to PDF"
 <li><p>davis2hdf5.py: LaVision Inc. offers a cutting-edge PIV/PTV software called DaVis. This converts their output to a single hdf5 to store a velocity field data.</p></li>
 </ul>
 </section>
-<section id="philosiohy">
-<h1>Philosiohy<a class="headerlink" href="#philosiohy" title="Permalink to this headline"></a></h1>
-<p>To make the package compatible for theoretical and experimental studies, the input data is just a numpy array which I refer as <code class="docutils literal notranslate"><span class="pre">`udata`</span></code>.</p>
-<p><code class="docutils literal notranslate"><span class="pre">udata</span></code> has a shape of (dimension, nrows, ncols, (nsteps if applicable), duration)</p>
+<section id="philosophy">
+<h1>Philosophy<a class="headerlink" href="#philosophy" title="Permalink to this headline"></a></h1>
+<p>To make the package compatible for theoretical and experimental studies, the input data is just a numpy array which I refer as <code class="docutils literal notranslate"><span class="pre">udata</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">udata</span></code> has a shape of (dimension, nrows, ncols, (nsteps if applicable), duration).</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">udata[0,</span> <span class="pre">...]</span></code>, <code class="docutils literal notranslate"><span class="pre">udata[1,</span> <span class="pre">...]</span></code>, <code class="docutils literal notranslate"><span class="pre">udata[2,</span> <span class="pre">...]</span></code> represent x-, y-, and  z-component of a velocity field.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">udata[0,</span> <span class="pre">...,</span> <span class="pre">100]</span></code> represents the x-component of the velocity field at the 100th frame.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">udata</span></code> assumes an evenly spaced grid. The corresponding positional grid can be generated like</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">udata</span></code> assumes an evenly spaced grid. The corresponding positional grid can be generated like following:</p></li>
 </ul>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
 <span class="n">n</span> <span class="o">=</span> <span class="mi">101</span> <span class="c1"># number of points along x and y</span>
@@ -322,17 +344,23 @@ title="Print to PDF"
 </div>
 </section>
 <section id="example-analysis-pipeline">
-<h1>### Example analysis pipeline<a class="headerlink" href="#example-analysis-pipeline" title="Permalink to this headline"></a></h1>
-<p>1. Format your PIV-/PTV-extracted velocity field in the format above
-… For DaVis (ver.10.1-, LaVision Inc.) users, you may use davis2hdf5.py.
-2. <code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">tflow.velocity</span> <span class="pre">as</span> <span class="pre">vel</span></code>
-3. Load your velocity field data like <code class="docutils literal notranslate"><span class="pre">udata</span> <span class="pre">=</span> <span class="pre">vel.get_udata(path2udata)</span></code>
-4. Run analysis functions such as <code class="docutils literal notranslate"><span class="pre">`et_energy(udata)</span></code></p>
+<h1>Example analysis pipeline<a class="headerlink" href="#example-analysis-pipeline" title="Permalink to this headline"></a></h1>
+<ol class="arabic">
+<li><p>Format your PIV-/PTV-extracted velocity field in the format above</p>
+<p>… For DaVis (ver.10.1-, LaVision Inc.) users, you may use davis2hdf5.py.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">tflow.velocity</span> <span class="pre">as</span> <span class="pre">vel</span></code></p></li>
+<li><p>Load your velocity field data like <code class="docutils literal notranslate"><span class="pre">udata</span> <span class="pre">=</span> <span class="pre">vel.get_udata(path2udata)</span></code></p></li>
+<li><p>Run analysis functions such as <code class="docutils literal notranslate"><span class="pre">get_energy(udata)</span></code></p></li>
+</ol>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1"># Example: Plot an energy field</span>
 <span class="kn">import</span> <span class="nn">tflow.velocity</span> <span class="k">as</span> <span class="nn">vel</span>
+<span class="c1"># Load data</span>
 <span class="n">udata</span> <span class="o">=</span> <span class="n">vel</span><span class="o">.</span><span class="n">get_udata</span><span class="p">(</span><span class="n">path2udata</span><span class="p">)</span> <span class="c1"># Load data</span>
 <span class="c1">#udata, xx, yy = vel.get_udata(path2udata, return_xy=True) # 2D velocity field and a grid</span>
 <span class="c1">#udata, xx, yy, zz = vel.get_udata(path2udata, return_xy=True) # 3D velocity field</span>
+
+<span class="c1"># Analyze data</span>
 <span class="n">energy</span> <span class="o">=</span> <span class="n">vel</span><span class="o">.</span><span class="n">get_energy</span><span class="p">(</span><span class="n">udata</span><span class="p">)</span>
 
 <span class="c1"># Plot</span>
@@ -342,14 +370,24 @@ title="Print to PDF"
 <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
 </pre></div>
 </div>
-<div class="toctree-wrapper compound">
-</div>
+</section>
+<section id="notes">
+<h1>Notes<a class="headerlink" href="#notes" title="Permalink to this headline"></a></h1>
+<p>Plans: I will publish this package soon (before the end of May 2022.)
+If you cannot wait for the release, clone a repository from my <a class="reference external" href="https://github.com/tmatsuzawa/tflow">GitHub</a>.
+I will also add notebooks for tutorials.</p>
+</section>
+<section id="contact">
+<h1>Contact<a class="headerlink" href="#contact" title="Permalink to this headline"></a></h1>
+<p>If you have questions or suggestions, contact me on my <a class="reference external" href="https://github.com/tmatsuzawa/tflow">GitHub</a> or <a class="reference external" href="mailto:tmatsuzawa&#37;&#52;&#48;uchicago&#46;edu">email</a>.</p>
 </section>
 <section id="index">
 <h1>Index<a class="headerlink" href="#index" title="Permalink to this headline"></a></h1>
 <ul class="simple">
 <li><p><a class="reference internal" href="genindex.html"><span class="std std-ref">Index</span></a></p></li>
 </ul>
+<div class="toctree-wrapper compound">
+</div>
 </section>
 
 
