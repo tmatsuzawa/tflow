@@ -216,6 +216,16 @@ title="Print to PDF"
   </a>
  </li>
  <li class="toc-h1 nav-item toc-entry">
+  <a class="reference internal nav-link" href="#philosiohy">
+   Philosiohy
+  </a>
+ </li>
+ <li class="toc-h1 nav-item toc-entry">
+  <a class="reference internal nav-link" href="#example-analysis-pipeline">
+   ### Example analysis pipeline
+  </a>
+ </li>
+ <li class="toc-h1 nav-item toc-entry">
   <a class="reference internal nav-link" href="#index">
    Index
   </a>
@@ -245,6 +255,16 @@ title="Print to PDF"
   </a>
  </li>
  <li class="toc-h1 nav-item toc-entry">
+  <a class="reference internal nav-link" href="#philosiohy">
+   Philosiohy
+  </a>
+ </li>
+ <li class="toc-h1 nav-item toc-entry">
+  <a class="reference internal nav-link" href="#example-analysis-pipeline">
+   ### Example analysis pipeline
+  </a>
+ </li>
+ <li class="toc-h1 nav-item toc-entry">
   <a class="reference internal nav-link" href="#index">
    Index
   </a>
@@ -261,31 +281,67 @@ title="Print to PDF"
                 
   <section id="welcome-to-tflow-documentation">
 <h1>Welcome to tflow documentation!<a class="headerlink" href="#welcome-to-tflow-documentation" title="Permalink to this headline"></a></h1>
-<p><cite>Project website&lt;https://tmatsuzawa.github.io/tflow&gt;</cite></p>
-<p>As the name ‘tflow’ indicates, the package includes useful modules to analyze turbulent velocity fields.</p>
-<p>The only key assumption is the incompressibility of the medium; however, one should feel free to fork this repo to develop the package for the compressible fluids.
-It would require many but minor modifications overall.</p>
-<p>This package is perhaps more attractive to experimentally obtained velocity fields because all of the functions for analysis does not assume periodicity or finiteness of the velocity fields. (Numerically obtained velocity fields are often simulated in ideal conditions, which lead to many advantages.)</p>
+<p>tflow: analysis package for experimental 2D PIV/3D PTV data</p>
+<p>“tflow” contains modules to process 2D PIV/3D PTV data and analyze various flows (from laminar to turbulent). Basic features include</p>
+<ul class="simple">
+<li><p>temporal averaging of energy/enstrophy</p></li>
+<li><p>spacial averaging of energy/enstrophy</p></li>
+<li><p>computing vorticity, shear, rates, rate-of-strain tensor</p></li>
+<li><p>computing streamfunctions (Stokes flow)</p></li>
+<li><p>conducting Reynolds decomposition (turbulent flow)</p></li>
+<li><p>computing 1D/3D energy spectra and n-th orderstructure functions (turbulent flow)</p></li>
+<li><p>computing two-point velocity correlction function (spatial autocorrelation function) (turbulent flow)</p></li>
+<li><p>computing quadratic inviscid invariants of hydrodynamics (energy, helicity, linear momentum, and angular momentum)</p></li>
+</ul>
 <p><strong>Key modules</strong></p>
 <ul class="simple">
 <li><p>velocity.py: a core analysis module</p></li>
 <li><p>graph.py: a wrapper of matplotlib to efficiently plot the output of velocity.py</p></li>
 <li><p>davis2hdf5.py: LaVision Inc. offers a cutting-edge PIV/PTV software called DaVis. This converts their output to a single hdf5 to store a velocity field data.</p></li>
 </ul>
-<p><strong>A typical workflow</strong></p>
-<p><em>A. Experiments</em></p>
-<ol class="arabic simple">
-<li><p>Conduct PIV/PTV experiement using DaVis</p></li>
-<li><p>Convert the velocity field data into a hdf5 (One may use davis2hdf5 for DaVis txt output)</p></li>
-<li><p>Import tflow.velocity</p></li>
-<li><p>Analyze and plot</p></li>
-</ol>
-<p><em>B. Numerics</em></p>
-<ol class="arabic simple">
-<li><p>Generate a velocity field data (DNS, LES, etc.)</p></li>
-<li><p>Import tflow.velocity</p></li>
-<li><p>Analyze and plot</p></li>
-</ol>
+</section>
+<section id="philosiohy">
+<h1>Philosiohy<a class="headerlink" href="#philosiohy" title="Permalink to this headline"></a></h1>
+<p>To make the package compatible for theoretical and experimental studies, the input data is just a numpy array which I refer as <code class="docutils literal notranslate"><span class="pre">`udata`</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">udata</span></code> has a shape of (dimension, nrows, ncols, (nsteps if applicable), duration)</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">udata[0,</span> <span class="pre">...]</span></code>, <code class="docutils literal notranslate"><span class="pre">udata[1,</span> <span class="pre">...]</span></code>, <code class="docutils literal notranslate"><span class="pre">udata[2,</span> <span class="pre">...]</span></code> represent x-, y-, and  z-component of a velocity field.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">udata[0,</span> <span class="pre">...,</span> <span class="pre">100]</span></code> represents the x-component of the velocity field at the 100th frame.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">udata</span></code> assumes an evenly spaced grid. The corresponding positional grid can be generated like</p></li>
+</ul>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="n">n</span> <span class="o">=</span> <span class="mi">101</span> <span class="c1"># number of points along x and y</span>
+<span class="n">L</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">pi</span> <span class="c1"># size of the box</span>
+<span class="c1"># 2D grid</span>
+<span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="o">-</span><span class="n">L</span><span class="o">/</span><span class="mf">2.</span><span class="p">,</span> <span class="n">L</span><span class="o">/</span><span class="mf">2.</span><span class="p">,</span> <span class="n">n</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="o">-</span><span class="n">L</span><span class="o">/</span><span class="mf">2.</span><span class="p">,</span> <span class="n">L</span><span class="o">/</span><span class="mf">2.</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+<span class="n">xx</span><span class="p">,</span> <span class="n">yy</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">meshgrid</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+<span class="c1"># 3D grid</span>
+<span class="n">z</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="o">-</span><span class="n">L</span><span class="o">/</span><span class="mf">2.</span><span class="p">,</span> <span class="n">L</span><span class="o">/</span><span class="mf">2.</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+<span class="n">xxx</span><span class="p">,</span> <span class="n">yyy</span><span class="p">,</span> <span class="n">zzz</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">meshgrid</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">z</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="example-analysis-pipeline">
+<h1>### Example analysis pipeline<a class="headerlink" href="#example-analysis-pipeline" title="Permalink to this headline"></a></h1>
+<p>1. Format your PIV-/PTV-extracted velocity field in the format above
+… For DaVis (ver.10.1-, LaVision Inc.) users, you may use davis2hdf5.py.
+2. <code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">tflow.velocity</span> <span class="pre">as</span> <span class="pre">vel</span></code>
+3. Load your velocity field data like <code class="docutils literal notranslate"><span class="pre">udata</span> <span class="pre">=</span> <span class="pre">vel.get_udata(path2udata)</span></code>
+4. Run analysis functions such as <code class="docutils literal notranslate"><span class="pre">`et_energy(udata)</span></code></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1"># Example: Plot an energy field</span>
+<span class="kn">import</span> <span class="nn">tflow.velocity</span> <span class="k">as</span> <span class="nn">vel</span>
+<span class="n">udata</span> <span class="o">=</span> <span class="n">vel</span><span class="o">.</span><span class="n">get_udata</span><span class="p">(</span><span class="n">path2udata</span><span class="p">)</span> <span class="c1"># Load data</span>
+<span class="c1">#udata, xx, yy = vel.get_udata(path2udata, return_xy=True) # 2D velocity field and a grid</span>
+<span class="c1">#udata, xx, yy, zz = vel.get_udata(path2udata, return_xy=True) # 3D velocity field</span>
+<span class="n">energy</span> <span class="o">=</span> <span class="n">vel</span><span class="o">.</span><span class="n">get_energy</span><span class="p">(</span><span class="n">udata</span><span class="p">)</span>
+
+<span class="c1"># Plot</span>
+<span class="kn">import</span> <span class="nn">matplotlib.pyplot</span> <span class="k">as</span> <span class="nn">plt</span>
+<span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="mi">111</span><span class="p">)</span>
+<span class="n">ax</span><span class="o">.</span><span class="n">pcolormesh</span><span class="p">(</span><span class="n">xx</span><span class="p">,</span> <span class="n">yy</span><span class="p">,</span> <span class="n">energy</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">t</span><span class="p">])</span> <span class="c1"># plot an energy field at the 100th frame</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</pre></div>
+</div>
 <div class="toctree-wrapper compound">
 </div>
 </section>

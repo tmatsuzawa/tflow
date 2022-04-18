@@ -6739,8 +6739,48 @@ i.e. (Turbulent) Energy = 0.5  int_0^infty Eii(kappa1) dkappa1</p>
 
 <dl class="py function">
 <dt class="sig sig-object py" id="tflow.velocity.get_udata">
-<span class="sig-prename descclassname"><span class="pre">tflow.velocity.</span></span><span class="sig-name descname"><span class="pre">get_udata</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tflow.velocity.get_udata" title="Permalink to this definition"></a></dt>
-<dd><p>A short-hand for get_udata_from_path(). For the docstring, see get_udata_from_path()</p>
+<span class="sig-prename descclassname"><span class="pre">tflow.velocity.</span></span><span class="sig-name descname"><span class="pre">get_udata</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">udatapath</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">x0</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">x1</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">y0</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">y1</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">z0</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">z1</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">t0</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">t1</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inc</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">frame</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_xy</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">slicez</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">crop</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mode</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'r'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reverse_x</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reverse_y</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reverse_z</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ind</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tflow.velocity.get_udata" title="Permalink to this definition"></a></dt>
+<dd><p>Returns udata from a path to udata
+If return_xy is True, it returns udata, xx(2d grid), yy(2d grid)</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>udatapath</strong> – </p></li>
+<li><p><strong>x0</strong> (<em>int</em><em>, </em><em>default: 0</em>) – … index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])</p></li>
+<li><p><strong>int</strong> (<em>t1</em>) – … index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])</p></li>
+<li><p><strong>default</strong> (<em>None</em>) – … index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])</p></li>
+<li><p><strong>int</strong> – … index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])</p></li>
+<li><p><strong>default</strong> – … index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])</p></li>
+<li><p><strong>int</strong> – … index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])</p></li>
+<li><p><strong>default</strong> – … index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])</p></li>
+<li><p><strong>int</strong> – … index to specify temporal range of data used to compute time average (udata[…, t0:t1:inc])</p></li>
+<li><p><strong>default</strong> – … index to specify temporal range of data used to compute time average (udata[…, t0:t1:inc])</p></li>
+<li><p><strong>int</strong> – … index to specify temporal range of data used to compute time average (udata[…, t0:t1:inc])</p></li>
+<li><p><strong>default</strong> – … index to specify temporal range of data used to compute time average (udata[…, t0:t1:inc])</p></li>
+<li><p><strong>inc</strong> (<em>int</em>) – time increment of data to load from udatapath, default: 1</p></li>
+<li><p><strong>frame</strong> (<em>array-like</em><em> or </em><em>int</em><em>, </em><em>default: None</em>) – <p>If an integer is given, it returns a velocity field at that instant of time
+If an array or a list is given, it returns a velocity field at the given time specified by the array/list.</p>
+<p>By default, it loads data by a specified increment “inc”.
+If “frame” is given, it is prioritized over the incremental loading.</p>
+</p></li>
+<li><p><strong>return_xy</strong> (<em>bool</em><em>, </em><em>defualt: False</em>) – </p></li>
+<li><p><strong>verbose</strong> (<em>bool</em>) – If True, return the time it took to load udata to memory</p></li>
+<li><p><strong>ind</strong> (<em>int</em><em>, </em><em>id for a file with multiple piv data</em><em> (</em><em>udata</em><em>)</em>) – … A file may include ux, uy, x, y under /piv/piv000/, /piv/piv001, /piv/piv001, … when piv is conducted on the same footage.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>udata</strong> (<em>nd array with shape (dim, height, width, (depth), duration)</em>) – … udata[0, …]: ux, udata[1, …]: uy, udata[2, …]: uz
+… udata[0, …, t] is a 2D/3D array which stores the x-component of the velocity field.
+… Intuitively speaking, udata is organized like udata[dim, y, x, (z), time]</p></li>
+<li><p><em>(optional)</em></p></li>
+<li><p><strong>xx</strong> (<em>2d/3d array of a positional grid (x) stored in the given file</em>)</p></li>
+<li><p><strong>yy</strong> (<em>2d/3d array of a positional grid (y) stored in the given file</em>)</p></li>
+<li><p><strong>zz</strong> (<em>2d/3d array of a positional grid (z) stored in the given file</em>)</p></li>
+</ul>
+</p>
+</dd>
+</dl>
 </dd></dl>
 
 <dl class="py function">

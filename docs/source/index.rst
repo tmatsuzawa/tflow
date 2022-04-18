@@ -5,14 +5,18 @@
 
 Welcome to tflow documentation!
 =================================
-`Project website<https://tmatsuzawa.github.io/tflow>`
+tflow: analysis package for experimental 2D PIV/3D PTV data
 
-This package includes useful modules to analyze turbulent velocity fields.
+"tflow" contains modules to process 2D PIV/3D PTV data and analyze various flows (from laminar to turbulent). Basic features include
 
-The only key assumption is the incompressibility of the medium; however, one should feel free to fork this repo to develop the package for the compressible fluids.
-It would require many but minor modifications overall.
-
-This package is perhaps more attractive to experimentally obtained velocity fields because all of the functions for analysis does not assume periodicity or finiteness of the velocity fields. (Numerically obtained velocity fields are often simulated in ideal conditions, which lead to many advantages.)
+- temporal averaging of energy/enstrophy
+- spacial averaging of energy/enstrophy
+- computing vorticity, shear, rates, rate-of-strain tensor
+- computing streamfunctions (Stokes flow)
+- conducting Reynolds decomposition (turbulent flow)
+- computing 1D/3D energy spectra and n-th orderstructure functions (turbulent flow)
+- computing two-point velocity correlction function (spatial autocorrelation function) (turbulent flow)
+- computing quadratic inviscid invariants of hydrodynamics (energy, helicity, linear momentum, and angular momentum)
 
 **Key modules**
 
@@ -20,26 +24,56 @@ This package is perhaps more attractive to experimentally obtained velocity fiel
 - graph.py: a wrapper of matplotlib to efficiently plot the output of velocity.py
 - davis2hdf5.py: LaVision Inc. offers a cutting-edge PIV/PTV software called DaVis. This converts their output to a single hdf5 to store a velocity field data.
 
-**A typical workflow**
 
-*A. Experiments*
+Philosiohy
+==================
+To make the package compatible for theoretical and experimental studies, the input data is just a numpy array which I refer as ```udata```.
 
-1. Conduct PIV/PTV experiement using DaVis
-2. Convert the velocity field data into a hdf5 (One may use davis2hdf5 for DaVis txt output)
-3. Import tflow.velocity
-4. Analyze and plot
+``udata`` has a shape of (dimension, nrows, ncols, (nsteps if applicable), duration)
 
-*B. Numerics*
+- ``udata[0, ...]``, ``udata[1, ...]``, ``udata[2, ...]`` represent x-, y-, and  z-component of a velocity field.
+- ``udata[0, ..., 100]`` represents the x-component of the velocity field at the 100th frame.
+- ``udata`` assumes an evenly spaced grid. The corresponding positional grid can be generated like
 
-1. Generate a velocity field data (DNS, LES, etc.)
-2. Import tflow.velocity
-3. Analyze and plot
+::
 
+    import numpy as np
+    n = 101 # number of points along x and y
+    L = np.pi # size of the box
+    # 2D grid
+    x, y = np.linspace(-L/2., L/2., n), np.linspace(-L/2., L/2., n)
+    xx, yy = np.meshgrid(x, y)
+    # 3D grid
+    z = np.linspace(-L/2., L/2., n)
+    xxx, yyy, zzz = np.meshgrid(x, y, z)
+
+
+### Example analysis pipeline
+==================
+1. Format your PIV-/PTV-extracted velocity field in the format above
+... For DaVis (ver.10.1-, LaVision Inc.) users, you may use davis2hdf5.py.
+2. ``import tflow.velocity as vel``
+3. Load your velocity field data like ``udata = vel.get_udata(path2udata)``
+4. Run analysis functions such as ```et_energy(udata)``
+
+::
+
+   # Example: Plot an energy field
+   import tflow.velocity as vel
+   udata = vel.get_udata(path2udata) # Load data
+   #udata, xx, yy = vel.get_udata(path2udata, return_xy=True) # 2D velocity field and a grid
+   #udata, xx, yy, zz = vel.get_udata(path2udata, return_xy=True) # 3D velocity field
+   energy = vel.get_energy(udata)
+
+   # Plot
+   import matplotlib.pyplot as plt
+   fig, ax = plt.subplots(111)
+   ax.pcolormesh(xx, yy, energy[..., t]) # plot an energy field at the 100th frame
+   plt.show()
 
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
-
 
 Index
 ==================
@@ -49,3 +83,5 @@ Index
 ..
    * :ref:`modindex`
    * :ref:`search`
+
+
