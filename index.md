@@ -13,7 +13,7 @@
 ### Philosophy
 To make the package compatible for theoretical and experimental studies, the input data is just a numpy array which I refer as ```udata```.
 
-```udata```has a shape of (dimension, nrows, ncols, (nsteps if applicable), duration)
+```udata``` has a shape of (dimension, nrows, ncols, (nsteps if applicable), duration)
 - ```udata[0, ...]```, ```udata[1, ...]```, ```udata[2, ...]``` represent x-, y-, and  z-component of a velocity field.
 - ```udata[0, ..., 100]``` represents the x-component of the velocity field at the 100th frame. 
 - ```udata``` assumes an evenly spaced grid. The corresponding positional grid can be generated like 
