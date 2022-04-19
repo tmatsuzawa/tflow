@@ -1201,7 +1201,7 @@ def fft_nd(udata, dx=1, dy=1, dz=1,
     duration = udata.shape[-1]
     if window is not None:
         if dim == 2:
-            xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+            xx, yy = get_equally_spaced_grid(udata, d=dx)
             windows = get_window_radial(xx, yy, wtype=window, duration=duration)
             # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
             udata_tapered = np.empty_like(udata)
@@ -1209,7 +1209,7 @@ def fft_nd(udata, dx=1, dy=1, dz=1,
                 udata_tapered[i, ...] = udata[i, ...] * windows
             # udata_tapered = udata * windows
         elif dim == 3:
-            xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+            xx, yy, zz = get_equally_spaced_grid(udata, d=dx)
             windows = get_window_radial(xx, yy, zz, wtype=window, duration=duration)
             # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
             udata_tapered = np.empty_like(udata)
@@ -1346,7 +1346,7 @@ def get_energy_spectrum_nd_old(udata, x0=0, x1=None, y0=0, y1=None,
     duration = udata.shape[-1]
     if window is not None or window != 'rectangle':
         if dim == 2:
-            xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+            xx, yy = get_equally_spaced_grid(udata, d=dx)
             windows = get_window_radial(xx, yy, wtype=window, duration=duration)
             # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
             udata_tapered = np.empty_like(udata)
@@ -1354,7 +1354,7 @@ def get_energy_spectrum_nd_old(udata, x0=0, x1=None, y0=0, y1=None,
                 udata_tapered[i, ...] = udata[i, ...] * windows
             # udata_tapered = udata * windows
         elif dim == 3:
-            xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+            xx, yy, zz = get_equally_spaced_grid(udata, d=dx)
             windows = get_window_radial(xx, yy, zz, wtype=window, duration=duration)
             # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
             udata_tapered = np.empty_like(udata)
@@ -1382,11 +1382,11 @@ def get_energy_spectrum_nd_old(udata, x0=0, x1=None, y0=0, y1=None,
     if correct_signal_loss:
         # if window is not None:
         #     if dim == 2:
-        #         xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+        #         xx, yy = get_equally_spaced_grid(udata, d=dx)
         #         window_arr = get_window_radial(xx, yy, wtype=window)
         #         signal_intensity_loss = np.nanmean(window_arr)
         #     elif dim == 3:
-        #         xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+        #         xx, yy, zz = get_equally_spaced_grid(udata, d=dx)
         #         window_arr = get_window_radial(xx, yy, wtype=window)
         #         signal_intensity_loss = np.nanmean(window_arr)
         # else:
@@ -1782,14 +1782,14 @@ def get_1d_energy_spectrum_old(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
     if window is not None:
         duration = udata.shape[-1]
         if dim == 2:
-            xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+            xx, yy = get_equally_spaced_grid(udata, d=dx)
             windows = get_window_radial(xx, yy, wtype=window, duration=duration, x0=x0, x1=x1, y0=y0, y1=y1)
             udata_tapered = np.empty_like(udata_tmp)
             for i in range(dim):
                 udata_tapered[i, ...] = udata_tmp[i, ...] * windows
             ux, uy = udata_tapered
         elif dim == 3:
-            xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+            xx, yy, zz = get_equally_spaced_grid(udata, d=dx)
             windows = get_window_radial(xx, yy, zz, wtype=window, duration=duration, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0,
                                         z1=z1)
             udata_tapered = np.empty_like(udata_tmp)
@@ -1800,11 +1800,11 @@ def get_1d_energy_spectrum_old(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
     if correct_signal_loss:
         if window is not None:
             if dim == 2:
-                xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+                xx, yy = get_equally_spaced_grid(udata, d=dx)
                 window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
                 signal_intensity_loss = np.nanmean(window_arr)
             elif dim == 3:
-                xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+                xx, yy, zz = get_equally_spaced_grid(udata, d=dx)
                 window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
                 signal_intensity_loss = np.nanmean(window_arr)
         else:
@@ -1973,7 +1973,7 @@ def get_energy_spectrum_nd_ver2(udata, x0=0, x1=None, y0=0, y1=None,
     duration = udata.shape[-1]
     if window is not None or window != 'rectangle':
         if dim == 2:
-            xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+            xx, yy = get_equally_spaced_grid(udata, d=dx)
             windows = get_window_radial(xx, yy, wtype=window, duration=duration)
             # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
             udata_tapered = np.empty_like(udata)
@@ -1981,7 +1981,7 @@ def get_energy_spectrum_nd_ver2(udata, x0=0, x1=None, y0=0, y1=None,
                 udata_tapered[i, ...] = udata[i, ...] * windows
             # udata_tapered = udata * windows
         elif dim == 3:
-            xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+            xx, yy, zz = get_equally_spaced_grid(udata, d=dx)
             windows = get_window_radial(xx, yy, zz, wtype=window, duration=duration)
             # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
             udata_tapered = np.empty_like(udata)
@@ -2380,14 +2380,14 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
     if window is not None:
         duration = udata.shape[-1]
         if dim == 2:
-            xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+            xx, yy = get_equally_spaced_grid(udata, d=dx)
             windows = get_window_radial(xx, yy, wtype=window, duration=duration, x0=x0, x1=x1, y0=y0, y1=y1)
             udata_tapered = np.empty_like(udata_tmp)
             for i in range(dim):
                 udata_tapered[i, ...] = udata_tmp[i, ...] * windows
             ux, uy = udata_tapered
         elif dim == 3:
-            xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+            xx, yy, zz = get_equally_spaced_grid(udata, d=dx)
             windows = get_window_radial(xx, yy, zz, wtype=window, duration=duration, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0,
                                         z1=z1)
             udata_tapered = np.empty_like(udata_tmp)
@@ -2398,11 +2398,11 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
     if correct_signal_loss:
         if window is not None:
             if dim == 2:
-                xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+                xx, yy = get_equally_spaced_grid(udata, d=dx)
                 window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
                 signal_intensity_loss = np.nanmean(window_arr)
             elif dim == 3:
-                xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+                xx, yy, zz = get_equally_spaced_grid(udata, d=dx)
                 window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
                 signal_intensity_loss = np.nanmean(window_arr)
         else:
@@ -2864,7 +2864,7 @@ def get_large_scale_vel_field(udata, kmax, x0=0, x1=None, y0=0, y1=None, z0=0, z
     dim = len(udata)
     udata = fix_udata_shape(udata)
     if dim == 2:
-        xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+        xx, yy = get_equally_spaced_grid(udata, d=dx)
         coords = np.asarray([xx[y0:y1, x0:x1], yy[y0:y1, x0:x1]])
         udata = udata[:, y0:y1, x0:x1, :]
     elif dim == 3:
@@ -2874,7 +2874,7 @@ def get_large_scale_vel_field(udata, kmax, x0=0, x1=None, y0=0, y1=None, z0=0, z
             print('ERROR: dz is not provided! dx is grid spacing in real space.')
             print('... k grid will be computed based on this spacing! Please provide.')
             raise ValueError
-        xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+        xx, yy, zz = get_equally_spaced_grid(udata, d=dx)
         coords = np.asarray([xx[y0:y1, x0:x1, z0:z1], yy[y0:y1, x0:x1, z0:z1], zz[y0:y1, x0:x1, z0:z1]])
         udata = udata[:, y0:y1, x0:x1, z0:z1, :]
 
@@ -10119,7 +10119,7 @@ def plot_energy_spectra_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=None, 
 
     # Compute energy heatmap and draw rectangle
     energy_avg = np.nanmean(get_energy(udata), axis=dim)
-    xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+    xx, yy = get_equally_spaced_grid(udata, d=dx)
     # Time-averaged Energy
     fig1, ax1, cc1 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], energy_avg[n:-n, n:-n],
                                       label='$\\frac{1}{2} \langle U_i   U_i \\rangle$ ($mm^2/s^2$)',
@@ -10252,7 +10252,7 @@ def plot_energy_spectra_avg_w_energy_heatmap(udata, dx, dy, dz=None, x0=0, x1=No
 
     # Compute energy heatmap and draw rectangle
     energy_avg = np.nanmean(get_energy(udata), axis=dim)
-    xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+    xx, yy = get_equally_spaced_grid(udata, d=dx)
     # Time-averaged Energy
     fig1, ax1, cc1 = graph.color_plot(xx[n:-n, n:-n], yy[n:-n, n:-n], energy_avg[n:-n, n:-n],
                                       label='$\\frac{1}{2} \langle U_i   U_i \\rangle$ ($mm^2/s^2$)',
@@ -12298,7 +12298,7 @@ def get_equally_spaced_grid(udata, d=1):
         height, width, duration = udata[0].shape
         x, y = list(range(width)), list(range(height))
         xx, yy = np.meshgrid(x, y)
-        return xx * spacing, yy * d
+        return xx * d, yy * d
     elif dim == 3:
         height, width, depth, duration = udata[0].shape
         x, y, z = list(range(width)), list(range(height)), list(range(depth))
@@ -16962,7 +16962,7 @@ def get_energy_spectrum_nd(udata,
     duration = udata.shape[-1]
     if window is not None or window != 'rectangle':
         if dim == 2:
-            xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+            xx, yy = get_equally_spaced_grid(udata, d=dx)
             windows = get_window_radial(xx, yy, wtype=window, duration=duration)
             # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
             udata_tapered = np.empty_like(udata)
@@ -16970,7 +16970,7 @@ def get_energy_spectrum_nd(udata,
                 udata_tapered[i, ...] = udata[i, ...] * windows
             # udata_tapered = udata * windows
         elif dim == 3:
-            xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+            xx, yy, zz = get_equally_spaced_grid(udata, d=dx)
             windows = get_window_radial(xx, yy, zz, wtype=window, duration=duration)
             # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
             udata_tapered = np.empty_like(udata)
@@ -17234,14 +17234,14 @@ def get_enstrophy_spectrum_nd(udata, sigma=None,
     duration = udata.shape[-1]
     if window is not None:
         if dim == 2:
-            xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+            xx, yy = get_equally_spaced_grid(udata, d=dx)
             windows = get_window_radial(xx, yy, wtype=window, duration=duration)
             # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
             omega_tapered = omega[...] * windows
             enst, enst_tapered = omega ** 2, omega_tapered ** 2
 
         elif dim == 3:
-            xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+            xx, yy, zz = get_equally_spaced_grid(udata, d=dx)
             windows = get_window_radial(xx, yy, zz, wtype=window, duration=duration)
             # windows = np.repeat(window[np.newaxis, ...], dim, axis=0)
             omega_tapered = np.empty_like(omega)
@@ -17612,14 +17612,14 @@ def get_confidence_levels_on_structure_function(iw_wrt_eta, reta, alpha_min=0.1,
 #     if window is not None:
 #         duration = udata.shape[-1]
 #         if dim == 2:
-#             xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+#             xx, yy = get_equally_spaced_grid(udata, d=dx)
 #             windows = get_window_radial(xx, yy, wtype=window, duration=duration, x0=x0, x1=x1, y0=y0, y1=y1)
 #             udata_tapered = np.empty_like(udata_tmp)
 #             for i in range(dim):
 #                 udata_tapered[i, ...] = udata_tmp[i, ...] * windows
 #             ux, uy = udata_tapered
 #         elif dim == 3:
-#             xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+#             xx, yy, zz = get_equally_spaced_grid(udata, d=dx)
 #             windows = get_window_radial(xx, yy, zz, wtype=window, duration=duration, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0,
 #                                         z1=z1)
 #             udata_tapered = np.empty_like(udata_tmp)
@@ -17630,11 +17630,11 @@ def get_confidence_levels_on_structure_function(iw_wrt_eta, reta, alpha_min=0.1,
 #     if correct_signal_loss:
 #         if window is not None:
 #             if dim == 2:
-#                 xx, yy = get_equally_spaced_grid(udata, spacing=dx)
+#                 xx, yy = get_equally_spaced_grid(udata, d=dx)
 #                 window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
 #                 signal_intensity_loss = np.nanmean(window_arr)
 #             elif dim == 3:
-#                 xx, yy, zz = get_equally_spaced_grid(udata, spacing=dx)
+#                 xx, yy, zz = get_equally_spaced_grid(udata, d=dx)
 #                 window_arr = get_window_radial(xx, yy, wtype=window, x0=x0, x1=x1, y0=y0, y1=y1)
 #                 signal_intensity_loss = np.nanmean(window_arr)
 #         else:
