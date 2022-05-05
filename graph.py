@@ -133,8 +133,10 @@ def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, over
         print(("Saving figure to '%s'..." % savepath))
 
     # Save the figure
-    # if transparent: bkgcolor=None
-    plt.savefig(savepath, dpi=dpi, facecolor=bkgcolor,transparent=transparent, **kwargs)
+    if transparent:
+        plt.savefig(savepath, dpi=dpi, transparent=transparent, **kwargs)
+    else:
+        plt.savefig(savepath, dpi=dpi, facecolor=bkgcolor, **kwargs)
 
     # Save fig instance... This may fail for python2
     if savedata:
@@ -2096,9 +2098,9 @@ def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
     if units=='inches':
         if key_length is None:
             U_absMean = np.nanmean(u_norm[cond])
-            scale = U_absMean * 2
+            scale = U_absMean
         else:
-            scale = key_length * 2
+            scale = key_length
     Q = ax.quiver(x_tmp[cond], y_temp[cond], u_tmp[cond], v_tmp[cond], color=color, units=units, scale=scale, **kwargs)
 
     if key:
@@ -2107,7 +2109,7 @@ def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
             # key_length = 10 ** round(np.log10(U_rms))
             # key_length = 10 ** round(np.log10(U_rmedians))
             # key_length = round(U_rmedians, int(-round(np.log10(U_rmedians))) + 1) * 5
-            key_length = round(u_rms, int(-round(np.log10(U_absMean))) + 1)
+            key_length = round(u_rms, int(-round(np.log10(U_absMean))) + 2)
         if key_label is None:
             key_label = '{:' + key_fmt + '} '
             key_label = key_label.format(key_length) + key_units
@@ -3113,12 +3115,14 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
 
 def add_discrete_colorbar(ax, colors, vmin=0, vmax=None, label=None, fontsize=None, option='normal',
                  tight_layout=True, ticklabelsize=None, ticklabel=None,
-                 aspect = None, **kwargs):
+                 aspect = None, useMiddle4Ticks=False,**kwargs):
     fig = ax.get_figure()
     if vmax is None:
         vmax = len(colors)
     tick_spacing = (vmax - vmin) / float(len(colors))
-    ticks = np.linspace(vmin, vmax, len(colors)+1) + tick_spacing / 2. # tick positions
+    if not useMiddle4Ticks:
+        vmin, vmax = vmin -  tick_spacing / 2., vmax -  tick_spacing / 2.
+    ticks = np.linspace(vmin, vmax, len(colors) + 1) + tick_spacing / 2.  # tick positions
 
     # if there are too many ticks, just use 3 ticks
     if len(ticks) > 10:
