@@ -5228,12 +5228,12 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
                         X0_ind, _ = find_nearest(x_grid[0, :, 0], X0)
                         Y0_ind, _ = find_nearest(y_grid[:, 0, 0], Y0)
                         Z0_ind, _ = find_nearest(z_grid[0, 0, :], Z0)
-                        R0 = np.asarray([x_grid[0, X0_ind, 0], y_grid[Y0_ind, 0, 0], z_grid[Z0_ind, 0, 0]])
+                        R0 = np.asarray([x_grid[0, X0_ind, 0], y_grid[Y0_ind, 0, 0], z_grid[0, 0, Z0_ind]])
                         # Randomly pick another point in space, call it R1
                         theta = 2 * np.pi * np.random.random()
                         phi = 2 * np.pi * np.random.random()
                         X1, Y1, Z1 = X0 + r * np.cos(theta) * np.cos(phi), Y0 + r * np.cos(theta) * np.sin(
-                            phi), Z0 + r * np.sin(phi)
+                            phi), Z0 + r * np.sin(theta)
                         R1 = np.asarray([X1, Y1, Z1])
                         is_R1_reasonable = X1 < xmax and X1 > xmin and Y1 < ymax and Y1 > ymin and Z1 < zmax and Z1 > zmin
                         if is_R1_reasonable:
@@ -5243,6 +5243,7 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
                             R1 = np.asarray([x_grid[0, X1_ind, 0], y_grid[Y1_ind, 0, 0], z_grid[0, 0, Z1_ind]])
                             if all(R0 == R1):
                                 is_R1_reasonable = False
+
                 R01 = R1 - R0
 
                 basis = vec.get_an_orthonormal_basis(dim, v1=R01)
@@ -5265,7 +5266,6 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
             rrs[i, t] = np.nanmean(rs)
             Dijks[i, t] = np.nanmean(Dijks_)
             Dijk_errs[i, t] = np.nanstd(Dijks_)
-
     # Also return the rescaled quantities
     if dim == 3:
         dx, dy, dz = x[0, 1, 0] - x[0, 0, 0], y[1, 0, 0] - y[0, 0, 0], z[0, 0, 1] - z[0, 0, 0]
