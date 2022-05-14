@@ -60,6 +60,12 @@ params = {'figure.figsize': __figsize__,
          'ytick.labelsize': __fontsize__,
           'lines.linewidth': 3}
 
+default_custom_cycler = {'color': ['r', 'b', 'g', 'y'],
+                          'linestyle': ['-', '-', '-', '-'],
+                          'linewidth': [3, 3, 3, 3],
+                          'marker': ['o', 'o', 'o', 'o'],
+                          's': [0,0,0,0]}
+
 
 ## Save a figure
 def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, overwrite=True, tight_layout=False,
@@ -133,8 +139,10 @@ def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, over
         print(("Saving figure to '%s'..." % savepath))
 
     # Save the figure
-    # if transparent: bkgcolor=None
-    plt.savefig(savepath, dpi=dpi, facecolor=bkgcolor,transparent=transparent, **kwargs)
+    if transparent:
+        plt.savefig(savepath, dpi=dpi, transparent=transparent, **kwargs)
+    else:
+        plt.savefig(savepath, dpi=dpi, facecolor=bkgcolor, **kwargs)
 
     # Save fig instance... This may fail for python2
     if savedata:
@@ -150,14 +158,7 @@ def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, over
     if verbose:
         print("... Done")
 
-
 ## Create a figure and axes
-default_custom_cycler = {'color': ['r', 'b', 'g', 'y'],
-                          'linestyle': ['-', '-', '-', '-'],
-                          'linewidth': [3, 3, 3, 3],
-                          'marker': ['o', 'o', 'o', 'o'],
-                          's': [0,0,0,0]}
-
 def set_fig(fignum, subplot=111, dpi=100, figsize=None,
             custom_cycler=False, custom_cycler_dict=default_custom_cycler, # advanced features to change a plotting style
             **kwargs):
@@ -3111,15 +3112,16 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
 
     return cb
 
-
 def add_discrete_colorbar(ax, colors, vmin=0, vmax=None, label=None, fontsize=None, option='normal',
                  tight_layout=True, ticklabelsize=None, ticklabel=None,
-                 aspect = None, **kwargs):
+                 aspect = None, useMiddle4Ticks=False,**kwargs):
     fig = ax.get_figure()
     if vmax is None:
         vmax = len(colors)
     tick_spacing = (vmax - vmin) / float(len(colors))
-    ticks = np.linspace(vmin, vmax, len(colors)+1) + tick_spacing / 2. # tick positions
+    if not useMiddle4Ticks:
+        vmin, vmax = vmin -  tick_spacing / 2., vmax -  tick_spacing / 2.
+    ticks = np.linspace(vmin, vmax, len(colors) + 1) + tick_spacing / 2.  # tick positions
 
     # if there are too many ticks, just use 3 ticks
     if len(ticks) > 10:
