@@ -1646,7 +1646,7 @@ def get_energy_spectrum_old(udata, x0=0, x1=None, y0=0, y1=None,
             # e_k1ds[..., t] = e_k1d * jacobian / (n_samples * deltak) * (deltak / deltakr) ** dim / deltak
             # e_k1d_errs[..., t] = e_k1d_err * jacobian / (n_samples * deltak) * (deltak / deltakr) ** dim / deltak
             # print(dx, dy, deltakr, deltakx * dx * ks.shape[2])
-            print(deltakr, deltak)
+            # print(deltakr, deltak)
             # 2019-2020 August
             # e_k1ds[..., t] = e_k1d * jacobian / (n_samples * deltakr ** 2) * cc
             # e_k1d_errs[..., t] = e_k1d_err * jacobian / (n_samples * deltakr ** 2) * cc
@@ -2416,7 +2416,7 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
     ux_k /= 2 * np.pi * deltaf * n_samples  # convert to spectral density (Power per wavenumber)
     e11_nd = np.abs(ux_k * np.conj(ux_k)) * 2  # e11 is defined as twice as the square of the 1D FT of u1
     e11 = np.nanmean(e11_nd, axis=ax_ind_for_avg) * (2 * np.pi * deltaf) ** (dim - 1)
-    e11_err = np.nanstd(e11_nd, axis=ax_ind_for_avg) / np.sqrt(np.product(e11_nd.shape[ax_ind_for_avg]))
+    e11_err = np.nanstd(e11_nd, axis=ax_ind_for_avg) / np.sqrt(np.product([l for i , l in enumerate(e11_nd.shape) if i in [ax_ind_for_avg]]))
 
     # E22
     uy_k = np.fft.fftshift(np.fft.fft(uy, axis=ax_ind))
@@ -2426,7 +2426,7 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
     e22_nd = np.abs(uy_k * np.conj(uy_k)) * 2 * (2 * np.pi * deltaf) ** (
                 dim - 1)  # e22 is defined as twice as the square of the 1D FT of u2
     e22 = np.nanmean(e22_nd, axis=ax_ind_for_avg)
-    e22_err = np.nanstd(e22_nd, axis=ax_ind_for_avg) / np.sqrt(np.product(e22_nd.shape[ax_ind_for_avg]))
+    e22_err = np.nanstd(e22_nd, axis=ax_ind_for_avg) / np.sqrt(np.product([l for i , l in enumerate(e22_nd.shape) if i in [ax_ind_for_avg]]))
 
     # Get an array for wavenumber
     k = np.fft.fftfreq(n, d=d) * 2 * np.pi  # shape=(n, duration)
@@ -2440,7 +2440,7 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
         e33_nd = np.abs(uz_k * np.conj(uz_k)) * 2 * (2 * np.pi * deltaf) ** (
                     dim - 1)  # e33 is defined as twice as the square of the 1D FT of u3
         e33 = np.nanmean(e33_nd, axis=ax_ind_for_avg)
-        e33_err = np.nanstd(e33_nd, axis=ax_ind_for_avg) / np.sqrt(np.product(e33_nd.shape[ax_ind_for_avg]))
+        e33_err = np.nanstd(e33_nd, axis=ax_ind_for_avg) / np.sqrt(np.product([l for i , l in enumerate(e33_nd.shape) if i in [ax_ind_for_avg]]))
 
         # Must divide by 2pi because np.fft.fft() performs in the frequency space (NOT angular frequency space)
         eiis, eii_errs = np.array([e11, e22, e33]), np.array([e11_err, e22_err, e33_err])
@@ -6940,9 +6940,11 @@ def count_nans_along_axis(udatapath, axis='z',
 
 
 def get_time_avg_enstrophy_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
-                                          t0=0, t1=None, slicez=None, inc=1, thd=np.inf, fill_value=np.nan,
+                                          t0=0, t1=None, slicez=None, inc=1,
+                                          clean=False, median_filter=False,
+                                          thd=np.inf, fill_value=np.nan,
                                           udata_mean=None,
-                                          notebook=True):
+                                          notebook=True, **kwargs):
     """
     Returns time-averaged energy from a path to udata
     ... recommended to use if udata is large (> half of your memory size)
@@ -6977,6 +6979,8 @@ def get_time_avg_enstrophy_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=Non
         ... energy > thd will be replaced by fill_value. (Manual screening of data)
     fill_value: float, default: np.nan
         ... value used to fill the data when data value is greater than a threshold
+    clean: bool, default: False
+        ... If True, clean udata before computing its curl.
 
     Returns
     -------
@@ -7008,6 +7012,10 @@ def get_time_avg_enstrophy_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=Non
                     udata, xx, yy, zz = get_udata_from_path(udatapath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1,
                                                             t0=t, t1=t + 1, return_xy=True, verbose=False)
                     dx, dy, dz = get_grid_spacing(xx, yy, zz)
+                    if udata_mean is not None:
+                        udata -= udata_mean
+                    if clean:
+                        udata = clean_udata(udata, median_filter=median_filter, **kwargs)
                     enst_inst = get_enstrophy(udata, dx, dy, dz, xx=xx, yy=yy, zz=zz)[..., 0]
                     enst_inst[enst_inst > thd] = fill_value
                     enstavg = np.nansum(np.stack((enstavg, enst_inst)), 0)
@@ -7032,6 +7040,10 @@ def get_time_avg_enstrophy_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=Non
             for t in tqdm(range(t0, t1, inc)):
                 udata, xx, yy = get_udata_from_path(udatapath, x0=x0, x1=x1, y0=y0, y1=y1, t0=t, t1=t + 1,
                                                     return_xy=True, verbose=False)
+                if udata_mean is not None:
+                    udata -= udata_mean
+                if clean:
+                    udata = clean_udata(udata, median_filter=median_filter, **kwargs)
                 dx, dy = get_grid_spacing(xx, yy)
                 enst_inst = get_enstrophy(udata, dx, dy, xx=xx, yy=yy)[:, :, 0]
                 enst_inst[enst_inst > thd] = fill_value
@@ -12232,14 +12244,14 @@ def count_nans(arr):
     return nnans
 
 
-def get_equally_spaced_grid(udata, d=1):
+def get_equally_spaced_grid(udata, spacing=1):
     """
     Returns an evenly spaced grid for the given udata
 
     Parameters
     ----------
     udata: nd array, v-field data
-    d: spacing of the grid
+    spacing: spacing of the grid
 
     Returns
     -------
@@ -12250,15 +12262,15 @@ def get_equally_spaced_grid(udata, d=1):
         height, width, duration = udata[0].shape
         x, y = list(range(width)), list(range(height))
         xx, yy = np.meshgrid(x, y)
-        return xx * spacing, yy * d
+        return xx * spacing, yy * spacing
     elif dim == 3:
         height, width, depth, duration = udata[0].shape
         x, y, z = list(range(width)), list(range(height)), list(range(depth))
         xx, yy, zz = np.meshgrid(x, y, z)
-        return xx * d, yy * d, zz * d
+        return xx * spacing, yy * spacing, zz * spacing
 
 
-def get_equally_spaced_kgrid(udata, d=1):
+def get_equally_spaced_kgrid(udata, spacing=1):
     """
     Returns a equally spaced grid to plot FFT of udata
 
@@ -12275,8 +12287,8 @@ def get_equally_spaced_kgrid(udata, d=1):
     if dim == 2:
         ncomp, height, width, duration = udata.shape
         # k space grid
-        kx = np.fft.fftfreq(width, d=d)  # this returns FREQUENCY (JUST INVERSE LENGTH) not ANGULAR FREQUENCY
-        ky = np.fft.fftfreq(height, d=d)
+        kx = np.fft.fftfreq(width, d=spacing)  # this returns FREQUENCY (JUST INVERSE LENGTH) not ANGULAR FREQUENCY
+        ky = np.fft.fftfreq(height, d=spacing)
         kx = np.fft.fftshift(kx)
         ky = np.fft.fftshift(ky)
         kxx, kyy = np.meshgrid(kx, ky)
@@ -12285,9 +12297,9 @@ def get_equally_spaced_kgrid(udata, d=1):
     elif dim == 3:
         ncomp, height, width, depth, duration = udata.shape
         # k space grid
-        kx = np.fft.fftfreq(width, d=d)
-        ky = np.fft.fftfreq(height, d=d)
-        kz = np.fft.fftfreq(depth, d=d)
+        kx = np.fft.fftfreq(width, d=spacing)
+        ky = np.fft.fftfreq(height, d=spacing)
+        kz = np.fft.fftfreq(depth, d=spacing)
         kx = np.fft.fftshift(kx)
         ky = np.fft.fftshift(ky)
         kz = np.fft.fftshift(kz)
