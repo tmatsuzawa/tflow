@@ -29,6 +29,7 @@ warnings.simplefilter('ignore', FutureWarning)
 import tflow.vector as vec
 import tflow.graph as graph
 
+
 global bezier_installed
 try:
     import bezier  # required to plot bezier curves (not critical)
@@ -36,6 +37,9 @@ try:
 except:
     bezier_installed = False
     print('velocity module: bezier is missing in a current environment. pip install bezier')
+
+global useNotebook
+useNotebook = True
 
 path_mod = os.path.abspath(__file__)
 moddirpath = os.path.dirname(path_mod)
@@ -271,7 +275,7 @@ def get_mean_flow_field_using_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None,
                                         t0=0, t1=None, inc=1,
                                         clean=True, cutoff=np.inf, method='nn', median_filter=False, verbose=False,
                                         replace_zeros=True,
-                                        notebook=True):
+                                        notebook=useNotebook):
     """
     Returns mean_field when a path to udata is provided
     ... recommended to use if udata is large (> half of your memory size)
@@ -350,6 +354,171 @@ def get_mean_flow_field_using_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None,
     if notebook:
         from tqdm import tqdm
     return udata_m
+
+
+def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT=None,
+                                       x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
+                                       t0=0, t1=None, notebook=useNotebook, use_masked_array=True, verbose=True):
+    """
+    Returns the phase-averaged udata (velocity field) without loading the entire udata from dpath
+
+    Parameters
+    ----------
+    dpath: str, path to the udata (h5)
+        ... the h5 file must contain ux and uy at /ux and /uy, respectively
+    freq: float, frequency of the peridocity in data
+    time: 1D array, time
+        ... time unit must be the same as the inverse of the unit of 'freq'
+    deltaT: float, default: None
+        ... time window of a phase used for averaging
+        ... data in [T, T+deltaT), [2T, 2(T+deltaT)], [3T, 3(T+deltaT)], ... will be considered to be at the same phase
+    x0: int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    x1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    y1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z0 int, default: 0
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    z1 int, default: None
+        ... index to specify volume of data to load (udata[:, y0:y1, x0:x1, z0:z1])
+    t0 int, default: 0
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+    t1 int, default: None
+        ... index to specify temporal range of data used to compute time average (udata[..., t0:t1:inc])
+
+    Returns
+    -------
+    tp: 1D array, time of phase-averaged data
+        ... tp = [0, period]
+        ... phase = tp * freq
+    udata_pavg: 2D array, phase-averaged udata
+        ... This is a phase-dependent mean flow.
+    """
+
+    duration = get_udata_dim(dpath)[-1]
+    if len(time) != duration:
+        raise ValueError("get_phase_averaged_udata_from_path: the length of t must match the duration of the udata")
+
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+        print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+    else:
+        from tqdm import tqdm
+
+    time = np.asarray(time[t0:t1])
+    period = 1. / freq  # period T
+    if t1 is None:
+        t1 = duration
+    if deltaT is None:
+        deltaT = time[1] - time[0]
+        if verbose:
+            print(f'get_phase_averaged_udata_from_path: deltaT- {deltaT}')
+    time_mod_period = time % period
+    nt = int(np.floor(period / deltaT))
+    tp = np.arange(nt) * deltaT
+    # tp = time[:nt]
+    try:
+        dummy, xxx, yyy, zzz = get_udata_from_path(dpath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, t0=0, t1=1,
+                                                   return_xy=True, verbose=False)
+    except:
+        dummy, xxx, yyy = get_udata_from_path(dpath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, t0=0, t1=1,
+                                              return_xy=True, verbose=False)
+    shape = dummy.shape[:-1] + (nt,)
+    udata_pavg = np.zeros(shape)
+
+    for i in tqdm(range(nt), desc='phase-avg udata'):
+        cond1 = time_mod_period >= i * deltaT
+        cond2 = time_mod_period < (i + 1) * deltaT
+        cond = cond1 * cond2  # If True, load data
+        counter = 0
+        for t in range(t0, t1):
+            if cond[t]:
+                udata_pavg[..., i] += \
+                get_udata_from_path(dpath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, t0=t, t1=t + 1,
+                                    verbose=False)[..., 0]
+                counter += 1
+        udata_pavg[..., i] /= float(counter)
+
+    if use_masked_array:
+        udata_pavg = np.ma.masked_array(udata_pavg)
+
+    if notebook:
+        from tqdm import tqdm
+    return tp, udata_pavg
+
+
+def subtract_mean_flow(udata, udata_m, notebook=useNotebook):
+    """
+    Return a fluctuating flow field udata_t
+    u(x, t) = U(x, t) - <U>(x)
+    ... u: fluctuating velocity field (udata_t)
+    ... U: raw velocity field (udata)
+    ... <U>: Mean velocity field (udata_m)
+    ...... <U> is typically a time-averaged field <U>_t.
+
+    Parameters
+    ----------
+    udata: nd array, velocity field
+    udata_m: nd array with shape udata.shape[:-1]
+
+    Returns
+    -------
+    udata_t: nd array, fluctuating velocity field
+    """
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+    udata = fix_udata_shape(udata)
+    udata_t = np.empty_like(udata)
+    for t in tqdm(range(udata.shape[-1])):
+        udata_t[..., t] = udata[..., t] - udata_m
+
+    if notebook:
+        from tqdm import tqdm as tqdm
+    return udata_t
+
+def subtract_phase_dependent_mean_flow(udata, udata_pavg, time, freq, phase_ref=None, phase_shift=0., notebook=useNotebook):
+    """
+    Returns a phase-dependent, fluctuating velocity field
+    u(x, t) = U(x, t) - <U>_p(x, theta)
+    ... u: phase-dependent, fluctuating velocity field (udata_t)
+    ...... theta: phase = (t % T) / T
+    ... U: raw velocity field (udata)
+    ... <U>_p: Phase-dependent, mean velocity field (udata_pavg)
+
+
+    Parameters
+    ----------
+    udata: nd array, velocity field
+    udata_pavg: nd array, phase-dependent velocity field
+    time: 1d array, time corresponding to udata
+    freq: float, frequency
+    phase_shift: float, default: 0., phase shift in [0, 1)
+    notebook: bool, default: True
+        ... If True, udata
+
+    Returns
+    -------
+    udata_t: nd array, fluctuating velocity field
+    """
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+    udata = fix_udata_shape(udata)
+    udata_t = np.empty_like(udata)
+
+    period = 1./float(freq)
+    phase = (np.asarray(time) % period) * freq + phase_shift
+    if phase_ref is None:
+        phase_ref = np.linspace(0, 1, udata_pavg.shape[-1], endpoint=False)
+    for t, theta in enumerate(tqdm(phase, desc='subtract PDMF')):
+        idx, val = find_nearest(phase_ref, theta, option='less')
+        udata_t[..., t] = udata[..., t] - udata_pavg[..., idx]
+
+    if notebook:
+        from tqdm import tqdm as tqdm
+    return udata_t
 
 
 ########## vector operations ##########
@@ -681,7 +850,7 @@ def get_spatial_avg_energy(udata, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, u
 def get_spatial_avg_energy_inside_r_from_path(dpath, r, xc=0., yc=0.,
                                               x0=0, x1=None, y0=0, y1=None,
                                               t0=0, t1=None,
-                                              notebook=True):
+                                              notebook=useNotebook):
     """
     Returns energy averaged inside a circle with radius r at (xc, yc)
     .. ONLY AVAILABLE TO 2D v-field
@@ -903,7 +1072,7 @@ def get_turbulence_intensity_local(udata):
     return ti_local
 
 
-def get_turbulence_intensity_from_path(dpath, writeData=False, overwrite=False, notebook=True):
+def get_turbulence_intensity_from_path(dpath, writeData=False, overwrite=False, notebook=useNotebook):
     """
     Computes the turbulence intensity of udata in a given path
 
@@ -1433,7 +1602,7 @@ def get_energy_spectrum_nd_old(udata, x0=0, x1=None, y0=0, y1=None,
 def get_energy_spectrum_old(udata, x0=0, x1=None, y0=0, y1=None,
                             z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
                             window=None, correct_signal_loss=True, remove_undersampled_region=True,
-                            cc=1.75, notebook=True):
+                            cc=1.75, notebook=useNotebook):
     """
     DEPRECATED: TM cleaned up the code, and improved the literacy and transparency of the algorithm- TM (Sep 2020)
 
@@ -2469,7 +2638,7 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
 
 def get_dissipation_spectrum(udata, nu, x0=0, x1=None, y0=0, y1=None,
                              z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
-                             window='flattop', correct_signal_loss=True, notebook=True):
+                             window='flattop', correct_signal_loss=True, notebook=useNotebook):
     """
     Returns dissipation spectrum D(k) = 2 nu k^2 E(k) where E(k) is the 1d energy spectrum
 
@@ -2538,7 +2707,7 @@ def get_dissipation_spectrum(udata, nu, x0=0, x1=None, y0=0, y1=None,
 def get_rescaled_energy_spectrum(udata, epsilon=10 ** 5, nu=1.0034, x0=0, x1=None,
                                  y0=0, y1=None, z0=0, z1=None,
                                  dx=1, dy=1, dz=1, nkout=None,
-                                 window=None, correct_signal_loss=True, notebook=True):
+                                 window=None, correct_signal_loss=True, notebook=useNotebook):
     """
     Returns SCALED energy spectrum E(k), its error, and wavenumber.
         - E(k) is sometimes called the 3D energy spectrum since it involves 3D FT of a velocity field.
@@ -2715,7 +2884,7 @@ def get_1d_rescaled_energy_spectrum(udata, epsilon=None, nu=1.0034, x0=0, x1=Non
 
 def get_rescaled_dissipation_spectrum(udata, epsilon=10 ** 5, nu=1.0034, x0=0, x1=None,
                                       y0=0, y1=None, z0=0, z1=None,
-                                      dx=1, dy=1, dz=1, nkout=None, notebook=True):
+                                      dx=1, dy=1, dz=1, nkout=None, notebook=useNotebook):
     """
     Return rescaled dissipation spectra
     D(k)/(u_eta^3) vs k * eta
@@ -3076,7 +3245,7 @@ def get_epsilon_iso(udata, x=None, y=None, lambda_f=None, lambda_g=None, nu=1.00
 
 def get_epsilon_using_diss_spectrum(udata, nu=1.0034, x0=0, x1=None,
                                     y0=0, y1=None, z0=0, z1=None,
-                                    dx=1, dy=1, dz=1, nkout=None, notebook=True):
+                                    dx=1, dy=1, dz=1, nkout=None, notebook=useNotebook):
     """
     Returns dissipation rate computed by integrated the dissipation specrtrum
     ... must have a fully resolved spectrum to yield a reasonable result
@@ -3463,7 +3632,7 @@ def get_epsilon_local_using_sij(udata, dx=None, dy=None, dz=None, nu=1.004,
 ########## advanced analysis ##########
 ## Spatial autocorrelation functions
 def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=0, x1=None, y0=0, y1=None,
-                             t0=None, t1=None, coarse=1.0, coarse2=0.2, notebook=True):
+                             t0=None, t1=None, coarse=1.0, coarse2=0.2, notebook=useNotebook):
     """
     [DEPRICATED] Use get_two_point_vel_corr() instead.
 
@@ -3678,7 +3847,7 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None,
                                t0=None, t1=None,
                                coarse=1.0, coarse2=0.2,
                                periodic=False, Lx=None, Ly=None, Lz=None,
-                               notebook=True):
+                               notebook=useNotebook):
     """
     [DEPRICATED] Use get_two_point_vel_corr instead.
     
@@ -3854,7 +4023,7 @@ def get_two_point_vel_corr_roll(ui, x, y, z=None, roll_axis=1, n_bins=None,
                                 t0=None, t1=None,
                                 coarse=1.0, coarse2=0.2,
                                 periodic=False, Lx=None, Ly=None, Lz=None,
-                                notebook=True):
+                                notebook=useNotebook):
     """
     Returns a two-point velocity correlation function <ui(x) ui(x+r)> / < |ui(x)|^2 >\
     ... Redirects to compute_spatial_autocorr2d OR compute_spatial_autocorr3d!
@@ -4503,7 +4672,7 @@ def get_autocorrelation_tensor_iso(r_long, f_long, r_tran, g_tran, time):
 
 def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=None, nu=1.004, u='ux',
                                 x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None,
-                                coarse=1.0, coarse2=0.2, notebook=True):
+                                coarse=1.0, coarse2=0.2, notebook=useNotebook):
     """
     DEPRECATED! Use get_structure_function()
 
@@ -4718,7 +4887,7 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
 
 def get_structure_function_roll(udata, x, y, z=None, indices=('x', 'x'), roll_axis=1, n_bins=None, nu=1.004,
                                 x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None,
-                                coarse=1.0, coarse2=0.2, notebook=True):
+                                coarse=1.0, coarse2=0.2, notebook=useNotebook):
     """
     DEPRECATED! Use get_structure_function()
     A method to compute a generalized structure function
@@ -5002,7 +5171,7 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
                            p=2, nr=None, nd=1000, mode='long',
                            time_thd=10.,
                            spacing='log',
-                           notebook=True):
+                           notebook=useNotebook):
     """
     Compute the structure function of the velocity field.
 
@@ -7057,7 +7226,7 @@ def get_time_avg_enstrophy_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=Non
 
 def get_time_avg_field_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                                       t0=0, t1=None, slicez=None, inc=1, thd=np.inf, fill_value=np.nan,
-                                      notebook=True):
+                                      notebook=useNotebook):
     """
     Returns time-averaged velocity field when a path to udata is provided
     ... recommended to use if udata is large (> half of your memory size)
@@ -7367,7 +7536,7 @@ def export_raw_file(data2save, savepath, dtype='uint32', thd=np.inf, interpolate
 
 ######### Helper for volumetric data ########
 ## Generate a 2D slice from a 3D data
-def slicer(xxx, yyy, zzz, n, pt, basis=None, spacing=None, notebook=True):
+def slicer(xxx, yyy, zzz, n, pt, basis=None, spacing=None, notebook=useNotebook):
     """
     Returns coordinates on a slice of a volume at a given point
 
@@ -8090,7 +8259,7 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
 def slice_udata_3d_old(udata, xx, yy, zz, n, pt, spacing=None, show=False,
                        method='nn', max_iter=10, tol=0.05, median_filter=True,
                        basis=None, apply_convention=True,
-                       u_basis='npq', notebook=True):
+                       u_basis='npq', notebook=useNotebook):
     """
     Returns a spatially 2D udata which is on the cross section of a volumetric data
     ... There are two ways to return the velocity field on the cross section.
@@ -8381,7 +8550,7 @@ def slice_3d_scalar_field(field, xx, yy, zz, n, pt, spacing=None,
 
 def slice_3d_scalar_field_old(field, xx, yy, zz, n, pt, spacing=None, show=False,
                               basis=None, apply_convention=True,
-                              notebook=True):
+                              notebook=useNotebook):
     """
     [DEPRECATED- slice_3d_scalar_field]
     Returns a spatially 2D udata which is on the cross section of a volumetric data
@@ -13060,7 +13229,7 @@ def low_pass_filter(data, fc, fs, order=5):
     return filtered
 
 
-def get_running_avg_1d(x, t, notebook=True):
+def get_running_avg_1d(x, t, notebook=useNotebook):
     """
     Calculate the running average of a 1D array
 
@@ -13093,7 +13262,7 @@ def get_running_avg_1d(x, t, notebook=True):
         return y
 
 
-def get_running_avg_nd(udata, t, axis=-1, notebook=True):
+def get_running_avg_nd(udata, t, axis=-1, notebook=useNotebook):
     """
     Calculate the running average of a nD array
 
@@ -13521,6 +13690,74 @@ def add_data2udatapath(udatapath, datadict, attrdict=None, grpname=None, overwri
                         f[key].attrs[attrname] = item
                     else:
                         print(f'add_data2udatapath(): {key}.attrs[\'{attrname}\'] already exists. Skipping...')
+
+
+def write_udata(udatapath, datadict, verbose=True):
+    """
+    Write velocity field data to a hdf5 in the default format
+
+    Parameters
+    ----------
+    udatapath: str, path where udata will be saved
+    datadict: dict
+        ... the data must be stored like {'x': x, 'y': y, 'z': z, 'ux': ux, 'uy': uy, 'uz': uz}
+        ... `x`, `y`, `z` must be either 2d/3d grid.
+        ... `ux`, `uy`, `uz` are x-/y-/z-component of the velocity field.
+    verbose: bool, If True, print out the progress
+
+    Returns
+    -------
+
+    """
+    if not os.path.exists(os.path.split(udatapath)[0]):
+        os.makedirs(os.path.split(udatapath)[0])
+    with h5py.File(udatapath, mode='a') as f:
+        existing_keys = f.keys()
+        for key in datadict.keys():
+            if type(datadict[key]) != dict:
+                try:
+                    if verbose:
+                        print('write_udata(): Adding %s...' % key)
+                    f.create_dataset(key, data=datadict[key])
+                except:
+                    raise ValueError(f'write_udata(): {udatapath} already exists! If you want to overwrite the data, manually delete the existing file.')
+                    # NEVER OVERWRITE udata. If one wants to do this, the file should be manually deleted.
+                    # if overwrite:
+                    #     del f[key]
+                    #     f.create_dataset(key, data=datadict[key])
+                    #     if verbose:
+                    #         print('write_udata(): %s already exists. Overwriting...' % key)
+            else:
+                if key in existing_keys and type(datadict[key]) != dict:
+                    if verbose:
+                        print('add_data2udatapath(): %s already exists! Skipping...' % key)
+                else:
+                    if type(datadict[key]) == dict:
+                        if not key in existing_keys:
+                            grp = f.create_group('/%s/' % key)
+                        else:
+                            grp = f[key]
+                        subkeys = datadict[key].keys()
+                        for subkey in subkeys:
+                            try:
+                                grp.create_dataset(subkey, data=datadict[key][subkey])
+                                if verbose:
+                                    print('write_udata(): Adding /%s/%s...' % (
+                                        key, subkey))
+                            except:
+                                # NEVER OVERWRITE udata. If one wants to do this, the file should be manually deleted.
+                                # if overwrite:
+                                #     del grp[subkey]
+                                #     grp.create_dataset(subkey, data=datadict[key][subkey])
+                                #     print('add_data2udatapath(): /%s/%s already exists. Overwriting...' % (
+                                #         key, subkey))
+                                # else:
+                                if verbose:
+                                    print('write_udata(): /%s/%s already exists! Skipping...' % (
+                                        key, subkey))
+                    else:
+                        f.create_dataset(key, data=datadict[key])
+    print('... udata was successfully created!')
 
 
 def convert_dat2h5files(dpath, savedir=None, verbose=False, overwrite=True, start=0):
@@ -14769,7 +15006,7 @@ def compute_streamfunction_direct(udata, xx, yy,
                                   nkinks=10, noise=None,
                                   return_sampled_grid=False,
                                   coordinate_system='cartesian',
-                                  notebook=True):
+                                  notebook=useNotebook):
     """
     Returns a streamfunction of a given udata in a ND array by computing
             \psi = \int_A^B udy - vdx  (cartesian)
@@ -15482,7 +15719,7 @@ def get_streamfunction_vloop(xx, yy, x0=0, y0=0, gamma=1, R=1,
 
 def get_streamfunction_thin_cored_vring(xx, yy, x0=0, y0=0, gamma=1., R=1., a=0.01,
                                         reference_frame='lab', uc=None,
-                                        return_cylindrical_coords=True, verbose=True, notebook=True):
+                                        return_cylindrical_coords=True, verbose=True, notebook=useNotebook):
     """
     Returns a streamfunction of a thin-cored vortex ring in cylindrical coordinates
 
@@ -16164,7 +16401,7 @@ def smoothAlongAxis(data, n=5, window='hanning'):
 
 
 # Coarse-graining a field
-def coarse_grain_udata(udata, nrows_sub, ncolumns_sub, overwrap=0.5, xx=None, yy=None, notebook=True):
+def coarse_grain_udata(udata, nrows_sub, ncolumns_sub, overwrap=0.5, xx=None, yy=None, notebook=useNotebook):
     """
     Returns a coarse grained udata
     ... so far, this can handle only 2D udata
@@ -16448,7 +16685,7 @@ def coarse_grain_3darr(arr, nrow_sub, ncol_sub, ndep_sub, overwrap=0, showtqdm=T
         return new_arr
 
 
-def coarse_grain_3dudata(udata_3d, nrow_sub, ncol_sub, ndep_sub, overwrap=0, showtqdm=False, notebook=True):
+def coarse_grain_3dudata(udata_3d, nrow_sub, ncol_sub, ndep_sub, overwrap=0, showtqdm=False, notebook=useNotebook):
     """
 
     Coarse-grain a 3d udata
@@ -17662,7 +17899,7 @@ def get_confidence_levels_on_structure_function(iw_wrt_eta, reta, alpha_min=0.1,
 #     return eiis, eii_errs, k
 
 # Pressure- a simple poisson solver based on Euler's equation
-def get_pressure(udata, xx, yy, zz, nu=1.003, notebook=True):
+def get_pressure(udata, xx, yy, zz, nu=1.003, notebook=useNotebook):
     """
     Returns pressure from a 3D+1 udata
     ... This is a poisson solver of an incompressible NS equation using FFT
