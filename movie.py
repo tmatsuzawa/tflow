@@ -13,7 +13,9 @@ import matplotlib.image as mpimg
 '''Module with functions for making movies
 '''
 # Abs path to ffmpeg
-ffmpeg_path = '/Users/takumi/Documents/git/takumi/tflow/tflow/ffmpeg'
+path_mod = os.path.abspath(__file__)
+moddirpath = os.path.dirname(path_mod)
+ffmpeg_path = os.path.join(moddirpath, 'ffmpeg')
 
 
 def make_movie_noah(imgname, movname, indexsz='05', framerate=10, imgdir=None, rm_images=False,

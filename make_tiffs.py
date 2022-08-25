@@ -5,9 +5,6 @@ Makes a series of tiff files from each cine in a directory (NOT IMPLEMENTED YET)
 
 Dependencies:
 - cine module
-
-
-
 """
 
 
@@ -27,12 +24,11 @@ from PIL import Image
 import cv2
 
 sys.path.append('/Users/stephane/Documents/git/takumi/fapm/cine_local')
-#----------LOCAL DEPENDENCE----------
-import library.field.velocity as vel
+#----------LOCAL DEPENDENCES----------
+import velocity as vel
 import tflow.cine_local.cine.cine as cine  # use local cine package
 import tflow.cine_local.cine.tiff as tiff  # use local cine package
 # To find out where Matlab is installed, type matlabroot on Matlab.
-matlab_path = '/Applications/MATLAB_R2019a.app/bin/matlab'
 
 
 faqm_dir = os.path.split(os.path.realpath(__file__))[0]
@@ -100,15 +96,8 @@ def cine2tiff(cinepath, start=0, end=None, step=1, header='im', overwrite=False)
             # misc.imsave(filename, data, 'tiff')
     cc.close()
 
-
-
-
-#Sample cine path
-cinepath_sample = '/Volumes/labshared4/takumi/old_data/sample_piv_cine/PIV_fv_vp_left_micro105mm_fps2000_Dp120p0mm_D25p6mm_piston10p5mm_freq5Hz_v200mms_setting1_inj1p0s_trig5p0s_fx0p0615mmpx.cine'
-
-
 parser = argparse.ArgumentParser(description='Comprehensive interactive tool to analyze PIV cine')
-parser.add_argument('-cine', '--cine', help='path to cine file', default=cinepath_sample)
+parser.add_argument('-cine', '--cine', help='path to cine file')
 parser.add_argument('-start', '--start', help='', default=0, type=int)
 parser.add_argument('-end', '--end', help='', default=None, type=int)
 parser.add_argument('-overwrite', '--overwrite', help='overwrite images', default=False)
