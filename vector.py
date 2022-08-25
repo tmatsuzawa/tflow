@@ -351,7 +351,6 @@ def get_an_orthonormal_basis(dim, v1=None):
         basis[:, 0] = norm(np.random.random(dim))
     else:
         basis[:, 0] = norm(v1)
-
     m = 1  # number of basis vectors constructed during this algorithm
     while m < dim:
         # 1. Prepare a random vector, r
