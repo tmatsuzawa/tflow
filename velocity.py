@@ -104,7 +104,7 @@ def get_duidxj_tensor(udata, dx=1., dy=1., dz=1., xyz_orientations=np.asarray([1
                 3. Does the zz[0, 0, :] monotonically increase as the index increases?
                     If True, dkdz = 1
                     If False, dkdz = -1
-            ... If you are not sure what this is, use
+            ... If you are not sure what this is, try `xyz_orientations = get_jacobian_xyz_ijk(xx, yy, zz)`
 
         ... Factors between index space (ijk) and physical space (xyz)
 
@@ -120,11 +120,9 @@ def get_duidxj_tensor(udata, dx=1., dy=1., dz=1., xyz_orientations=np.asarray([1
         ... This array is essentially a Jacobian between the index space basis (ijk) and the physical space basis (xyz)
             All information needed is just dx/dj, dy/di, dz/dk because ijk and xyz are both orthogonal bases.
             There is no off-diagonal elements in the Jacobian matrix, and one needs to supply only 3 elements for 3D udata.
-            If I strictly use the Cartesian basis for xyz (as it should), then I could say they are both orthonormal.
-            This makes each element of the Jacobian array to be either 1 or -1, reflecting the directions of +x/+y/+z
+            If I strictly use the Cartesian basis for xyz (as it should), then they are both orthonormal.
+            This makes each element of the Jacobian to be either 1 or -1, reflecting the directions of +x/+y/+z
             with respect to +j/+i/+k
-
-
     Returns
     -------
     sij: numpy array with shape (nrows, ncols, duration, 2, 2) (dim=2) or (nrows, ncols, nstacks, duration, 3, 3) (dim=3)
@@ -165,7 +163,6 @@ def get_duidxj_tensor(udata, dx=1., dy=1., dz=1., xyz_orientations=np.asarray([1
     elif dim == 3:
         ux, uy, uz = udata[0, ...], udata[1, ...], udata[2, ...]
         try:
-            # print ux.shape
             nrows, ncols, nstacks, duration = ux.shape
         except:
             nrows, ncols, nstacks = ux.shape
@@ -194,8 +191,7 @@ def get_duidxj_tensor(udata, dx=1., dy=1., dz=1., xyz_orientations=np.asarray([1
         sij[..., 2, 1] = duzdy
         sij[..., 2, 2] = duzdz
     elif dim > 3:
-        print('...Not implemented yet.')
-        return None
+        raise ValueError('udata should represent either a 2D or 3D v-field. ')
     return sij
 
 
@@ -238,7 +234,7 @@ def decompose_duidxj(sij):
     return eij, gij
 
 
-def reynolds_decomposition(udata, t0=0, t1=None):
+def reynolds_decomposition(udata, t0=0, t1=None, udata_mean=None):
     """
     Apply the Reynolds decomposition to a velocity field
     Returns a mean field (time-averaged) and a fluctuating field
@@ -249,6 +245,10 @@ def reynolds_decomposition(udata, t0=0, t1=None):
           ... (ux, uy, uz) or (ux, uy)
           ... ui has a shape (height, width, depth, duration) or (height, width, depth) (3D)
           ... ui may have a shape (height, width, duration) or (height, width) (2D)
+    t0: int, default: 0, If udata_mean is None, it treats temporal average of udata over a range [t0, t1) as mean flow.
+    t1: int, default: None, If udata_mean is None, it treats temporal average of udata over a range [t0, t1) as mean flow.
+    udata_mean: numpy array, default: None, If given, it treats the given array as a mean flow.
+        It must have the same shape as udata.shape[:-1]=(dim, y, x, (optional: z))
 
     Returns
     -------
@@ -259,16 +259,49 @@ def reynolds_decomposition(udata, t0=0, t1=None):
     dim = len(udata)
 
     # Initialization
-    if dim == 2:
-        u_mean = np.zeros((udata.shape[0], udata.shape[1], udata.shape[2]))
-    if dim == 3:
-        u_mean = np.zeros((udata.shape[0], udata.shape[1], udata.shape[2], udata.shape[3]))
+    if udata_mean is None:
+        udata_mean = np.nanmean(udata[..., t0:t1], axis=-1)
     u_turb = np.zeros_like(udata)
     for i in range(dim):
-        u_mean[i] = np.nanmean(udata[i, ..., t0:t1], axis=-1)  # axis=dim is always the time axis in this convention
         for t in range(udata.shape[-1]):
-            u_turb[i, ..., t] = udata[i, ..., t] - u_mean[i]
-    return u_mean, u_turb
+            u_turb[i, ..., t] = udata[i, ..., t] - udata_mean[i]
+    return udata_mean, u_turb
+
+def reynolds_decomposition_using_phase_matched_mean_flow(udata, phase, udata_pavg, phase_ref, notebook=True):
+    """
+    Conduct Reynolds decomposition using a phase-matched mean flow
+    Returns a mean field (time-averaged) and a fluctuating field
+
+    Parameters
+    ----------
+    udata
+    phase
+    udata_pavg
+    phase_ref
+
+    Returns
+    -------
+
+    """
+
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+        print('Using tqdm_notebook. If this is a mistake, set notebook=False')
+    else:
+        from tqdm import tqdm
+
+    udata = fix_udata_shape(udata)
+    dim = len(udata)
+
+    # Initialization
+    u_turb = np.zeros_like(udata)
+    for t, phase_ in enumerate(tqdm(phase)):
+        ind, _ = find_nearest(phase_ref, phase_)
+        u_turb[..., t] = udata[..., t] - udata_pavg[..., ind]
+
+    if notebook:
+        from tqdm import tqdm
+    return udata_pavg, u_turb
 
 
 def get_mean_flow_field_using_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
@@ -694,6 +727,118 @@ def curl_2d(ux, uy, dx=1., dy=1., xyz_orientations=np.asarray([1, -1]), xx=None,
 
     return omega
 
+
+def dot(udata, vdata):
+    """
+    Inner product of two udata
+
+    Parameters
+    ----------
+    udata: nd array, vector field data with the same format as udata[dim, y0:y1, x0:x1, (optional: z0:z1), t0:t1]
+    vdata: nd array, vector field data with the same format as udata[dim, y0:y1, x0:x1, (optional: z0:z1), t0:t1]
+
+    Returns
+    -------
+    scaData: (n-1)d array, inner product
+    """
+    udim, vdim = udata.shape[0], vdata.shape[0]
+    if udim != vdim:
+        raise ValueError('udata and vdata must have the same number of components')
+    else:
+        if len(udata.shape) < len(vdata.shape):
+            udata, vdata = vdata, udata  # udata always a greater dimension
+        if udata.shape == vdata.shape or len(vdata.shape) == 1:  # preferred
+            scaData = np.zeros_like(udata[0, ...])
+            for d in range(udim):
+                scaData += udata[d, ...] * vdata[d, ...]
+            return scaData
+        else:
+            if udata.shape[:-1] != vdata.shape:
+                raise ValueError(
+                    'udata must have the same shape as vdata OR udata[..., 0] must have the shape as vdata')
+            if udata.shape[:-1] == vdata.shape:
+                scaData = np.zeros_like(udata[0, ...])
+                for d in range(udim):
+                    for t in range(udata.shape[-1]):
+                        scaData[..., t] += udata[d, ..., t] * vdata[d, ...]
+                return scaData
+
+
+
+def cross(udata, vdata):
+    """
+    Cross product of two udata
+
+    Parameters
+    ----------
+    udata: nd array, vector field data with the same format as udata[dim, y0:y1, x0:x1, (optional: z0:z1), t0:t1]
+    vdata: nd array, vector field data with the same format as udata[dim, y0:y1, x0:x1, (optional: z0:z1), t0:t1]
+
+    Returns
+    -------
+    vecData: nd array, cross product
+    """
+    udim, vdim = udata.shape[0], vdata.shape[0]
+    if udim != vdim:
+        raise ValueError('udata and vdata must have the same number of components')
+    else:
+        if len(udata.shape) < len(vdata.shape):
+            udata, vdata = vdata, -udata  # udata always a greater dimension; flipping the order of u and v changes the sign
+        if udim == 3:
+            if udata.shape == vdata.shape or len(
+                    vdata.shape) == 1:  # preferred (udata and vdata are both time-series with the same shape)
+                vecData = np.empty_like(udata[...])
+                vecData[0, ...] = udata[1, ...] * vdata[2, ...] - udata[2, ...] * vdata[1, ...]
+                vecData[1, ...] = udata[2, ...] * vdata[0, ...] - udata[0, ...] * vdata[2, ...]
+                vecData[2, ...] = udata[0, ...] * vdata[1, ...] - udata[1, ...] * vdata[0, ...]
+                return vecData
+            else:
+                if udata.shape[:-1] != vdata.shape:
+                    raise ValueError(
+                        'udata must have the same shape as vdata OR udata[..., 0] must have the shape as vdata')
+                else:
+                    vecData = np.empty_like(udata[...])
+                    for d in range(udim):
+                        for t in range(udata.shape[-1]):
+                            vecData[0, ..., t] = udata[1, ..., t] * vdata[2, ...] - udata[2, ..., t] * vdata[1, ...]
+                            vecData[1, ..., t] = udata[2, ..., t] * vdata[0, ...] - udata[0, ..., t] * vdata[2, ...]
+                            vecData[2, ..., t] = udata[0, ..., t] * vdata[1, ...] - udata[1, ..., t] * vdata[0, ...]
+                    return vecData
+        elif udim == 2:
+            if udata.shape == vdata.shape or len(
+                    vdata.shape) == 1:  # preferred (udata and vdata are both time-series with the same shape)
+                vecData = udata[0, ...] * vdata[1, ...] - udata[1, ...] * vdata[0, ...]
+                return vecData
+            else:
+                if udata.shape[:-1] != vdata.shape:
+                    raise ValueError(
+                        'udata must have the same shape as vdata OR udata[..., 0] must have the shape as vdata')
+                else:
+                    vecData = np.empty_like(udata[0, ...])
+                    for d in range(udim):
+                        for t in range(udata.shape[-1]):
+                            vecData[..., t] = udata[0, ..., t] * vdata[1, ...] - udata[1, ..., t] * vdata[0, ...]
+                    return vecData
+
+
+def mag(udata):
+    """
+    Returns magnitude of a vector field every frame
+
+    Parameters
+    ----------
+    udata: nd array, vector field data with the same format as udata[dim, y0:y1, x0:x1, (optional: z0:z1), t0:t1]
+
+    Returns
+    -------
+    umag: (n-1)d array, magnitude of each vector in the field
+    """
+    umag = np.zeros_like(udata[0, ...])
+    dim = udata.shape[0]
+    for d in range(dim):
+        umag += udata[d, ...] ** 2
+    umag = np.sqrt(umag)
+    return umag
 
 ########## Elementary analysis ##########
 def get_energy(udata):
@@ -3298,7 +3443,7 @@ def get_epsilon_using_diss_spectrum(udata, nu=1.0034, x0=0, x1=None,
 
 def get_epsilon_using_struc_func_old(rrs, Dxxs, epsilon_guess=100000, r0=1.0, r1=10.0, p=2, method='Nelder-Mead'):
     """
-    [DEPRICATED]
+    [DEPRECATED]
     Returns the values of estimated dissipation rate using a long. structure function
 
     Parameters
@@ -3324,7 +3469,7 @@ def get_epsilon_using_struc_func_old(rrs, Dxxs, epsilon_guess=100000, r0=1.0, r1
     epsilons: numpy array
         estimated dissipation rate
     """
-    print('... DEPRICATED- use get_dissipation_rate_using_struc_func(dll, r_dll, c=2.1, p=2, n=5)')
+    print('... DEPRECATED- use get_dissipation_rate_using_struc_func(dll, r_dll, c=2.1, p=2, n=5)')
 
     def find_nearest(array, value, option='normal'):
         """
@@ -3634,7 +3779,7 @@ def get_epsilon_local_using_sij(udata, dx=None, dy=None, dz=None, nu=1.004,
 def compute_spatial_autocorr(ui, x, y, roll_axis=1, n_bins=None, x0=0, x1=None, y0=0, y1=None,
                              t0=None, t1=None, coarse=1.0, coarse2=0.2, notebook=useNotebook):
     """
-    [DEPRICATED] Use get_two_point_vel_corr() instead.
+    [DEPRECATED] Use get_two_point_vel_corr() instead.
 
     Compute spatial autocorrelation (two-point correlation) function of 2D velocity field using np.roll
     Spatial autocorrelation function:
@@ -3849,7 +3994,7 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None,
                                periodic=False, Lx=None, Ly=None, Lz=None,
                                notebook=useNotebook):
     """
-    [DEPRICATED] Use get_two_point_vel_corr instead.
+    [DEPRECATED] Use get_two_point_vel_corr instead.
     
     Compute spatial autocorrelation function of 2+1 velocity field using np.roll()
     Spatial autocorrelation function:
@@ -4132,6 +4277,7 @@ def get_two_point_vel_corr(udata, x, y, z=None,
     x: 2/3d array, x-coordinates of the velocity field
     y: 2/3d array, y-coordinates of the velocity field
     z: 2/3d array, z-coordinates of the velocity field
+    p: int, p-th order structure function
     x0: int, index used to specify a spatial region in which the statistics is computed udata[:, x0:x1, y0:y1, z0:z1, t0:t1]
     x1: int, index used to specify a spatial region in which the statistics is computed udata[:, x0:x1, y0:y1, z0:z1, t0:t1]
     y0: int, index used to specify a spatial region in which the statistics is computed udata[:, x0:x1, y0:y1, z0:z1, t0:t1]
@@ -4303,16 +4449,18 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                                 X1 = - width
                             elif X1 < xmin:
                                 X1 += width
+                            else: pass
                             if Y1 > ymax:
                                 Y1 = - height
                             elif Y1 < ymin:
                                 Y1 += height
-                            break
-                        else:
-                            is_R1_reasonable = X1 < xmax and X1 > xmin and Y1 < ymax and Y1 > ymin
-                    X1_ind, _ = find_nearest(x_grid[0, :], X1)
-                    Y1_ind, _ = find_nearest(y_grid[:, 0], Y1)
-                    R1 = np.asarray([x_grid[0, X1_ind], y_grid[Y1_ind, 0]])
+                            else: pass
+                        is_R1_reasonable = X1 < xmax and X1 > xmin and Y1 < ymax and Y1 > ymin
+                        X1_ind, _ = find_nearest(x_grid[0, :], X1)
+                        Y1_ind, _ = find_nearest(y_grid[:, 0], Y1)
+                        R1 = np.asarray([x_grid[0, X1_ind], y_grid[Y1_ind, 0]])
+                        if is_R1_reasonable and X0_ind == X1_ind and Y0_ind == Y1_ind:
+                            is_R1_reasonable = False
                 elif dim == 3:
                     while not is_R1_reasonable:
                         # Randomly pick a point in space, call it R0
@@ -4327,27 +4475,30 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                         X1, Y1, Z1 = X0 + r * np.sin(theta) * np.cos(phi), \
                                      Y0 + r * np.sin(theta) * np.sin(phi), \
                                      Z0 + r * np.cos(theta)
+                        if periodic:
+                            if R01[0] > width / 2:
+                                R01[0] -= width
+                            elif R01[0] < -width / 2:
+                                R01[0] += width
+                            if R01[1] > height / 2:
+                                R01[1] -= height
+                            elif R01[1] < -height / 2:
+                                R01[1] += height
+                            if dim == 3:
+                                if R01[2] > depth / 2:
+                                    R01[2] -= depth
+                                elif R01[2] < -depth / 2:
+                                    R01[2] += depth
                         is_R1_reasonable = X1 < xmax and X1 > xmin and Y1 < ymax and Y1 > ymin and Z1 < zmax and Z1 > zmin
-                    X1_ind, _ = find_nearest(x_grid[0, :, 0], X1)
-                    Y1_ind, _ = find_nearest(y_grid[:, 0, 0], Y1)
-                    Z1_ind, _ = find_nearest(z_grid[0, 0, :], Z1)
-                    R1 = np.asarray([x_grid[0, X1_ind, 0], y_grid[Y1_ind, 0, 0], z_grid[0, 0, Z1_ind]])
-
+                        X1_ind, _ = find_nearest(x_grid[0, :, 0], X1)
+                        Y1_ind, _ = find_nearest(y_grid[:, 0, 0], Y1)
+                        Z1_ind, _ = find_nearest(z_grid[0, 0, :], Z1)
+                        R1 = np.asarray([x_grid[0, X1_ind, 0], y_grid[Y1_ind, 0, 0], z_grid[0, 0, Z1_ind]])
+                        if is_R1_reasonable and  X0_ind == X1_ind and Y0_ind == Y1_ind and Z0_ind == Z1_ind:
+                                is_R1_reasonable = False
+                else:
+                    raise ValueError('dim must be 2 ro 3.')
                 R01 = R1 - R0
-                if periodic:
-                    if R01[0] > width / 2:
-                        R01[0] -= width
-                    elif R01[0] < -width / 2:
-                        R01[0] += width
-                    if R01[1] > height / 2:
-                        R01[1] -= height
-                    elif R01[1] < -height / 2:
-                        R01[1] += height
-                    if dim == 3:
-                        if R01[2] > depth / 2:
-                            R01[2] -= depth
-                        elif R01[2] < -depth / 2:
-                            R01[2] += depth
 
                 basis = vec.get_an_orthonormal_basis(dim, v1=R01)
                 # CRUCIAL: make sure to use the same convention to define the direction of the transverse vector
@@ -4363,8 +4514,8 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                                                                                          basis[:, 0])
                     gs_[j] = vec.dot(udata[:, Y0_ind, X0_ind, t], basis[:, 1]) * vec.dot(udata[:, Y1_ind, X1_ind, t],
                                                                                          basis[:, 1])
-                    denominators_f[j] = vec.dot(udata[:, Y0_ind, X0_ind, t], basis[:, 0]) ** 2
-                    denominators_g[j] = vec.dot(udata[:, Y0_ind, X0_ind, t], basis[:, 1]) ** 2
+                    denominators_f[j] = vec.dot(udata[:, Y0_ind, X0_ind, t], basis[:, 0])
+                    denominators_g[j] = vec.dot(udata[:, Y0_ind, X0_ind, t], basis[:, 1])
                 elif dim == 3:
                     if t == t0:
                         R01_0 = copy.deepcopy(R01)
@@ -5168,10 +5319,12 @@ def get_structure_function_roll(udata, x, y, z=None, indices=('x', 'x'), roll_ax
 def get_structure_function(udata, x, y, z=None, nu=1.004,
                            x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                            t0=0, t1=None,
-                           p=2, nr=None, nd=1000, mode='long',
+                           p=2, ps=None, nr=None, nd=1000, mode='long',
                            time_thd=10.,
                            spacing='log',
-                           notebook=useNotebook):
+                           notebook=useNotebook,
+                           periodic=False,
+                           showtqdm=True):
     """
     Compute the structure function of the velocity field.
 
@@ -5267,7 +5420,7 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
     def mag1(X):
         '''Calculate the length of an array of vectors, keeping the last dimension
         index.'''
-        return np.sqrt((np.asarray(X) ** 2).sum(-1))[..., np.newaxis]
+        return np.sqrt((np.asarray(X) ** 2).sum(-1))[..., None]
 
     def dot(X, Y):
         '''Calculate the dot product of two arrays of vectors.'''
@@ -5303,6 +5456,11 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
     #         return r.apply(X_)
 
     dim = len(udata)
+    if ps is None:
+        numP = 1
+        ps = [p]
+    else:
+        numP = len(ps)
 
     if x1 is None:
         x1 = udata[0, ...].shape[1]
@@ -5334,13 +5492,12 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
         dx, dy, dz = np.abs(x_grid[0, 1, 0] - x_grid[0, 0, 0]), \
                      np.abs(y_grid[1, 0] - y_grid[0, 0, 0]), \
                      np.abs(y_grid[0, 0, 1] - z_grid[0, 0, 0])
-
     elif dim == 2:
         y_grid, x_grid = y[y0:y1, x0:x1], x[y0:y1, x0:x1]
         dx, dy = np.abs(x_grid[0, 1] - x_grid[0, 0]), np.abs(y_grid[1, 0] - y_grid[0, 0])
 
     # Initialization
-    rrs, Dijks, Dijk_errs = np.zeros((nr, t1 - t0)), np.ones((nr, t1 - t0)), np.zeros((nr, t1 - t0))
+    rrs, Dijks, Dijk_errs = np.zeros((nr, t1 - t0)), np.ones((nr, numP, t1 - t0)), np.zeros((nr, numP, t1 - t0))
     is_R1_reasonable = False
 
     if dim == 2:
@@ -5349,7 +5506,7 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
         if spacing == 'log':
             rs_ = np.logspace(np.log10(dx), np.log10(min([width, height])), num=nr)
         else:
-            rs_ = np.linspace(dx * 2, min([width, height]) * 1, nr)
+            rs_ = np.linspace(dx * 2, min([width, height]), nr)
     elif dim == 3:
         xmin, xmax, ymin, ymax, zmin, zmax = np.min(x_grid), np.max(x_grid), np.min(y_grid), np.max(y_grid), np.min(
             z_grid), np.max(z_grid)
@@ -5358,17 +5515,33 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
             rs_ = np.logspace(np.log10(dx), np.log10(min([width, height, depth])), num=nr)
         else:
             rs_ = np.linspace(dx, min([width, height, depth]), nr)
+    else:
+        raise ValueError('udata must be either a 2D or 3D velocity field.')
+    if periodic:
+        lx, ly = xmax - xmin, ymax - ymin
+        if dim == 3:
+            lz = zmax - zmin
+            ls = [lx, ly, lz]
+        else:
+            ls = [lx, ly]
+        if spacing == 'log':
+            rs_ = np.logspace(np.log10(rs_[0]), np.log10(rs_[-1]//2), num=nr)
+        else:
+            rs_ = np.linspace(rs_[0], rs_[-1]//2, nr)
+
     rs = np.empty(nd)
     Dijks_ = np.empty(nd)
-    for t in tqdm(list(range(t0, t1)), desc='struc. func. time'):
-        for i, r in enumerate(tqdm(rs_, desc='struc. func. r-loop')):
+    for t in tqdm(range(t0, t1), desc='struc. func. time', disable=not showtqdm):
+        for i, r in enumerate(tqdm(rs_, desc='struc. func. r-loop', disable=not showtqdm)):
             time0 = time_mod.time()
             for j in range(nd):
                 time1 = time_mod.time()
                 if (time1 - time0) > time_thd:
-                    print('... Terminating for long computation time \n'
+                    print('... Terminating due to long computation time \n'
                           '(r, number of iterations performed before termination / target) = (%f, %d / %d)' % (
                               r, j, nd))
+                    rs = rs[:j]
+                    Dijks_ = Dijks_[:j]
                     break
 
                 if dim == 2:
@@ -5393,7 +5566,6 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
                     while not is_R1_reasonable:
                         # Randomly pick a point in space, call it R0
                         X0, Y0, Z0 = np.random.random() * width + xmin, np.random.random() * height + ymin, np.random.random() * depth + zmin
-                        R0 = np.asarray([X0, Y0, Z0])
                         X0_ind, _ = find_nearest(x_grid[0, :, 0], X0)
                         Y0_ind, _ = find_nearest(y_grid[:, 0, 0], Y0)
                         Z0_ind, _ = find_nearest(z_grid[0, 0, :], Z0)
@@ -5413,6 +5585,11 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
                             if all(R0 == R1):
                                 is_R1_reasonable = False
                 R01 = R1 - R0
+                if periodic:
+                    for d in range(dim):
+                        if R01[d] > ls[d]//2: R01[d] -= ls[d]
+                        elif R01[d] < -ls[d]//2: R01[d] += ls[d]
+                        else: pass
 
                 basis = vec.get_an_orthonormal_basis(dim, v1=R01)
                 # CRUCIAL: make sure to use the same convention to define the direction of the transverse vector
@@ -5420,7 +5597,7 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
                 if mode == 'long':
                     RR = basis[:, 0]  # a normalized longitudinal vector
                 elif mode == 'trans':
-                    # In 3D, transverse strcture function is ill-defined!
+                    # In 3D, transverse structure function is ill-defined!
                     if dim == 3:
                         print('transverse direction is not well-defined in 3D! Aborting')
                         sys.exit(1)
@@ -5428,13 +5605,13 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
                         RR = basis[:, 1]  # a normalized transverse vector
                 rs[j] = mag1(R01)
                 udiff = udata[:, Y1_ind, X1_ind, t] - udata[:, Y0_ind, X0_ind, t]
-                udiff = udiff[..., 0]
-                Dijks_[j] = dot(udiff, norm(RR)) ** p
+                Dijks_[j] = dot(udiff, norm(RR))
                 is_R1_reasonable = False
-            rrs[i, t] = np.nanmean(rs)
-            Dijks[i, t] = np.nanmean(Dijks_)
-            Dijk_errs[i, t] = np.nanstd(Dijks_)
 
+            rrs[i, t] = np.nanmean(rs)
+            for k, p_ in enumerate(ps):
+                Dijks[i, k, t] = np.nanmean(Dijks_ ** p_)
+                Dijk_errs[i, k, t] = np.nanstd(Dijks_ ** p_) / np.sqrt(j)
     # Also return the rescaled quantities
     if dim == 3:
         dx, dy, dz = x[0, 1, 0] - x[0, 0, 0], y[1, 0, 0] - y[0, 0, 0], z[0, 0, 1] - z[0, 0, 0]
@@ -5444,13 +5621,19 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
     epsilon = get_epsilon_using_sij(udata, dx=dx, dy=dy, dz=dz, nu=nu, t0=t0, t1=t1)
     eta = (nu ** 3 / epsilon) ** 0.25
     rrs_scaled = rrs / eta
-    Dijks_scaled = Dijks / ((epsilon * rrs) ** (float(p) / 3.))
-    Dijk_errs_scaled = Dijk_errs / ((epsilon * rrs) ** (float(p) / 3.))
+    Dijks_scaled, Dijk_errs_scaled = np.empty_like(Dijks), np.empty_like(Dijks)
+    for k, p_ in enumerate(ps):
+        Dijks_scaled[:, k, :] = Dijks[:, k, :] / (epsilon * rrs) ** (p_ / 3.)
+        Dijk_errs_scaled[:, k, :] = Dijk_errs[:, k, :] / (epsilon * rrs) ** (p_ / 3.)
+    if Dijks.shape[1] == 1: # iget_structure_functionf a single p is given, then squeeze the returning array
+        Dijks, Dijk_errs = Dijks[:, 0, :], Dijk_errs[:, 0, :]
+        Dijks_scaled, Dijk_errs_scaled = Dijks_scaled[:, 0, :], Dijk_errs_scaled[:, 0, :]
 
     print('mean epsilon, mean eta: ', np.nanmean(epsilon), np.nanmean(eta))
     if notebook:
         from tqdm import tqdm as tqdm
     return rrs, Dijks, Dijk_errs, rrs_scaled, Dijks_scaled, Dijk_errs_scaled
+
 
 
 def scale_raw_structure_funciton_long(rrs, Dxxs, epsilon, Dxx_errs=None, nu=1.004, p=2):
@@ -5561,6 +5744,9 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.015, d
     ...     (2) Evaluate its second derivate at r=0.
     ...     (3) Relate that value to the taylor microscale
     ... Feed the results from get_two_point_vel_corr_iso().
+
+    ... Alternatively, one could approxomate Taylor microscale by lambda_g = np.sqrt(r_tran[1]**2 / (1 - g_tran[1])
+    which just considers a parabola that intersects (0, 1) and (r_tran[1], g_tran[1])
 
     Parameters
     ----------
@@ -5777,7 +5963,7 @@ def get_integral_scales(r_long, f_long, r_tran, g_tran, method='trapz'):
 # Integral scales 2: using autocorrelation tensor. Should be equivalent to get_integral_scales()
 def get_integral_scales_using_rij(udata, Rij, rmax, n=100):
     """
-    [DEPRICATED- computing the autocorrelation tensor could be time-consuming]
+    [DEPRECATED- computing the autocorrelation tensor could be time-consuming]
     Use autocorrelation tensor, Rij to calculate integral length scale
 
     Parameters
@@ -7542,6 +7728,9 @@ def slicer(xxx, yyy, zzz, n, pt, basis=None, spacing=None, notebook=useNotebook)
 
     ... basisA: Cartesian basis of the volume
     ... basisB: npq basis
+    ... Coordinate transformation:
+        n0, p0, q0 = np.matmul(Mab, np.asarray([x0, y0, z0])) #x, y, z -> n, p, q
+        x0, y0, z0 = np.matmul(Mba, np.asarray([n0, p0, q0])) #n, p, q -> x, y z
     
     Parameters
     ----------
@@ -7740,7 +7929,7 @@ def get_intersecting_vertices(xxx, yyy, zzz, a, b, c, x0, y0, z0):
 def slicer_old(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, show=False, notebook=True,
                debug=False):
     """
-    DEPRICATED (this slicer function uses a brute-force approach. Use slicer() instead.
+    DEPRECATED (this slicer function uses a brute-force approach. Use slicer() instead.
 
     Samples points on the cross section of a volume defined by 3D grid (xx, yy, zz) in two different bases and transformation matrices
     ... The area vector (normal to the cross section) and a point on the cross section must be supplied.
@@ -8110,12 +8299,10 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
             Mab = vec.get_change_of_basis_matrix(basis_xyz, basis_npq) # transformation matrix from xyz coords to npq coords
             Mba = np.linalg.inv(Mab) # the change-of-basis matrix is ALWAYS unitary.
     ... e.g. You want a v-field on a slice whose normal vector is obtained by rotating the unit z vector rotated by +45 degrees
-            theta = np.pi/180.*-45 # Convert degrees to rad
+            theta = np.pi/180.*45 # Convert degrees to rad
             n = [np.cos(theta), np.sin(theta), 0] # This is the normal vector of the slice
             pt = [0, 0, 0] # A point on the slice
-            # Providing the new basis (npq basis) is optional
-            # but this helps to speed up the process to find all available points on the slice
-            basis = np.asarray([n, [0, 0, 1], [np.sin(theta), -np.cos(theta), 0]]).T # The transpose is necessary
+            basis = np.asarray([n, [np.sin(theta), -np.cos(theta), 0], [0, 0, 1],]).T # The transpose is necessary
             vdata, pp, qq = vel.slice_udata_3d(udata, xxx, yyy, zzz, n, pt, basis=basis, show=True)
             enst = vel.get_enstrophy(vdata[1:, ...], xx=pp, yy=qq)
             graph.color_plot(pp, qq, enst[..., 0], fignum=1+i)
@@ -8134,7 +8321,6 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
                 vdata, pp, qq = vel.slice_udata_3d(udata[..., t], xxx, yyy, zzz, n, [xc, yc, zc],
                                                    basis = np.asarray([n, [np.cos(theta), 0, -np.sin(theta)], [0, 1, 0]]).T,
                                                    apply_convention=False)
-    Example:
 
     Parameters
     ----------
@@ -8212,7 +8398,7 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
         uzi = fs[2]((yy_plane, xx_plane, zz_plane))
         # shape = uxi.shape
         uis_xyz = np.stack((uxi.flatten(), uyi.flatten(), uzi.flatten()))
-        uis_npq = np.matmul(Mab, uis_xyz).reshape((3,) + shape)
+        uis_npq = np.matmul(Mab, uis_xyz).reshape((3,) + shape) # Mab (ux, uy, uz) -> (un, up, uq)
         uis_xyz = uis_xyz.reshape((3,) + shape)
 
         # pts_b = np.stack((nn.flatten(), pp.flatten(), qq.flatten()))  # npq
@@ -9590,12 +9776,9 @@ def replace_nan_w_nn(data, notebook=False):
         # print('Using tqdm_notebook. If this is a mistake, set notebook=False')
     else:
         from tqdm import tqdm
-
     isnan = np.isnan(data)
 
     if not isnan.any():
-        # if verbose:
-        print('replace_nan_w_nn: no nan in data')
         if notebook:
             from tqdm import tqdm as tqdm
         return data
@@ -11621,8 +11804,7 @@ def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                 udata = np.stack((ux, uy, uz))
                 if return_xy:
                     if slicez is None:
-                        xx, yy, zz = f['x'][y0:y1, x0:x1, z0:z1], f['y'][y0:y1, x0:x1, z0:z1], f['z'][y0:y1, x0:x1,
-                                                                                               z0:z1]
+                        xx, yy, zz = f['x'][y0:y1, x0:x1, z0:z1], f['y'][y0:y1, x0:x1, z0:z1], f['z'][y0:y1, x0:x1, z0:z1]
                     else:
                         xx, yy, zz = f['x'][y0:y1, x0:x1, slicez], f['y'][y0:y1, x0:x1, slicez], f['z'][0, 0, slicez]
         tau1 = time_mod.time()
@@ -12092,7 +12274,7 @@ def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=N
         rs = np.empty(shape)
         qty_ms = np.empty(shape)
         qty_errs = np.empty(shape)
-        for t in tqdm(list(range(duration)), disable=~showtqdm):
+        for t in tqdm(list(range(duration)), disable=not showtqdm):
             rs[:, t], qty_ms[:, t], qty_errs[:, t] = get_binned_stats(r.flatten(),
                                                                       qty_local[..., t].flatten(),
                                                                       n_bins=n,
@@ -13229,7 +13411,7 @@ def low_pass_filter(data, fc, fs, order=5):
     return filtered
 
 
-def get_running_avg_1d(x, t, notebook=useNotebook):
+def get_running_avg_1d(x, t, returnSameShape=False, notebook=useNotebook):
     """
     Calculate the running average of a 1D array
 
@@ -13251,12 +13433,18 @@ def get_running_avg_1d(x, t, notebook=useNotebook):
             print('Using tqdm_notebook. If this is a mistake, set notebook=False')
         else:
             from tqdm import tqdm
-
-        y = np.zeros(len(x) - t)
-        for i in tqdm(list(range(t))):
-            y += np.roll(x, -i)[:-t]
-        y /= float(t)
-
+        if returnSameShape:
+            y = np.zeros_like(x)
+            count = np.ones_like(x)
+            for i in tqdm(list(range(t))):
+                y[:-t] += np.roll(x, -i)[:-t]
+                count[:-t] += 1
+            y /= count
+        else:
+            y = np.zeros(len(x) - t)
+            for i in tqdm(list(range(t))):
+                y += np.roll(x, -i)[:-t]
+            y /= float(t)
         if notebook:
             from tqdm import tqdm
         return y
@@ -13466,7 +13654,7 @@ def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT=None,
     if t1 is None:
         t1 = duration
     if deltaT is None:
-        deltaT = period
+        deltaT = time[1] - time[0]
     time_mod_period = time % period
     nt = int(np.floor(period / deltaT))
     tp = time[:nt]
@@ -13478,7 +13666,6 @@ def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT=None,
                                               return_xy=True, verbose=False)
     shape = dummy.shape[:-1] + (nt,)
     udata_pavg = np.zeros(shape)
-
     for i in tqdm(range(nt)):
         cond1 = time_mod_period >= i * deltaT
         cond2 = time_mod_period < (i + 1) * deltaT
@@ -14541,21 +14728,15 @@ def default_analysis_piv(dpath, inc=1, overwrite=False, time=None, t0=0, t1=None
     else:
         u_cutoff = read_data_from_h5(dpath, ['u_cutoff'])
 
-    # Temporal/Spatial average quantities
+    # Temporal averaged quantities
     if not all([target in keys for target in
-                ['etavg', 'esavg', 'esavg_err', 'enst_tavg', 'enst_savg', 'enst_savg_err', 'xc', 'yc', 'zc',
+                ['etavg', 'enst_tavg', 'xc', 'yc', 'zc',
                  'xc_enst', 'yc_enst', 'zc_enst']]) or overwrite:
         udata, xx, yy = get_udata_from_path(dpath, t0=0, t1=1, return_xy=True, verbose=False)  # dummy
         print('... computing time-averaged energy...')
         etavg = get_time_avg_energy_from_udatapath(dpath, inc=inc, t0=t0, t1=t1)
         print('... computing time-averaged enstrophy...')
         enst_tavg = get_time_avg_enstrophy_from_udatapath(dpath, inc=inc, t0=t0, t1=t1)
-        results_e = process_large_udata(dpath, func=get_spatial_avg_energy, inc=inc, clean=True,
-                                        cutoff=u_cutoff, t0=t0, t1=t1)
-        esavg, esavg_err = results_e
-        results_enst = process_large_udata(dpath, func=get_spatial_avg_enstrophy, inc=inc,
-                                           clean=True, cutoff=u_cutoff, xx=xx, yy=yy, t0=t0, t1=t1)
-        enst_savg, enst_savg_err = results_enst
 
         # center of energy
         xc, yc, zc = np.nansum(xx * etavg) / np.nansum(etavg), \
@@ -14569,16 +14750,34 @@ def default_analysis_piv(dpath, inc=1, overwrite=False, time=None, t0=0, t1=None
         datadict = {'xc': xc, 'yc': yc, 'zc': np.nan,  # Center of energy
                     'xc_enst': xc_enst, 'yc_enst': yc_enst, 'zc_enst': np.nan,  # Center of enstrophy
                     'etavg': etavg,  # time-averaged energy
-                    'esavg': esavg,  # spatially averaged energy
-                    'esavg_err': esavg_err,  # standard error of spatially averaged energy
                     'enst_tavg': enst_tavg,  # time-averaged enstrophy
-                    'enst_savg': enst_savg,  # spatially averaged enstrophy
-                    'enst_savg_err': enst_savg_err,  # standard error of spatially averaged enstrophy
                     }
         add_data2udatapath(dpath, datadict, overwrite=overwrite, grpname=grpname)
     else:
         xc, yc, zc = read_data_from_h5(dpath, ['xc', 'yc', 'zc'])
         etavg, esavg = read_data_from_h5(dpath, ['etavg', 'esavg'])
+        enst_tavg, enst_savg = read_data_from_h5(dpath, ['enst_tavg', 'enst_savg'])
+
+    # Spatial averaged quantities
+    if not all([target in keys for target in
+                ['esavg', 'esavg_err', 'enst_savg', 'enst_savg_err']]) or overwrite:
+        udata, xx, yy = get_udata_from_path(dpath, t0=0, t1=1, return_xy=True, verbose=False)  # dummy
+
+        results_e = process_large_udata(dpath, func=get_spatial_avg_energy, inc=inc, clean=True,
+                                        cutoff=u_cutoff, t0=t0, t1=t1)
+        esavg, esavg_err = results_e
+        results_enst = process_large_udata(dpath, func=get_spatial_avg_enstrophy, inc=inc,
+                                           clean=True, cutoff=u_cutoff, xx=xx, yy=yy, t0=t0, t1=t1)
+        enst_savg, enst_savg_err = results_enst
+
+        datadict = {
+                    'esavg': esavg,  # spatially averaged energy
+                    'esavg_err': esavg_err,  # standard error of spatially averaged energy
+                    'enst_savg': enst_savg,  # spatially averaged enstrophy
+                    'enst_savg_err': enst_savg_err,  # standard error of spatially averaged enstrophy
+                    }
+        add_data2udatapath(dpath, datadict, overwrite=overwrite, grpname=grpname)
+    else:
         enst_tavg, enst_savg = read_data_from_h5(dpath, ['enst_tavg', 'enst_savg'])
 
     # mean flow
@@ -14650,6 +14849,10 @@ def default_analysis_stb(dpath, inc=1, overwrite=False, time=None):
     -------
     None
     """
+    if inc == 1:
+        grpname = None
+    else:
+        grpname = f'inc{inc}'
 
     def compute_pdf(data, nbins=100, vmin=None, vmax=None):
         """Get a normalized histogram"""
@@ -14683,13 +14886,16 @@ def default_analysis_stb(dpath, inc=1, overwrite=False, time=None):
         return bins, cdf
 
     with h5py.File(dpath, mode='r') as f:
-        keys = [key for key in f.keys()]
+        if inc == 1:
+            keys = [key for key in f.keys()]
+        else:
+            keys = [key for key in f[grpname].keys()]
     if not all([target in keys for target in ['x0', 'x1', 'y0', 'y1', 'z0', 'z1']]) or overwrite:
         x0, x1, y0, y1, z0, z1 = suggest_udata_dim2load(dpath, show=False, return_tuple=True)
         datadict = {'x0': x0, 'x1': x1, 'y0': y0, 'y1': y1, 'z0': z0, 'z1': z1}
-        add_data2udatapath(dpath, datadict, overwrite=overwrite)
+        add_data2udatapath(dpath, datadict, overwrite=overwrite, grpname=grpname)
     else:
-        x0, x1, y0, y1, z0, z1 = read_data_from_h5(dpath, ['x0', 'x1', 'y0', 'y1', 'z0', 'z1'])
+        x0, x1, y0, y1, z0, z1 = read_data_from_h5(dpath, ['x0', 'x1', 'y0', 'y1', 'z0', 'z1'], grpname=grpname)
 
     # Velocity statistics
     if not all(
@@ -14708,9 +14914,9 @@ def default_analysis_stb(dpath, inc=1, overwrite=False, time=None):
                     # 99.9% of velocity component is less than this value
                     'u_cutoff': u_cutoff,  # suggested value for u_cutoff for clean
                     }
-        add_data2udatapath(dpath, datadict, overwrite=overwrite)
+        add_data2udatapath(dpath, datadict, overwrite=overwrite, grpname=grpname)
     else:
-        u_cutoff = read_data_from_h5(dpath, ['u_cutoff'])
+        u_cutoff = read_data_from_h5(dpath, ['u_cutoff'], grpname=grpname)
 
     # Temporally averaged quantities
     if not all([target in keys for target in
@@ -14730,14 +14936,15 @@ def default_analysis_stb(dpath, inc=1, overwrite=False, time=None):
                     'etavg': etavg,  # time-averaged energy
                     'enst_tavg': enst_tavg,  # time-averaged enstrophy
                     }
-        add_data2udatapath(dpath, datadict, overwrite=overwrite)
+        add_data2udatapath(dpath, datadict, overwrite=overwrite, grpname=grpname)
     else:
         xc, yc, zc = read_data_from_h5(dpath, ['xc', 'yc', 'zc'])
-        etavg, enst_tavg = read_data_from_h5(dpath, ['etavg', 'enst_tavg'])
+        etavg, enst_tavg = read_data_from_h5(dpath, ['etavg', 'enst_tavg'], grpname=grpname)
 
     # Spatially averaged quantities
     if not all([target in keys for target in
                 ['esavg', 'esavg_err', 'enst_savg', 'enst_savg_err', ]]) or overwrite:
+        udata, xxx, yyy, zzz = get_udata_from_path(dpath, t0=0, t1=1, return_xy=True)  # sample udata
         results_e = process_large_udata(dpath, func=get_spatial_avg_energy, inc=inc, clean=True,
                                         cutoff=u_cutoff)
         esavg, esavg_err = results_e
@@ -14750,10 +14957,10 @@ def default_analysis_stb(dpath, inc=1, overwrite=False, time=None):
                     'enst_savg': enst_savg,  # spatially averaged enstrophy
                     'enst_savg_err': enst_savg_err,  # standard error of spatially averaged enstrophy
                     }
-        add_data2udatapath(dpath, datadict, overwrite=overwrite)
+        add_data2udatapath(dpath, datadict, overwrite=overwrite, grpname=grpname)
     else:
-        xc, yc, zc = read_data_from_h5(dpath, ['xc', 'yc', 'zc'])
-        esavg, enst_tavg = read_data_from_h5(dpath, ['esavg', 'enst_savg'])
+        xc, yc, zc = read_data_from_h5(dpath, ['xc', 'yc', 'zc'], grpname=grpname)
+        esavg, enst_tavg = read_data_from_h5(dpath, ['esavg', 'enst_savg'], grpname=grpname)
 
     # Radial profile
     if not all([target in keys for target in ['r_energy', 'eTimeThetaPhi_avg', 'eTimeThetaPhi_avg_err']]) or overwrite:
@@ -14773,13 +14980,13 @@ def default_analysis_stb(dpath, inc=1, overwrite=False, time=None):
                     # radial enstrophy profile (averaged over polar and azimuthal angles
                     'enstTimeThetaPhi_avg_err': enstTimeThetaPhi_avg_err,  # standard error of enstTimeThetaPhi_avg
                     }
-        add_data2udatapath(dpath, datadict, overwrite=overwrite)
+        add_data2udatapath(dpath, datadict, overwrite=overwrite, grpname=grpname)
     # else:
     #     radial_dist, eTimeThetaPhi_avg, eTimeThetaPhi_avg_err = read_data_from_h5(dpath,
     #                                                                               ['r_energy', 'eTimeThetaPhi_avg',
     #                                                                                'eTimeThetaPhi_avg_err'])
     if time is not None:
-        add_data2udatapath(dpath, {"t": time}, overwrite=overwrite)
+        add_data2udatapath(dpath, {"t": time}, overwrite=overwrite, grpname=grpname)
 
 
 # functions related to turbulence decay
@@ -14847,7 +15054,7 @@ def get_time_indices_for_selfsimilar_movie(time, t0, dt, exponent=-1, nmax=None)
         else:
             idx = (np.abs(array - value)).argmin()
             return idx, array[idx]
-
+    nt = len(time)
     t1 = t0 + dt
     tau0 = t0 - t0
     tau1 = t1 - t0
@@ -16401,7 +16608,7 @@ def smoothAlongAxis(data, n=5, window='hanning'):
 
 
 # Coarse-graining a field
-def coarse_grain_udata(udata, nrows_sub, ncolumns_sub, overwrap=0.5, xx=None, yy=None, notebook=useNotebook):
+def coarse_grain_udata(udata, nrows_sub, ncolumns_sub, overlap=0.5, xx=None, yy=None, notebook=useNotebook):
     """
     Returns a coarse grained udata
     ... so far, this can handle only 2D udata
@@ -16410,7 +16617,7 @@ def coarse_grain_udata(udata, nrows_sub, ncolumns_sub, overwrap=0.5, xx=None, yy
     udata: nd array, velocity field
     nrows_sub: int, number of rows in the sub-grid
     ncolumns_sub: int, number of columns in the sub-grid
-    overwrap: float, fraction of the sub-grid that is overlapped with the original grid, [0, 1]
+    overlap: float, fraction of the sub-grid that is overlapped with the original grid, [0, 1]
     xx: nd array, x-coordinates of the original grid
     yy: nd array, y-coordinates of the original grid
 
@@ -16423,23 +16630,29 @@ def coarse_grain_udata(udata, nrows_sub, ncolumns_sub, overwrap=0.5, xx=None, yy
         print('Using tqdm_notebook. If this is a mistake, set notebook=False')
     else:
         from tqdm import tqdm
+    if nrows_sub == 1 and ncolumns_sub == 1:
+        if xx is not None and yy is not None:
+            return udata, xx, yy
+        else:
+            return udata
+
 
     udata = fix_udata_shape(udata)
     dim, duration = udata.shape[0], udata.shape[-1]
     if dim == 3:
         raise ValueError('coarse_grain_udata: 3D udata is not implemented yet')
 
-    dummy = coarse_grain_2darr_overwrap(udata[0, ..., 0], nrows_sub, ncolumns_sub, overwrap=overwrap)
+    dummy = coarse_grain_2darr_overlap(udata[0, ..., 0], nrows_sub, ncolumns_sub, overlap=overlap)
     shape = (dim,) + dummy.shape + (duration,)
     udata_c = np.empty(shape)
-    for t in tqdm(range(duration)):
+    for t in tqdm(range(duration), desc='coarse-graining'):
         for d in range(dim):
-            udata_c[d, ..., t] = coarse_grain_2darr_overwrap(udata[d, ..., t], nrows_sub, ncolumns_sub,
-                                                             overwrap=overwrap)
+            udata_c[d, ..., t] = coarse_grain_2darr_overlap(udata[d, ..., t], nrows_sub, ncolumns_sub,
+                                                             overlap=overlap)
 
     if xx is not None and yy is not None:
-        xx_c = coarse_grain_2darr_overwrap(xx, nrows_sub, ncolumns_sub, overwrap=overwrap)
-        yy_c = coarse_grain_2darr_overwrap(yy, nrows_sub, ncolumns_sub, overwrap=overwrap)
+        xx_c = coarse_grain_2darr_overlap(xx, nrows_sub, ncolumns_sub, overlap=overlap)
+        yy_c = coarse_grain_2darr_overlap(yy, nrows_sub, ncolumns_sub, overlap=overlap)
 
     if notebook:
         from tqdm import tqdm
@@ -16493,9 +16706,9 @@ def coarse_grain_2darr(arr, nrows_sub, ncolumns_sub):
     return arr_coarse
 
 
-def coarse_grain_2darr_overwrap(arr, nrows_sub, ncolumns_sub, overwrap=0.5):
+def coarse_grain_2darr_overlap(arr, nrows_sub, ncolumns_sub, overlap=0.5):
     """
-    Coarse-grain 2D arrays with overwrap (mimics how PIVLab processes a velocity field)
+    Coarse-grain 2D arrays with overlap (mimics how PIVLab processes a velocity field)
 
     arr= [[ 0  1  2  3  4  5]
          [ 6  7  8  9 10 11]
@@ -16504,7 +16717,7 @@ def coarse_grain_2darr_overwrap(arr, nrows_sub, ncolumns_sub, overwrap=0.5):
          [24 25 26 27 28 29]
          [30 31 32 33 34 35]]
 
-        -> Make a new array. (nrows_sub=4, ncolumns_sub=4, overwrap=0.5)
+        -> Make a new array. (nrows_sub=4, ncolumns_sub=4, overlap=0.5)
     array([[  0.,   1.,   2.,   3.,   2.,   3.,   4.,   5.],
            [  6.,   7.,   8.,   9.,   8.,   9.,  10.,  11.],
            [ 12.,  13.,  14.,  15.,  14.,  15.,  16.,  17.],
@@ -16523,7 +16736,7 @@ def coarse_grain_2darr_overwrap(arr, nrows_sub, ncolumns_sub, overwrap=0.5):
     arr: 2d array
     nrows_sub: int, Number of rows of blocks (over which values are averaged)
     ncolumns_sub: int, Number of columns of blocks
-    overwrap: fraction of overwrap, default=0.5, [0, 1]
+    overlap: fraction of overlap, default=0.5, [0, 1]
 
     Returns
     -------
@@ -16531,11 +16744,11 @@ def coarse_grain_2darr_overwrap(arr, nrows_sub, ncolumns_sub, overwrap=0.5):
 
     """
     nrows, ncols = np.array(arr).shape
-    rowstep, colstep = int(nrows_sub * overwrap), int(ncolumns_sub * overwrap)
+    rowstep, colstep = int(nrows_sub * overlap), int(ncolumns_sub * overlap)
     # nrows_new, ncols_new = (nrows-1) * nrows_sub, (ncols-1) * ncolumns_sub
-    # number of overwrapped regions
-    nrow_ow, ncol_ow = int(np.ceil((nrows - nrows_sub) / (nrows_sub * (1 - overwrap)))), int(
-        np.ceil((ncols - ncolumns_sub) / (ncolumns_sub * (1 - overwrap))))
+    # number of overlapped regions
+    nrow_ow, ncol_ow = int(np.ceil((nrows - nrows_sub) / (nrows_sub * (1 - overlap)))), int(
+        np.ceil((ncols - ncolumns_sub) / (ncolumns_sub * (1 - overlap))))
     # shape of new array
     nrows_new, ncols_new = nrows_sub * (nrow_ow + 1), ncolumns_sub * (ncol_ow + 1)
     arr_new = np.empty((nrows_new, ncols_new))
@@ -16544,7 +16757,7 @@ def coarse_grain_2darr_overwrap(arr, nrows_sub, ncolumns_sub, overwrap=0.5):
     # Make a new array to coarse grain
     for i in range(0, nrows_new, nrows_sub):
         for j in range(0, ncols_new, ncolumns_sub):
-            ii, jj = int(np.ceil(i * (1 - overwrap))), int(np.ceil(j * (1 - overwrap)))
+            ii, jj = int(np.ceil(i * (1 - overlap))), int(np.ceil(j * (1 - overlap)))
             if i % nrows_sub == 0 and j % ncolumns_sub == 0:
                 # print (i, j), (ii, jj)
                 # print arr[ii:ii+nrows_sub, jj:jj+ncolumns_sub]
@@ -16629,7 +16842,8 @@ def make_blocks_from_2d_array(arr, nrows, ncols):
 
 
 # Coarse-graining 3D
-def coarse_grain_3darr(arr, nrow_sub, ncol_sub, ndep_sub, overwrap=0, showtqdm=True, notebook=True, verbose=False):
+def coarse_grain_3darr(arr, nrow_sub, ncol_sub, ndep_sub, overlap=0, showtqdm=True, notebook=True, verbose=False, squeeze=True):
+    
     """
     Coarse-grain a 3d array
     ... The idea is to split the original array into many subcells, and average over each subcell
@@ -16641,7 +16855,7 @@ def coarse_grain_3darr(arr, nrow_sub, ncol_sub, ndep_sub, overwrap=0, showtqdm=T
     nrow_sub: int, number of rows of the subcell
     ncol_sub: int, number of columns of the subcell
     ndep_sub: int, number of depths(steps) of the subcell
-    overwrap: float, [0, 1)
+    overlap: float, [0, 1)
     showtqdm: bool
 
     Returns
@@ -16664,28 +16878,28 @@ def coarse_grain_3darr(arr, nrow_sub, ncol_sub, ndep_sub, overwrap=0, showtqdm=T
     except:
         height, width, depth, duration = arr.shape
 
-    ii = [int(np.floor(i * (1 - overwrap) * nrow_sub)) for i in
-          range(int(np.floor(height / (1 - overwrap) / nrow_sub)))]
-    jj = [int(np.floor(i * (1 - overwrap) * ncol_sub)) for i in range(int(np.floor(width / (1 - overwrap) / ncol_sub)))]
-    kk = [int(np.floor(i * (1 - overwrap) * ndep_sub)) for i in range(int(np.floor(depth / (1 - overwrap) / ndep_sub)))]
+    ii = [int(np.floor(i * (1 - overlap) * nrow_sub)) for i in
+          range(int(np.floor(height / (1 - overlap) / nrow_sub)))]
+    jj = [int(np.floor(i * (1 - overlap) * ncol_sub)) for i in range(int(np.floor(width / (1 - overlap) / ncol_sub)))]
+    kk = [int(np.floor(i * (1 - overlap) * ndep_sub)) for i in range(int(np.floor(depth / (1 - overlap) / ndep_sub)))]
     new_h, new_w, new_d = len(ii), len(jj), len(kk)
     new_arr = np.empty((new_h, new_w, new_d, duration))
 
-    for t in tqdm(range(duration), disable=~showtqdm, desc='coarse_grain_3darr: time loop'):
-        for p, i in enumerate(tqdm(ii, disable=~showtqdm, desc='coarse_grain_3darr: row loop')):
+    for t in tqdm(range(duration), disable=not showtqdm, desc='coarse_grain_3darr: time loop'):
+        for p, i in enumerate(tqdm(ii, disable=not showtqdm, desc='coarse_grain_3darr: row loop')):
             for q, j in enumerate(jj):
                 for r, k in enumerate(kk):
                     new_arr[p, q, r, t] = np.nanmean(arr[i:i + nrow_sub, j:j + ncol_sub, k:k + ndep_sub, t])
 
     if notebook:
         from tqdm import tqdm
-    if duration == 1:
+    if duration == 1 and squeeze:
         return new_arr[..., 0]
     else:
         return new_arr
 
 
-def coarse_grain_3dudata(udata_3d, nrow_sub, ncol_sub, ndep_sub, overwrap=0, showtqdm=False, notebook=useNotebook):
+def coarse_grain_3dudata(udata_3d, nrow_sub, ncol_sub, ndep_sub, overlap=0, showtqdm=False, notebook=useNotebook, squeeze=False):
     """
 
     Coarse-grain a 3d udata
@@ -16700,7 +16914,7 @@ def coarse_grain_3dudata(udata_3d, nrow_sub, ncol_sub, ndep_sub, overwrap=0, sho
     nrow_sub: int, number of rows of the subcell
     ncol_sub: int, number of columns of the subcell
     ndep_sub: int, number of depths(steps) of the subcell
-    overwrap: float, [0, 1)
+    overlap: float, [0, 1)
     showtqdm: bool
 
     Returns
@@ -16717,17 +16931,16 @@ def coarse_grain_3dudata(udata_3d, nrow_sub, ncol_sub, ndep_sub, overwrap=0, sho
 
     udata_3d = fix_udata_shape(udata_3d)
     dim, height, width, depth, duration = udata_3d.shape
-    ii = [int(np.floor(i * (1 - overwrap) * nrow_sub)) for i in
-          range(int(np.floor(height / (1 - overwrap) / nrow_sub)))]
-    jj = [int(np.floor(i * (1 - overwrap) * ncol_sub)) for i in range(int(np.floor(width / (1 - overwrap) / ncol_sub)))]
-    kk = [int(np.floor(i * (1 - overwrap) * ndep_sub)) for i in range(int(np.floor(depth / (1 - overwrap) / ndep_sub)))]
+    ii = [int(np.floor(i * (1 - overlap) * nrow_sub)) for i in
+          range(int(np.floor(height / (1 - overlap) / nrow_sub)))]
+    jj = [int(np.floor(i * (1 - overlap) * ncol_sub)) for i in range(int(np.floor(width / (1 - overlap) / ncol_sub)))]
+    kk = [int(np.floor(i * (1 - overlap) * ndep_sub)) for i in range(int(np.floor(depth / (1 - overlap) / ndep_sub)))]
     new_h, new_w, new_d = len(ii), len(jj), len(kk)
     new_shape = (dim, new_h, new_w, new_d, duration)
     udata_cg = np.empty(new_shape)
-
     for d in range(dim):
         udata_cg[d, ...] = coarse_grain_3darr(udata_3d[d, ...], nrow_sub, ncol_sub, ndep_sub,
-                                              overwrap=overwrap, showtqdm=showtqdm, verbose=False)
+                                              overlap=overlap, showtqdm=showtqdm, verbose=False, squeeze=squeeze)
     if notebook:
         from tqdm import tqdm
     return udata_cg
@@ -18334,6 +18547,48 @@ def get_angular_impulse(udata, xx, yy, zz=None, rho=1e-3, crop=2,
         ai = np.nanmean(ai_density, axis=(1, 2, 3)) * dx * dy * dz * num_valid
     return ai
 
+def get_time_avg_helicity_from_udatapath(dpath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
+                                    t0=0, t1=None, inc=1,  crop=2, median_filter=False, notebook=useNotebook):
+    """
+    Returns time-averaged helicity (3+1=4D v-field only)
+
+    Parameters
+    ----------
+    dpath
+    x0
+    x1
+    y0
+    y1
+    z0
+    z1
+    t0
+    t1
+    inc
+    crop
+    median_filter
+    notebook
+
+    Returns
+    -------
+    h: time-averaged helicity with shape (height, width, depth)
+
+    """
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+    udata, xx, yy, zz = get_udata(dpath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1,
+                                  return_xy=True, t0=0, t1=1, inc=10)
+    if t1 is None:
+        t1 = get_udata_dim(dpath)[-1] - t0
+    h_ = np.zeros_like(udata[0, ..., 0])
+    for t in tqdm(range(t0, t1, inc)):
+        udata = get_udata(dpath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1,
+                          t0=t, t1=t+1, verbose=False)
+        udata = clean_udata(udata, median_filter=median_filter, verbose=False, showtqdm=False)
+        h_ += get_helicity_density(udata, xx=xx, yy=yy, zz=zz, crop=crop)[..., 0]
+    if notebook:
+        from tqdm import tqdm as tqdm
+    htavg = h_ / (t1-t0)
+    return htavg
 
 def get_helicity_density(udata, xx, yy, zz, crop=2):
     """
@@ -18937,6 +19192,10 @@ def sort_n_arrays_using_order_of_first_array(list_of_arrays, element_dtype=tuple
         list_of_sorted_arrays = [list(a) for a in list_of_sorted_arrays]
     elif element_dtype == np.ndarray:
         list_of_sorted_arrays = [np.asarray(a) for a in list_of_sorted_arrays]
+    elif element_dtype == tuple:
+        list_of_sorted_arrays = [tuple(a) for a in list_of_sorted_arrays]
+    else:
+        raise ValueError('Choose element_dtype from [tuple, list, np.ndarray]')
     return list_of_sorted_arrays
 
 
@@ -19076,7 +19335,6 @@ def compute_ring_circulation_from_master_curve(l, veff, dp=160., do=25.6, N=8, s
 
 
 def estimate_ring_energy(sl, sv, dp=160., do=25.6, N=8, lowerGamma=2.2, setting='medium', rho=1e-3,
-                         veff=None,
                          a=1., alpha=None, beta=None, core_type='viscous',
                          circulation_option='master curve',
                          model='thin_core',
