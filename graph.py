@@ -337,7 +337,10 @@ def plot_multicolor(x, y=None, colored_by=None, cmap='viridis',
                     fignum=1, figsize=None,
                     subplot=None,
                     fig=None, ax=None, maskon=False, thd=1,
-                    linewidth=2, vmin=None, vmax=None, verbose=True, **kwargs):
+                    linewidth=2, vmin=None, vmax=None, verbose=True,
+                    smooth=False, mode='linear', window_len=5, window='hanning',
+                    xmin=None, xmax=None, add_scatter=False, return_xy=True, zorder=None,
+                    **kwargs):
     """
     plot a graph using given x,y
     fignum can be specified
@@ -380,31 +383,58 @@ def plot_multicolor(x, y=None, colored_by=None, cmap='viridis',
             print("Warning : x and y data do not have the same length")
         y = y[:len(x)]
     if maskon:
-        mask = get_mask4erroneous_pts(x, y, thd=thd)
+        keep = get_mask4erroneous_pts(x, y, thd=thd)
     else:
-        mask = [True] * len(x)
+        keep = [True] * len(x)
+    if xmin is not None:
+        keep1 = x >= xmin
+        keep = keep * keep1
+    if xmax is not None:
+        keep2 = x <= xmax
+        keep = keep * keep2
 
-    x, y, colored_by = x[mask], y[mask], colored_by[mask]
+    if smooth:
+        if mode == 'log':
+            x2plot = x[keep]
+            try:
+                logy2plot = smooth1d(np.log10(y[keep]), window_len=window_len, window=window)
+                y2plot = 10**logy2plot
+            except:
+                y2plot = y[keep]
+        else:
+            x2plot = x[keep]
+            y2plot = smooth1d(y[keep], window_len=window_len, window=window)
+    else:
+        x2plot, y2plot = x[keep], y[keep]
+
     # Create a set of line segments so that we can color them individually
+    x, y, colored_by = x2plot, y2plot, colored_by[keep]
     # This creates the points as a N x 1 x 2 array so that we can stack points
     # together easily to get the segments. The segments array for line collection
     # needs to be (numlines) x (points per line) x 2 (for x and y)
     points = np.array([x, y]).T.reshape(-1, 1, 2)
     segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
+
+
     norm = plt.Normalize(vmin, vmax)
-    lc = LineCollection(segments, cmap=cmap, norm=norm)
+    lc = LineCollection(segments, cmap=cmap, norm=norm, zorder=zorder)
 
     # Set the values used for colormapping
     lc.set_array(colored_by)
     lc.set_linewidth(linewidth)
     line = ax.add_collection(lc)
 
+    if add_scatter:
+        scatter(x, y, color=cmap(norm(colored_by)), ax=ax, s=linewidth*2, marker='o', **kwargs)
+
     # autoscale does not work for collection => manually set x/y limits
     ax.set_xlim(min(xminOrg, x.min()), max(xmaxOrg, x.max()))
     ax.set_ylim(min(yminOrg, y.min()), max(ymaxOrg, y.max()))
-
-    return fig, ax
+    if return_xy:
+        return fig, ax, x, y
+    else:
+        return fig, ax
 
 
 
@@ -1351,8 +1381,8 @@ def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', lin
         yerr = np.array(yerr)
     else:
         yerr = np.ones_like(x) * yerr
-    xerr[xerr==0] = np.nan
-    yerr[yerr==0] = np.nan
+    # xerr[xerr==0] = np.nan
+    # yerr[yerr==0] = np.nan
     if maskon:
         keep = get_mask4erroneous_pts(x, y, thd=thd)
     else:
@@ -1361,11 +1391,16 @@ def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', lin
         keep *= x < xmax
     if xmin is not None:
         keep *= x >= xmin
+    if all(xerr == 0):
+        xerr = None
+    if all(yerr == 0):
+        yerr = None
+    
     if fillstyle == 'none':
-        ax.errorbar(x[keep], y[keep], xerr=xerr[keep], yerr=yerr[keep], marker=marker, mfc=mfc, linestyle=linestyle,
+        ax.errorbar(x[keep], y[keep], xerr=xerr, yerr=yerr, marker=marker, mfc=mfc, linestyle=linestyle,
                     label=label, capsize=capsize, **kwargs)
     else:
-        ax.errorbar(x[keep], y[keep], xerr=xerr[keep], yerr=yerr[keep], marker=marker, fillstyle=fillstyle,
+        ax.errorbar(x[keep], y[keep], xerr=xerr, yerr=yerr, marker=marker, fillstyle=fillstyle,
                     linestyle=linestyle, label=label, capsize=capsize,  **kwargs)
 
     if legend:
@@ -1377,7 +1412,7 @@ def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', lin
             handles = [h[0] if isinstance(h, container.ErrorbarContainer) else h for h in handles]
     return fig, ax
 
-def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax=None, label=None,
+def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha=1., alpha_fill=None, ax=None, label=None,
               legend=False, figsize=None, maskon=False, thd=1,
               xmin=None, xmax=None, smooth=False, smoothlog=False, window_len=5, window='hanning',
               set_bottom_zero=False, set_left_zero=False, symmetric=False, return_xy=False,
@@ -1387,6 +1422,8 @@ def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax
         fig, ax = set_fig(fignum, subplot, figsize=figsize)
     else:
         fig = plt.gcf()
+    if alpha_fill is None:
+        alpha_fill = alpha * 0.3
 
     x = np.array(x)
     y = np.array(y)
@@ -1431,7 +1468,7 @@ def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax
         ymax = y2plot + yerr
 
 
-    p = ax.plot(x2plot, y2plot, color=color, label=label, **kwargs)
+    p = ax.plot(x2plot, y2plot, color=color, label=label, alpha=alpha, **kwargs)
     color = p[0].get_color()
     ax.fill_between(x2plot, ymax, ymin, color=color, alpha=alpha_fill)
 
@@ -1526,6 +1563,7 @@ def bin_and_errorbar(x_, y_, xerr=None,
         xerr = np.ones_like(x) * (x[1] - x[0]) / 2.
     elif type(xerr) in [int, float]:
         xerr = np.ones_like(x) * xerr
+
     xerr[xerr == 0] = np.nan
     yerr[yerr == 0] = np.nan
 
@@ -1562,7 +1600,7 @@ def bin_and_errorbar(x_, y_, xerr=None,
 ## Plot a fit curve
 def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figsize=None, linestyle='--',
                    xmin=None, xmax=None, add_equation=True, eq_loc='bl', color=None, label='fit',
-                   show_r2=False, return_r2=False, p0=None, bounds=(-np.inf, np.inf), maskon=True, thd=1,**kwargs):
+                   show_r2=False, return_r2=False, p0=None, bounds=(-np.inf, np.inf), maskon=False, thd=1,**kwargs):
     """
     Plots a fit curve given xdata and ydata
     Parameters
@@ -2087,31 +2125,32 @@ def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
     cond = ~hide
     if type(color) != str:
         color = np.asarray(color)
-        color = color[::inc_y, ::inc_x, :]
-        if color.shape != cond.shape:
-            for d in range(color.shape[-1]):
-                color[..., d] = color[..., d][cond].reshape(cond.shape)
-        color = color.reshape((-1, color.shape[-1]))
+        if color.shape == x.shape:
+            color = color[::inc_y, ::inc_x, :]
+            if color.shape != cond.shape:
+                for d in range(color.shape[-1]):
+                    color[..., d] = color[..., d][cond].reshape(cond.shape)
+            color = color.reshape((-1, color.shape[-1]))
 
+    U_absMean = np.nanmean(u_norm[cond])
+    if key_length is None:
+        # key_length = 10 ** round(np.log10(U_rms))
+        # key_length = 10 ** round(np.log10(U_rmedians))
+        # key_length = round(U_rmedians, int(-round(np.log10(U_rmedians))) + 1) * 5
+        key_length = round(u_rms, int(-round(np.log10(U_absMean))) + 1) * 3
 
     if units=='inches':
         if key_length is None:
-            U_absMean = np.nanmean(u_norm[cond])
             scale = U_absMean * 2
         else:
             scale = key_length * 2
     Q = ax.quiver(x_tmp[cond], y_temp[cond], u_tmp[cond], v_tmp[cond], color=color, units=units, scale=scale, **kwargs)
 
     if key:
-        U_absMean = np.nanmean(u_norm[cond])
-        if key_length is None:
-            # key_length = 10 ** round(np.log10(U_rms))
-            # key_length = 10 ** round(np.log10(U_rmedians))
-            # key_length = round(U_rmedians, int(-round(np.log10(U_rmedians))) + 1) * 5
-            key_length = round(u_rms, int(-round(np.log10(U_absMean))) + 1)
         if key_label is None:
             key_label = '{:' + key_fmt + '} '
             key_label = key_label.format(key_length) + key_units
+
         title(ax, '   ') # dummy title to create space on the canvas
         ax._set_title_offset_trans(key_pad)
         # print(key_length)
@@ -2572,10 +2611,10 @@ def axhline(ax, y, x0=None, x1=None, color='black', linestyle='--', linewidth=1,
     -------
 
     """
-    if x0 is not None:
+    if x1 is None:
         xmin, xmax = ax.get_xlim()
         x1 = xmax
-    elif x1 is not None:
+    if x0 is None:
         xmin, xmax = ax.get_xlim()
         x0 = xmin
     if x0 is not None or x1 is not None:
@@ -2589,6 +2628,7 @@ def axhline(ax, y, x0=None, x1=None, color='black', linestyle='--', linewidth=1,
         xmin_frac, xmax_frac= 0, 1
     handle = ax.axhline(y, xmin_frac, xmax_frac, color=color, linestyle=linestyle, linewidth=linewidth, zorder=zorder, **kwargs)
     return handle
+
 def axvline(ax, x, y0=None, y1=None,  color='black', linestyle='--', linewidth=1, zorder=0, **kwargs):
     """
     Draw a vertical line at x=x from ymin to ymax
@@ -2601,11 +2641,21 @@ def axvline(ax, x, y0=None, y1=None,  color='black', linestyle='--', linewidth=1
     -------
 
     """
-    if y0 is not None:
-        ymin, ymax = ax.get_ylim()
-        ymin_frac, ymax_frac = y0 / float(ymax), y1 / float(ymax)
+    ymin, ymax = ax.get_ylim()
+    if y1 is None:
+        y1 = ymax
+    if y0 is None:
+        y0 = ymin
+    if y0 is not None or y1 is not None:
+        if ax.get_yscale()=='linear':
+            ymin_frac, ymax_frac = (y0-float(ymin)) / (float(ymax)-float(ymin)), (y1-float(ymin)) / (float(ymax)-float(ymin))
+        if ax.get_yscale()=='log':
+            ymin, ymax = np.log(ymin), np.log(ymax)
+            y0, y1 = np.log(y0), np.log(y1)
+            ymin_frac, ymax_frac = (y0 - ymin) / (ymax - ymin), (y1 - ymin) / (ymax - ymin)
     else:
         ymin_frac, ymax_frac= 0, 1
+
     handle = ax.axvline(x, ymin_frac, ymax_frac, color=color, linestyle=linestyle, linewidth=linewidth,  zorder=zorder,
                **kwargs)
     return handle
@@ -2628,11 +2678,12 @@ def axhband(ax, y0, y1, x0=None, x1=None, color='C1', alpha=0.2, **kwargs):
         -------
 
         """
+    xmin, xmax = ax.get_xlim()
     ymin, ymax = ax.get_ylim()
     if x0 is None and x1 is None:
         x0, x1 = ax.get_xlim()
     ax.fill_between(np.linspace(x0, x1, 2), y0, y1, alpha=alpha, color=color, **kwargs)
-    ax.set_xlim(x0, x1)
+    ax.set_xlim(min(xmin, x0), max(xmax, x1))
     ax.set_ylim(ymin, ymax)
 
 def axvband(ax, x0, x1, y0=None, y1=None, color='C1', alpha=0.2, **kwargs):
@@ -2946,7 +2997,7 @@ def get_sfmt():
 def add_colorbar_old(mappable, fig=None, ax=None, fignum=None, label=None, fontsize=__fontsize__,
                  vmin=None, vmax=None, cmap='jet', option='normal', **kwargs):
     """
-    Adds a color bar (Depricated. replaced by add_colorbar)
+    Adds a color bar (DEPRECATED. replaced by add_colorbar)
     Parameters
     ----------
     mappable : image like QuadMesh object to which the color bar applies (NOT a plt.figure instance)
@@ -3167,7 +3218,7 @@ def add_discrete_colorbar(ax, colors, vmin=0, vmax=None, label=None, fontsize=No
 def add_colorbar_alone(ax, values, cmap=cmap, label=None, fontsize=None, option='normal', fformat=None,
                  tight_layout=True, ticklabelsize=None, ticklabel=None,
                  aspect = None, location='right', color='k',
-                 size='5%', pad=0.15, **kwargs):
+                 size='5%', pad=0.15, cax=None, **kwargs):
     """
     Add a colorbar to a figure without a mappable
     ... It creates a dummy mappable with given values
@@ -3220,8 +3271,9 @@ def add_colorbar_alone(ax, values, cmap=cmap, label=None, fontsize=None, option=
     # make an axis instance for a colorbar
     ## divider.append_axes(location, size=size, pad=pad) creates an Axes
     ## s.t. the size of the cax becomes 'size' (e.g.'5%') of the ax.
-    divider = axes_grid.make_axes_locatable(ax)
-    cax = divider.append_axes(location, size=size, pad=pad)
+    if cax is None:
+        divider = axes_grid.make_axes_locatable(ax)
+        cax = divider.append_axes(location, size=size, pad=pad)
 
 
     if option == 'scientific':
@@ -3257,7 +3309,7 @@ def add_colorbar_alone(ax, values, cmap=cmap, label=None, fontsize=None, option=
 
 def colorbar(fignum=None, label=None, fontsize=__fontsize__):
     """
-    Use is DEPRICATED. This method is replaced by add_colorbar(mappable)
+    Use is DEPRECATED. This method is replaced by add_colorbar(mappable)
     I keep this method for old codes which might have used this method
     Parameters
     ----------
@@ -3274,7 +3326,7 @@ def colorbar(fignum=None, label=None, fontsize=__fontsize__):
     return c
 
 def create_colorbar(values, cmap='viridis', figsize=None, orientation='vertical', label='qty (mm)', fontsize=11,
-                    labelpad=0, ticks=None, **kwargs):
+                    labelpad=0, ticks=None, fignum=1, cax_rect=None, **kwargs):
     """
     Creates a horizontal/vertical colorbar for reference using pylab.colorbar()
 
@@ -3288,6 +3340,8 @@ def create_colorbar(values, cmap='viridis', figsize=None, orientation='vertical'
     fontsize: fontsize for the label and the ticklabel
     labelpad: float, padding for the label
     ticks: 1d array, tick locations
+    cax_rect: 1d array, colorbar axes location and size [left, bottom, width, height]
+    ... e.g. [0.8, 0.1, 0.1, 0.8] for a vertical color bar
 
     Returns
     -------
@@ -3301,15 +3355,17 @@ def create_colorbar(values, cmap='viridis', figsize=None, orientation='vertical'
         figsize = (7.54 * 0.5, 1)
     elif orientation == 'vertical' and figsize is None:
         figsize = (1, 7.54 * 0.5)
-    fig = pl.figure(figsize=figsize)
+    fig = pl.figure(num=fignum, figsize=figsize)
     img = pl.imshow(values, cmap=cmap)
     ax = pl.gca()
     ax.set_visible(False)
-
-    if orientation == 'horizontal':
-        cax = pl.axes([0.1, 0.8, 0.8, 0.1])
+    if cax_rect is None:
+        if orientation == 'horizontal':
+            cax = pl.axes([0.1, 0.8, 0.8, 0.1])
+        else:
+            cax = pl.axes([0.8, 0.1, 0.1, 0.8])
     else:
-        cax = pl.axes([0.8, 0.1, 0.1, 0.8])
+        cax = pl.axes(cax_rect)
     cb = pl.colorbar(orientation=orientation, cax=cax, **kwargs)
     cb.set_label(label=label, fontsize=fontsize, labelpad=labelpad)
     if ticks is not None:
@@ -3440,8 +3496,10 @@ def force2showLogMinorTicks(ax, subs='all', numticks=9, axis='both'):
     """
     if axis in ['x', 'both']:
         ax.xaxis.set_minor_locator(ticker.LogLocator(subs=subs, numticks=numticks))  # set the ticks position
+        ax.set_xticklabels([], minor=True) # remove the label of x minor ticks
     if axis in ['y', 'both']:
         ax.yaxis.set_minor_locator(ticker.LogLocator(subs=subs, numticks=numticks))  # set the ticks position
+        ax.set_yticklabels([], minor=True)
 
 def force2showLogMajorTicks(ax, subs=[1.], numticks=9, axis='both'):
     """
@@ -3903,6 +3961,24 @@ def get_colors_and_cmap_using_values(values, cmap=None, color1='greenyellow', co
     colors = cmap(norm(values))
     return colors, cmap, norm
 
+def get_norm(values):
+    """
+    Returns a function that normalizes values (vmin-vmax)
+
+    Parameters
+    ----------
+    values: array-like
+
+    Returns
+    -------
+    norm: function, mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+    """
+    values = np.asarray(values)
+    vmin = np.nanmin(values)
+    vmax = np.nanmax(values)
+    norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+    return norm
+
 def get_color_list_gradient(color1='greenyellow', color2='darkgreen', color3=None, n=100, return_cmap=False):
     """
     Returns a list of colors in RGB between color1 and color2
@@ -4018,6 +4094,17 @@ def create_weight_shifted_cmap(cmapname, ratio=0.75, vmin=None, vmax=None, vcent
     newcmap = mpl.colors.ListedColormap(newcolors, name='shifted_' + cmapname)  # custom cmap
     return newcmap
 
+def get_truncated_cmap(cmap, vmin, vmax, n=100):
+    def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
+        new_cmap = mpl.colors.LinearSegmentedColormap.from_list(
+            'trunc({n},{a:.2f},{b:.2f})'.format(n=cmap.name, a=minval, b=maxval),
+            cmap(np.linspace(minval, maxval, n)))
+        return new_cmap
+    if type(cmap) == str:
+        cm = mpl.cm.get_cmap(cmap)
+    else: cm = cmap
+    new_cmap = truncate_colormap(cm, minval=vmin, maxval=vmax, n=n)
+    return new_cmap
 
 def choose_colors(**kwargs):
     """
@@ -4115,7 +4202,7 @@ def set_default_color_cycle(name='tab10', n=10, colors=None, reverse=False):
     sns.set_palette(colors)
     return colors
 
-def set_color_cycle(cmapname='tab10', ax=None, n=10, colors=None):
+def set_color_cycle(cmapname='tab10', ax=None, n=10, colors=None, cmap=None):
     """
     Sets a color cycle of a particular Axes instance
 
@@ -4132,6 +4219,7 @@ def set_color_cycle(cmapname='tab10', ax=None, n=10, colors=None):
     cmapname: str, name of the cmap like 'viridis', 'jet', etc.
     n: int, number of colors
     colors: list, a list of colors like ['r', 'b', 'g', 'magenta']
+    cmap: matplotlib.colors.ListedColormap, if given, it samples colors from this color map. cmap is prioritized over 'colors'.
 
     Returns
     -------
@@ -4139,6 +4227,8 @@ def set_color_cycle(cmapname='tab10', ax=None, n=10, colors=None):
     """
     if colors is None:
         colors = sns.color_palette(cmapname, n_colors=n)
+    if cmap is not None:
+        colors = get_color_from_cmap(cmap, n=n)
     if ax is None:
         sns.set_palette(colors)
     else:
@@ -4232,7 +4322,7 @@ def show_plot_styles():
     style_list = ['default'] + sorted(style for style in plt.style.available)
     print(style_list)
     return style_list
-def use_plot_style(stylename):
+def set_plot_style(stylename):
     """Reminder for me how to set a plotting style"""
     plt.style.use(stylename)
 
@@ -4340,9 +4430,9 @@ def draw_rectangle(ax, x, y, width, height, angle=0.0, linewidth=1, edgecolor='r
 
 
 def draw_box(ax, xx, yy, w_box=351., h_box=351., xoffset=0, yoffset=0, linewidth=5,
-             scalebar=True, sb_length=50., sb_units='$mm$', sb_loc=(0.95, 0.1), sb_txtloc=(0.0, 0.4),
+             scalebar=True, sb_length=50., sb_units='mm', sb_loc=(0.95, 0.1), sb_txtloc=(0.0, 0.4),
              sb_lw=10, sb_txtcolor='white', fontsize=None,
-             facecolor='k', fluidcolor=None,
+             facecolor='k', fluidcolor=None, ch_color='r',
              bounding_box=True, bb_lw=1, bb_color='w'):
     """
     Draws a box and fills the surrounding area with color (default: skyblue)
@@ -4387,6 +4477,7 @@ def draw_box(ax, xx, yy, w_box=351., h_box=351., xoffset=0, yoffset=0, linewidth
 
     facecolor
     fluidcolor
+    ch_color: str, chamber color
 
     Returns
     -------
@@ -4400,7 +4491,7 @@ def draw_box(ax, xx, yy, w_box=351., h_box=351., xoffset=0, yoffset=0, linewidth
     #     xc, yc = xmin + (xmax - xmin) / 2., ymin - (ymax - ymin) / 2.
     xc, yc = xmin + (xmax - xmin) / 2., ymin + (ymax - ymin) / 2.
     x0, y0 = xc - w_box / 2. + xoffset, yc - h_box / 2. + yoffset
-    draw_rectangle(ax, x0, y0, w_box, h_box, linewidth=linewidth, facecolor=facecolor, zorder=0)
+    draw_rectangle(ax, x0, y0, w_box, h_box, linewidth=linewidth, facecolor=facecolor, zorder=0, edgecolor=ch_color)
     if fluidcolor is not None:
         ax.set_facecolor(fluidcolor)
 
@@ -4410,7 +4501,6 @@ def draw_box(ax, xx, yy, w_box=351., h_box=351., xoffset=0, yoffset=0, linewidth
 
     if scalebar:
         dx, dy = np.abs(xx[0, 1] - xx[0, 0]), np.abs(yy[1, 0] - yy[0, 0]) # mm/px
-
         #         x0_sb, y0_sb = x0 + 0.8 * w_box, y0 + 0.1*h_box
         x1_sb, y1_sb = x0 + sb_loc[0] * w_box, y0 + sb_loc[1] * h_box
         x0_sb, y0_sb = x1_sb - sb_length, y1_sb
@@ -4630,7 +4720,7 @@ def get_scatter_data_from_fig(fig, axis_number=0):
     return data_list
 
 def get_plot_data_from_fig(*args, **kwargs):
-    """Depricated. Use get_data_from_fig_plot"""
+    """DEPRECATED. Use get_data_from_fig_plot"""
     get_data_from_fig_plot(*args, **kwargs)
 
 def get_data_from_fig_plot(fig, axis_number=0):
@@ -5542,3 +5632,24 @@ def set_fontsize_scientific_text(ax, fontsize):
 
     """
     ax.yaxis.get_offset_text().set_fontsize(fontsize)
+
+
+def pie_marker(angle0, angle1, n=30):
+    """
+    Custom marker for ax.scatter()
+    ... the output can be passed to ax.scatter(x, y, marker=pie_marker(-30, 90))
+    """
+    if angle0==angle1:
+        theta = np.linspace(0, 2*np.pi, n)
+        x, y = np.cos(theta), np.sin(theta)
+    else:
+        theta0, theta1 = angle0 / 180.*np.pi,  angle1 / 180.*np.pi
+        theta = np.linspace(theta0, theta1, n-2)
+        x0, y0 = [0], [0]
+        x1, y1 = list(np.cos(theta)), list(np.sin(theta))
+        x2, y2 = [0], [0]
+        x, y = x0 + x1 + x2, y0 + y1 + y2
+    pie_marker = np.column_stack((x, y))
+    return pie_marker
+
+
