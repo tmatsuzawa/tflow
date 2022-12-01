@@ -994,7 +994,7 @@ def get_spatial_avg_energy(udata, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, u
 
 def get_spatial_avg_energy_inside_r_from_path(dpath, r, xc=0., yc=0.,
                                               x0=0, x1=None, y0=0, y1=None,
-                                              t0=0, t1=None,
+                                              t0=0, t1=None, inc=1,
                                               notebook=useNotebook):
     """
     Returns energy averaged inside a circle with radius r at (xc, yc)
@@ -1037,9 +1037,10 @@ def get_spatial_avg_energy_inside_r_from_path(dpath, r, xc=0., yc=0.,
     rr = np.sqrt((xx - xc) ** 2 + (yy - yc) ** 2)
     inside = rr < r
 
-    esavg_in, esavg_in_err = np.empty(t1 - t0), np.empty(t1 - t0)
-    esavg_out, esavg_out_err = np.empty(t1 - t0), np.empty(t1 - t0)
-    for i, t in enumerate(tqdm(range(t0, t1))):
+    n = len(range(t0, t1, inc))
+    esavg_in, esavg_in_err = np.empty(n), np.empty(n)
+    esavg_out, esavg_out_err = np.empty(n), np.empty(n)
+    for i, t in enumerate(tqdm(range(t0, t1, inc))):
         udata = get_udata_from_path(dpath, x0=x0, x1=x1, y0=y0, y1=y1, t0=t, t1=t + 1, verbose=False)
         energy = get_energy(udata)
         esavg_in[i], esavg_in_err[i] = np.nanmean(energy[inside]), np.nanstd(energy[inside]) / np.sqrt(len(inside))
@@ -2756,10 +2757,8 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
         e33 = np.nanmean(e33_nd, axis=ax_ind_for_avg)
         e33_err = np.nanstd(e33_nd, axis=ax_ind_for_avg) / np.sqrt(np.product([l for i , l in enumerate(e33_nd.shape) if i in [ax_ind_for_avg]]))
 
-        # Must divide by 2pi because np.fft.fft() performs in the frequency space (NOT angular frequency space)
         eiis, eii_errs = np.array([e11, e22, e33]), np.array([e11_err, e22_err, e33_err])
     elif dim == 2:
-        # Must divide by 2pi^2 because np.fft.fft() performs in the frequency space (NOT angular frequency space)
         eiis, eii_errs = np.array([e11, e22]), np.array([e11_err, e22_err])
     else:
         raise ValueError('... 1d spectrum: Check the dimension of udata! It must be 2 or 3!')
@@ -6970,7 +6969,7 @@ def get_rescaled_structure_function_saddoughi(p=2):
 
 def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
                         x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, inc=10, notebook=True,
-                        reynolds_decomposition=False,
+                        reynolds_decomposition=False, keep=None,
                         clean=False, cutoff=np.inf, method='nn',
                         median_filter=False, replace_zeros=True, overwrite_udatam=False, **kwargs):
     """
@@ -7061,6 +7060,8 @@ def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
                                 replace_zeros=replace_zeros, showtqdm=False)
         if reynolds_decomposition:
             udata[..., 0] -= udata_m
+        if keep is not None:
+            udata = fill_udata(udata, keep, duplicate=False, fill_value=np.nan)
         if i == 0:
             datalist = []
             result = func(udata, **kwargs)
@@ -7208,7 +7209,7 @@ def get_time_avg_energy_from_udatapath(udatapath,
                 if udata_mean is not None:
                     udata -= udata_mean
                 if clean:
-                    udata = clean_udata(udata, median_filter=median_filter, **kwargs)[..., 0]
+                    udata = clean_udata(udata, median_filter=median_filter, showtqdm=False, **kwargs)
                 energy_inst = get_energy(udata)
                 energy_inst[energy_inst > thd] = fill_value
                 eavg = np.nansum(np.stack((eavg, energy_inst)), 0)
@@ -9444,77 +9445,6 @@ def get_hamming_window_radial(xx, yy, zz=None, rmax=None, duration=None,
 
 
 # cleaning velocity field data
-def clean_udata_cheap(udata, cutoffU=2000, fill_value=np.nan, verbose=True):
-    """
-    ONLY WORKS FOR THE 2D data
-    Conducts a cheap bilinear interpolation for missing data.
-    ... literally, computes the average of the values interpolated in the x- and y-directions
-    ... griddata performs a better interpolation but this method is much faster but not necessarily accurate.
-    ... values near the edges must not be trusted.
-    
-    Parameters
-    ----------
-    udata
-    cutoffU
-    fill_value
-    verbose
-
-    Returns
-    -------
-
-    """
-
-    def interpolate_using_mask(arr, mask):
-        """
-        Conduct linear interpolation for data points where their mask values are True
-
-        ... This interpolation is not ideal because this flattens multidimensional array first, and takes a linear interpolation
-        for missing values. That is, the interpolated values at the edges of the multidimensional array are nonsense b/c
-        actual data does not have a periodic boundary condition.
-
-        Parameters
-        ----------
-        arr1 : array-like (n x m), float
-            array with unphysical values such as nan, inf, and ridiculously large/small values
-            assuming arr1 is your raw data
-        mask : array-like (n x m), bool
-
-        Returns
-        -------
-        arr : array-like (n x m), float
-            array with unphysical values replaced by appropriate values
-        """
-        arr1 = copy.deepcopy(arr)
-        arr2T = copy.deepcopy(arr).T
-
-        f0 = np.flatnonzero(mask)
-        f1 = np.flatnonzero(~mask)
-
-        arr1[mask] = np.interp(f0, f1, arr1[~mask])
-
-        f0 = np.flatnonzero(mask.T)
-        f1 = np.flatnonzero(~mask.T)
-        arr2T[mask.T] = np.interp(f0, f1, arr1.T[~(mask.T)])
-        arr2 = arr2T.T
-
-        arr = (arr1 + arr2) * 0.5
-        return arr
-
-    udata_cleaned = np.empty_like(udata)
-    print('Cleaning ux...')
-    mask = get_mask_for_unphysical(udata[0, ...], cutoffU=cutoffU, fill_value=fill_value, verbose=verbose)
-    Ux_filled_with_nans = fill_unphysical_with_sth(udata[0, ...], mask, fill_value=fill_value)
-    Ux_interpolated = interpolate_using_mask(Ux_filled_with_nans, mask)
-    udata_cleaned[0, ...] = Ux_interpolated[:]
-    print('Cleaning uy...')
-    mask = get_mask_for_unphysical(udata[1, ...], cutoffU=cutoffU, fill_value=fill_value, verbose=verbose)
-    Uy_filled_with_nans = fill_unphysical_with_sth(udata[1, ...], mask, fill_value=fill_value)
-    Uy_interpolated = interpolate_using_mask(Uy_filled_with_nans, mask)
-    udata_cleaned[1, ...] = Uy_interpolated[:]
-    print('...Cleaning Done.')
-    return udata_cleaned
-
-
 def get_mask_for_unphysical(U, cutoffU=2000., fill_value=99999., verbose=True):
     """
     Returns a mask (N-dim boolean array). If elements were below/above a cutoff, np.nan, or np.inf, then they get masked.
@@ -10193,7 +10123,7 @@ def get_instantaneous_center_of_energy(udata, xx, yy, zz=None,
 
 
 # FUNCTIONS FOR STB DATA ANALYSIS
-def get_center_of_energy(dpath, inc=10, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None):
+def get_center_of_energy(dpath, inc=10, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None):
     """
     Returns the center of energy (essentially the center of the blob)- (xc, yc, zc)
     using the TIME-AVERAGED ENERGY FIELD.
@@ -11138,7 +11068,7 @@ def make_movie(imgname=None, imgdir=None, movname=None, indexsz='05', framerate=
 
 
 def make_time_evo_movie_from_udata(qty, xx, yy, time, t=1, inc=100, label='$\\frac{1}{2} U_i U_i$ ($mm^2/s^2$)',
-                                   x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
+                                   x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None,
                                    vmin=0, vmax=None, cmap='magma', option='scientific',
                                    draw_box=True, xlabel='$x$ ($mm$)', ylabel='$y$ ($mm$)',
                                    invert_y=False,
@@ -11193,13 +11123,17 @@ def make_time_evo_movie_from_udata(qty, xx, yy, time, t=1, inc=100, label='$\\fr
     else:
         from tqdm import tqdm
     movname = savedir + '/' + qtyname
+
     if not os.path.exists(movname + '.mp4') or redo:
         if t != 1:
             qty_ravg = get_running_avg_nd(qty, t)
         else:
             qty_ravg = qty
-        for t_ind, t in enumerate(tqdm(time[:-t][::inc])):
-            fig1, ax1, cc1 = graph.color_plot(xx[y0:y1, x0:x1], yy[y0:y1, x0:x1], qty_ravg[y0:y1, x0:x1, t_ind * inc],
+        if t1 is None:
+            t1 = qty_ravg.shape[-1]
+
+        for t_ind, t in enumerate(tqdm(time[:-t][t0:t1:inc])):
+            fig1, ax1, cc1 = graph.color_plot(xx[y0:y1, x0:x1], yy[y0:y1, x0:x1], qty_ravg[y0:y1, x0:x1, t0 + t_ind * inc],
                                               fignum=1, vmin=vmin, vmax=vmax, label=label, option=option,
                                               cmap=cmap)
             if invert_y:
@@ -11226,6 +11160,8 @@ def make_time_evo_movie_from_udata(qty, xx, yy, time, t=1, inc=100, label='$\\fr
 
     if notebook:
         from tqdm import tqdm as tqdm
+
+
 
 
 #
@@ -11683,14 +11619,14 @@ def get_binned_stats3d(x, y, z, var, n_bins=100, nx_bins=None, ny_bins=None, nz_
         return xx_binned, yy_binned, zz_binned, var_mean, var_err
 
 # LOADING UDATA
-def get_udata(*args, **kwargs):
-    """A short-hand for get_udata_from_path(). For the docstring, see get_udata_from_path()"""
-    return get_udata_from_path(*args, **kwargs)
+def get_udata_from_path(*args, **kwargs):
+    """DEPRICATED: Use get_udata()"""
+    return get_udata(*args, **kwargs)
 
 
-def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
+def get_udata(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                         t0=0, t1=None, inc=1, frame=None, return_xy=False, verbose=True,
-                        slicez=None, crop=None, mode='r',
+                        slicez=None, crop=None,
                         reverse_x=False, reverse_y=False, reverse_z=False, ind=0):
     """
     Returns udata from a path to udata
@@ -11745,23 +11681,19 @@ def get_udata_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
     ###
     if not 'ux' in keys:
         print(
-            '... get_udata_from_path() is not compatible with a data structure in this h5.  \n Try get_udata_from_path_nested() instead.')
+            '... get_udata() is not compatible with a data structure in this h5.  \n Calling get_udata_from_path_nested() instead.')
         results = get_udata_from_path_nested(udatapath, ind=ind,
                                              x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1,
                                              t0=t0, t1=t1, inc=inc, frame=frame, return_xy=return_xy, verbose=verbose,
-                                             slicez=slicez, crop=crop, mode=mode,
+                                             slicez=slicez, crop=crop, mode='r',
                                              reverse_x=reverse_x, reverse_y=reverse_y, reverse_z=reverse_z)
         return results
     else:
         if verbose:
             tau0 = time_mod.time()
-            print('... reading udata from a given path')
+            print('... Reading udata')
         if crop is not None and [x0, x1, y0, y1, z0, z1] == [0, None, 0, None, 0, None]:
             x0, x1, y0, y1, z0, z1 = crop, -crop, crop, -crop, crop, -crop
-
-        if mode == 'w' or mode == 'wb':
-            raise ValueError('... w was passed to h5Py.File(...) which would truncate the file if it exists. \n'
-                             'Probably, this is not what you want. Pass r for read-only')
 
         with h5py.File(udatapath, 'r') as f:
             if 'z' in f.keys():
@@ -12257,10 +12189,6 @@ def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=N
         if xc is None or yc is None:
             # find a center of the mass from the initial image
             yc_i, xc_i, zc_i = ndimage.measurements.center_of_mass(qty_local[..., 0])
-
-            # xc = np.nanmean(qty_local[..., 0] * x) / np.nanmean(qty_local[..., 0])
-            # yc = np.nanmean(qty_local[..., 0] * y) / np.nanmean(qty_local[..., 0])
-            # zc = np.nanmean(qty_local[..., 0] * z) / np.nanmean(qty_local[..., 0])
 
             xc = x[int(np.round(yc_i)), int(np.round(xc_i)), int(np.round(zc_i))]
             yc = y[int(np.round(yc_i)), int(np.round(xc_i)), int(np.round(zc_i))]
@@ -17253,7 +17181,7 @@ def get_kgrids(height, width, depth=None, dx=1., dy=1., dz=1., shift=True):
 
 
 # padding udata
-def square_udata(udata, mode='edge', **kwargs):
+def pad_udata(udata, mode='edge', **kwargs):
     """
     Pad zeros to udata to make its spatial dimensions into a square or a cube
     ... Taking a spectrum of a rectangularly shaped array could cause further aliasing. In order to combat this, one may square/cubidize
@@ -17342,7 +17270,7 @@ def get_energy_spectrum_nd(udata,
         udata = udata[:, y0:y1, x0:x1, :]
         volume = (x1 - x0) * dx * (y1 - y0) * dy
         if dealiasing:
-            udata = square_udata(udata, mode=padding_mode, **padding_kwargs)
+            udata = pad_udata(udata, mode=padding_mode, **padding_kwargs)
             x0 = y0 = 0
             x1 = y1 = udata.shape[1]
             volume = (x1 - x0) * dx * (y1 - y0) * dy
@@ -17362,7 +17290,7 @@ def get_energy_spectrum_nd(udata,
         udata = udata[:, y0:y1, x0:x1, z0:z1, :]
         volume = (x1 - x0) * dx * (y1 - y0) * dy * (z1 - z0) * dz
         if dealiasing:
-            udata = square_udata(udata, mode=padding_mode, **padding_kwargs)
+            udata = pad_udata(udata, mode=padding_mode, **padding_kwargs)
             x0 = y0 = z0 = 0
             x1 = y1 = z1 = udata.shape[1]
             volume = (x1 - x0) * dx * (y1 - y0) * dy * (z1 - z0) * dz
@@ -17486,9 +17414,9 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
     correct_signal_loss: bool, default: True
         If True, it would compensate for the loss of the signals due to windowing.
         Always recommended to obtain accurate spectral densities.
-    cc: float, default: 1.75
+    cc: float, default: 1.
         A numerical factor to compensate for the signal loss due to approximations.
-        ... cc=1.75 was obtained from the JHTD data.
+        ... cc=1.75 was obtained from analyzing JHTD data.
     Returns
     -------
     e_k: numpy array
@@ -17601,7 +17529,7 @@ def get_enstrophy_spectrum_nd(udata, sigma=None,
         dx, dy = get_grid_spacing(xx, yy)
         volume = (x1 - x0) * dx * (y1 - y0) * dy
         if dealiasing:
-            udata = square_udata(udata, mode=padding_mode, **padding_kwargs)
+            udata = pad_udata(udata, mode=padding_mode, **padding_kwargs)
             x0 = y0 = 0
             x1 = y1 = udata.shape[1]
             volume = (x1 - x0) * dx * (y1 - y0) * dy  # Should the volume be the squared/cubic volume?
@@ -17623,7 +17551,7 @@ def get_enstrophy_spectrum_nd(udata, sigma=None,
         dx, dy, dz = get_grid_spacing(xx, yy, zz)
         volume = (x1 - x0) * dx * (y1 - y0) * dy * (z1 - z0) * dz
         if dealiasing:
-            udata = square_udata(udata, mode=padding_mode, **padding_kwargs)
+            udata = pad_udata(udata, mode=padding_mode, **padding_kwargs)
             x0 = y0 = z0 = 0
             x1 = y1 = z1 = udata.shape[1]
             volume = (x1 - x0) * dx * (y1 - y0) * dy * (
@@ -17814,7 +17742,6 @@ def get_enstrophy_spectrum(udata, sigma=None,
                                             return_in='wavenumber',
                                             dealiasing=dealiasing, padding_mode=padding_mode,
                                             padding_kwargs=padding_kwargs )
-
     enst_k, enst_k_err, kk = convert_nd_spec_to_1d(enst_ks, ks, nkout=nkout, cc=cc, mode=mode)
 
     if debug:
