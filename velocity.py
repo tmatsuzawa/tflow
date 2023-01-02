@@ -900,6 +900,59 @@ def get_enstrophy(udata, dx=1., dy=1., dz=1., xx=None, yy=None, zz=None):
             enstrophy += omega[d, ...] ** 2
     return enstrophy
 
+def get_q_criterion(udata, xx, yy, zz):
+    """
+    Returns Q criterion
+    ... Q_ij = 0.5 (g_ij g_ij - e_ij e_ij)
+        where dui_dxj = eij + gij
+        (eij: a symmetric part of a vel gradient tensor- a rate-of-strain tensor,
+         gij: an antisymmetric part of a vel gradient tensor: a vorticity tensor)
+    Parameters
+    ----------
+    udata: 4d numpy array
+    xx: 3d array, x-coordinate
+    yy: 3d array, y-coordinate
+    zz: 3d array, z-coordinate
+
+    Returns
+    -------
+    q: 4d array, (y, x, z, t), q-criterion; Q(x, y, z) = 0.5 (gij gij - eij eij) = 0.5 ( |Omega|^2  - |S|^2 )
+    """
+    duidxj = get_duidxj_tensor(udata, xx=xx, yy=yy,zz=zz)
+    eij, gij = decompose_duidxj(duidxj)
+    q = np.nansum(gij**2 - eij**2, axis=(-2, -1)) / 2
+    return q
+
+def get_lambda2_criterion(udata, xx, yy, zz):
+    """
+    Returns lambda2 criterion
+    lambda2 is the second eigenvalue of S^2 + Omega^2 = e_ij e_ji + Omega_ij Omega_ji at a given coordinate (x, y, z)
+    where dui_dxj = eij + gij
+
+    Parameters
+    ----------
+    udata: 4d numpy array
+    xx: 3d array, x-coordinate
+    yy: 3d array, y-coordinate
+    zz: 3d array, z-coordinate
+
+    Returns
+    -------
+    lambda2: 4d array, (y, x, z, t), lambda2 criterion
+    """
+    duidxj = get_duidxj_tensor(udata, xx=xx, yy=yy,zz=zz)
+    eij, gij = decompose_duidxj(duidxj) # eij: rate-of-strain tensor, gij: vorticity tensor
+    width, height, depth, duration, dim, _ = duidxj.shape
+    lambda2 = np.empty((width, height, depth, duration))
+    for t in tqdm(range(duration)):
+        for i in range(width):
+            for j in range(height):
+                for k in range(depth):
+                    sij, omega_ij = eij[i, j, k, t, :, :], gij[i, j, k, t, :, :]
+                    aij = sij @ sij + omega_ij @ omega_ij
+                    w, v = np.linalg.eig(aij)
+                    lambda2[i, j, k, t] = w[1]
+    return lambda2
 
 def get_time_avg_energy(udata):
     """
@@ -7617,7 +7670,6 @@ def export_raw_file_from_dpath(udatapath, func=get_energy, x0=0, x1=None, y0=0, 
                                                 x0=x0, x1=x1, y0=y0, y1=y1,
                                                 z0=z0, z1=z1,
                                                 t0=t, t1=t + running_avg, verbose=True)
-        dx, dy, dz = get_grid_spacing(xx, yy, zz)
 
         # Save a scalar field derived from
         if running_avg == 1:
@@ -7687,8 +7739,9 @@ def export_raw_file(data2save, savepath, dtype='uint32', thd=np.inf, interpolate
 
     data2save[np.isinf(data2save)] = fill_value
     if thd is not None:
+        # Replace values greater than `thd` with fill_value
         fill = data2save > thd
-        data2save[fill] = fill_value  # this fills values. np.nan won't get filled
+        data2save[fill] = fill_value
 
     if interpolate == 'nn':
         data2save = replace_nan_w_nn(data2save, notebook=notebook)
@@ -7704,7 +7757,7 @@ def export_raw_file(data2save, savepath, dtype='uint32', thd=np.inf, interpolate
             max_value, min_value = np.nanmax(data2save), np.nanmin(data2save)
             contrast_value = maxint / (max_value - min_value)
             data2save = (data2save - min_value) * contrast_value
-            print('intensity was enhanced by %.2f' % contrast_value, maxint, max_value - min_value)
+            print('intensity was enhanced by %.2f' % contrast_value)
         else:
             data2save = data2save * contrast_value
             print('intensity was multiplied by %.2f' % contrast_value)
@@ -13718,7 +13771,8 @@ def read_simple_hdf5(datapath, grpname=None):
     return datadict
 
 
-def add_data2udatapath(udatapath, datadict, attrdict=None, grpname=None, overwrite=False, verbose=True):
+def add_data2udatapath(udatapath, datadict, attrdict=None, grpname=None, overwrite=False, verbose=True,
+                       ):
     """
     Writes a data stored in a dictionary into a hdf5 at udatatapth
     ... datadict = {"name1": value1, "name2":value2, ...} will be stored like /name1, /name2 in the hdf5 file
@@ -13751,6 +13805,9 @@ def add_data2udatapath(udatapath, datadict, attrdict=None, grpname=None, overwri
 
     # check if datadict contains data that must not be overwritten
     new_keys = [key for key in datadict.keys() if key not in restricted_keys]
+    for key in datadict.keys():
+        if key in restricted_keys:
+            print(key, ' is forbidden to overwrite. To write udata to a h5 file, use write_udata()')
 
     if not os.path.exists(os.path.split(udatapath)[0]):
         os.makedirs(os.path.split(udatapath)[0])
