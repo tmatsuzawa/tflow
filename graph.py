@@ -231,6 +231,23 @@ def set_fig(fignum, subplot=111, dpi=100, figsize=None,
 
     return fig, ax
 
+def add_subplot_custom(x0, y0 ,x1, y1):
+    """
+    Create an Axes object at a customized location
+
+    Parameters
+    ----------
+    x0: left, [0, 1]
+    y0: bottom, [0, 1]
+    x1: right, [0, 1]
+    y1: top, [0, 1]
+
+    Returns
+    -------
+    ax: Axes object
+    """
+    ax = pl.axes([x0, y0 ,x1, y1])
+    return ax
 
 def plotfunc(func, x, param, fignum=1, subplot=111, ax = None, label=None, color=None, linestyle='-', legend=False, figsize=None, **kwargs):
     """
