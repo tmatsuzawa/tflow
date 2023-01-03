@@ -11673,7 +11673,7 @@ def get_binned_stats3d(x, y, z, var, n_bins=100, nx_bins=None, ny_bins=None, nz_
 
 # LOADING UDATA
 def get_udata_from_path(*args, **kwargs):
-    """DEPRICATED: Use get_udata()"""
+    """Deprecated: Use get_udata()"""
     return get_udata(*args, **kwargs)
 
 
