@@ -13892,7 +13892,7 @@ def write_udata(udatapath, datadict, verbose=True):
                         print('write_udata(): Adding %s...' % key)
                     f.create_dataset(key, data=datadict[key])
                 except:
-                    raise ValueError(f'write_udata(): {udatapath} already exists! If you want to overwrite the data, manually delete the existing file.')
+                    raise ValueError(f'write_udata(): {key} already exists! If you want to overwrite the data, manually delete the existing file.')
                     # NEVER OVERWRITE udata. If one wants to do this, the file should be manually deleted.
                     # if overwrite:
                     #     del f[key]
