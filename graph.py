@@ -46,6 +46,19 @@ warnings.filterwarnings("ignore")
 __def_colors__ = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
 __color_cycle__ = itertools.cycle(['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'])  #matplotliv v2.0
 __old_color_cycle__ = itertools.cycle(['b', 'g', 'r', 'c', 'm', 'y', 'k'])  #matplotliv classic
+mycolors5 = np.asarray([
+                     [0.2298057 , 0.29871797, 0.75368315, 1.        ], # Left-handed: blue, #3B4CC0
+                     [0.18431373, 0.49019608, 0.33333333, 1.        ], # Non-helical 1:, #4A7D55, green
+                     [0.85490196, 0.64705882, 0.12549020, 1.        ], # Non-helical 2:, #DAA520, Gold
+                     [0.70567316, 0.01555616, 0.15023281, 1.        ], # Right-handed: maroon, #C80426
+                     [0.2, 0.2, 0.2, 1.        ], # Planar (black), #333333
+                    ])
+mycolors3 = np.asarray([
+                     [0.2298057 , 0.29871797, 0.75368315, 1.        ], # Left-handed: blue, #3B4CC0
+                     [0.85490196, 0.64705882, 0.12549020, 1.        ], # Non-helical 2, #DAA520, Gold
+                     [0.70567316, 0.01555616, 0.15023281, 1.        ], # Right-handed: maroon, #C80426
+                    ])
+__my_ccycle__ = itertools.cycle(mycolors5)
 __fontsize__ = 11
 __figsize__ = (7.54, 7.54)
 cmap = 'magma'
@@ -298,18 +311,20 @@ def plot(x, y=None, fmt='-', fignum=1, figsize=None, label='', color=None, subpl
         keep *= x < xmax
     if xmin is not None:
         keep *= x >= xmin
-
-    if smooth:
-        x2plot = x[keep]
-        y2plot = smooth1d(y[keep], window_len=window_len, window=window)
-    elif smoothlog:
-        x2plot = x[keep]
-        try:
-            logy2plot = smooth1d(np.log10(y[keep]), window_len=window_len, window=window)
-            y2plot = 10**logy2plot
-        except:
-            y2plot = y[keep]
-    else:
+    try:
+        if smooth:
+            x2plot = x[keep]
+            y2plot = smooth1d(y[keep], window_len=window_len, window=window)
+        elif smoothlog:
+            x2plot = x[keep]
+            try:
+                logy2plot = smooth1d(np.log10(y[keep]), window_len=window_len, window=window)
+                y2plot = 10**logy2plot
+            except:
+                y2plot = y[keep]
+        else:
+            x2plot, y2plot = x[keep], y[keep]
+    except:
         x2plot, y2plot = x[keep], y[keep]
     if color is None:
         ax.plot(x2plot, y2plot, fmt, label=label, **kwargs)
@@ -414,8 +429,6 @@ def plot_multicolor(x, y=None, colored_by=None, cmap='viridis',
     # needs to be (numlines) x (points per line) x 2 (for x and y)
     points = np.array([x, y]).T.reshape(-1, 1, 2)
     segments = np.concatenate([points[:-1], points[1:]], axis=1)
-
-
 
     norm = plt.Normalize(vmin, vmax)
     lc = LineCollection(segments, cmap=cmap, norm=norm, zorder=zorder)
@@ -1066,13 +1079,14 @@ def plot_saddoughi_struc_func(fignum=1, fig=None, ax=None, figsize=None,
         ax.legend()
     tosemilogx(ax)
     labelaxes(ax, '$r / \eta$', '$D_{LL} / (\epsilon r)^{2/3}$')
+    return fig, ax, r_scaled, dll
 
 def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
             marker='o', fillstyle='full', label=None, subplot=None, legend=False,
             maskon=False, thd=1,
             xmin=None, xmax=None, alpha=1.,
             set_bottom_zero=False, symmetric=False,
-            set_left_zero=False,
+            set_left_zero=False, edgecolor='k',
             **kwargs):
     """
     plot a graph using given x,y
@@ -1115,12 +1129,13 @@ def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
         facecolors = 'none'
         if type(alpha) == float or type(alpha) == int:
             # ax.scatter(x, y, color=color, label=label, marker=marker, facecolors=facecolors, edgecolors=edgecolors, **kwargs)
-            sc = ax.scatter(x[keep], y[keep], label=label, marker=marker, facecolors=facecolors, alpha=alpha, **kwargs)
+            sc = ax.scatter(x[keep], y[keep], label=label, marker=marker, facecolors=facecolors, alpha=alpha,
+                            edgecolor=edgecolor, **kwargs)
         else:
             for i, alpha_ in enumerate(alpha[keep]):
                 if i != 0:
                     label=None
-                sc = ax.scatter(x[keep][i], y[keep][i], label=label, marker=marker, facecolors=facecolors, alpha=alpha_, **kwargs)
+                sc = ax.scatter(x[keep][i], y[keep][i], label=label, marker=marker, facecolors=facecolors, alpha=alpha_, edgecolor=edgecolor, **kwargs)
     else:
         if type(alpha) == float or type(alpha) == int:
             sc = ax.scatter(x[keep], y[keep], label=label, marker=marker, alpha=alpha, **kwargs)
@@ -1156,6 +1171,48 @@ def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
         ax.set_xlim(-xabs, xabs)
         ax.set_ylim(-yabs, yabs)
     return fig, ax
+
+def pie_marker(angle0, angle1, n=30):
+    """
+    Returns a custom marker (which are just vertices) that looks like a pie
+    ... a pie is a fractional circle that starts from 'angle0' and ends at 'angle1'
+
+    Parameters
+    ----------
+    angle0: float, angle at the start, e.g.-30 deg
+    angle1: float, angle at the end,  e.g. 90 deg
+    n: number of vertices, default: 30
+    ... the higher n is, the more circle it gets.
+
+    Returns
+    -------
+    pie_marker: vertices that define a marker- this can be passed to 'marker' in plt.scatter()
+
+    Example
+    -------
+    x, y = np.random.rand(2, 10)
+    verts1 = pie_marker(-30, 90)
+    verts2 = pie_marker(-150, -30)
+    verts3 = pie_marker(90, 210)
+
+    fig, ax = plt.subplots()
+    ax.scatter(x, y, marker=verts1, s=500, facecolor='none', edgecolor='k')
+    ax.scatter(x, y, marker=verts2, s=500, facecolor='none', edgecolor='r')
+    ax.scatter(x, y, marker=verts3, s=500, facecolor='none', edgecolor='b')
+    """
+    if angle0==angle1: # a regular circular marker
+        theta = np.linspace(0, 2*np.pi, n)
+        x, y = np.cos(theta), np.sin(theta)
+    else:
+        theta0, theta1 = angle0 / 180.*np.pi,  angle1 / 180.*np.pi
+        theta = np.linspace(theta0, theta1, n-2)
+        x0, y0 = [0], [0]
+        x1, y1 = list(np.cos(theta)), list(np.sin(theta))
+        x2, y2 = [0], [0]
+        x, y = x0 + x1 + x2, y0 + y1 + y2
+    pie_marker = np.column_stack((x, y))
+    return pie_marker
+
 
 def scatter3d(x, y, z, ax=None, fig=None, fignum=1, figsize=None, marker='o',
             fillstyle='full', label=None, subplot=None, legend=False,
@@ -1193,7 +1250,7 @@ def scatter3d(x, y, z, ax=None, fig=None, fignum=1, figsize=None, marker='o',
     set_axes_equal(ax)
     return fig, ax
 
-def pdf(data, nbins=100, return_data=False, vmax=None, vmin=None,
+def pdf(data, nbins=100, return_data=False, vmax=None, vmin=None, log=False,
         fignum=1, figsize=None, subplot=None, density=True, analyze=False, **kwargs):
     """
     Plots a probability distribution function of ND data
@@ -1248,8 +1305,11 @@ def pdf(data, nbins=100, return_data=False, vmax=None, vmin=None,
         cond2 = np.ones(data.shape, dtype=bool)
     data = data[cond1 * cond2]
     delta = (vmax - vmin) / nbins
-    bins = np.arange(vmin, vmax+delta, delta)
-
+    if log:
+        bins = np.geomspace(max(vmin, 1e-16), vmax, nbins)
+    else:
+        bins = np.arange(vmin, vmax+delta, delta)
+    # print(bins)
     # compute a pdf
     bins, hist = compute_pdf(data, nbins=bins)
     fig, ax = plot(bins, hist, fignum=fignum, figsize=figsize, subplot=subplot, **kwargs)
@@ -1258,7 +1318,7 @@ def pdf(data, nbins=100, return_data=False, vmax=None, vmin=None,
         bin_width = float(bins[1]-bins[0])
         mean = np.nansum(bins * hist * bin_width)
         mode = bins[np.argmax(hist)]
-        var = np.nansum(bins**2 * hist * bin_width)
+        var = np.nansum((bins-mean)**2 * hist * bin_width)
         text2 = 'mean: %.2f' % mean
         text1 = 'mode: %.2f' % mode
         text3 = 'variance: %.2f' % var
@@ -1381,8 +1441,8 @@ def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', lin
         yerr = np.array(yerr)
     else:
         yerr = np.ones_like(x) * yerr
-    # xerr[xerr==0] = np.nan
-    # yerr[yerr==0] = np.nan
+    xerr[xerr==0] = np.nan
+    yerr[yerr==0] = np.nan
     if maskon:
         keep = get_mask4erroneous_pts(x, y, thd=thd)
     else:
@@ -1391,16 +1451,11 @@ def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', lin
         keep *= x < xmax
     if xmin is not None:
         keep *= x >= xmin
-    if all(xerr == 0):
-        xerr = None
-    if all(yerr == 0):
-        yerr = None
-    
     if fillstyle == 'none':
-        ax.errorbar(x[keep], y[keep], xerr=xerr, yerr=yerr, marker=marker, mfc=mfc, linestyle=linestyle,
+        ax.errorbar(x[keep], y[keep], xerr=xerr[keep], yerr=yerr[keep], marker=marker, mfc=mfc, linestyle=linestyle,
                     label=label, capsize=capsize, **kwargs)
     else:
-        ax.errorbar(x[keep], y[keep], xerr=xerr, yerr=yerr, marker=marker, fillstyle=fillstyle,
+        ax.errorbar(x[keep], y[keep], xerr=xerr[keep], yerr=yerr[keep], marker=marker, fillstyle=fillstyle,
                     linestyle=linestyle, label=label, capsize=capsize,  **kwargs)
 
     if legend:
@@ -1412,7 +1467,7 @@ def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', lin
             handles = [h[0] if isinstance(h, container.ErrorbarContainer) else h for h in handles]
     return fig, ax
 
-def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha=1., alpha_fill=None, ax=None, label=None,
+def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha_fill=0.3, ax=None, label=None,
               legend=False, figsize=None, maskon=False, thd=1,
               xmin=None, xmax=None, smooth=False, smoothlog=False, window_len=5, window='hanning',
               set_bottom_zero=False, set_left_zero=False, symmetric=False, return_xy=False,
@@ -1422,8 +1477,6 @@ def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha=1., alpha_fi
         fig, ax = set_fig(fignum, subplot, figsize=figsize)
     else:
         fig = plt.gcf()
-    if alpha_fill is None:
-        alpha_fill = alpha * 0.3
 
     x = np.array(x)
     y = np.array(y)
@@ -1468,7 +1521,7 @@ def errorfill(x, y, yerr, fignum=1, color=None, subplot=None, alpha=1., alpha_fi
         ymax = y2plot + yerr
 
 
-    p = ax.plot(x2plot, y2plot, color=color, label=label, alpha=alpha, **kwargs)
+    p = ax.plot(x2plot, y2plot, color=color, label=label, **kwargs)
     color = p[0].get_color()
     ax.fill_between(x2plot, ymax, ymin, color=color, alpha=alpha_fill)
 
@@ -1563,7 +1616,6 @@ def bin_and_errorbar(x_, y_, xerr=None,
         xerr = np.ones_like(x) * (x[1] - x[0]) / 2.
     elif type(xerr) in [int, float]:
         xerr = np.ones_like(x) * xerr
-
     xerr[xerr == 0] = np.nan
     yerr[yerr == 0] = np.nan
 
@@ -1600,7 +1652,7 @@ def bin_and_errorbar(x_, y_, xerr=None,
 ## Plot a fit curve
 def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figsize=None, linestyle='--',
                    xmin=None, xmax=None, add_equation=True, eq_loc='bl', color=None, label='fit',
-                   show_r2=False, return_r2=False, p0=None, bounds=(-np.inf, np.inf), maskon=False, thd=1,**kwargs):
+                   show_r2=False, return_r2=False, p0=None, bounds=(-np.inf, np.inf), maskon=True, thd=1,**kwargs):
     """
     Plots a fit curve given xdata and ydata
     Parameters
@@ -1860,7 +1912,10 @@ def color_plot(x, y, z,
         z = np.log10(z)
 
     # For Diverging colormap, ALWAYS make the color thresholds symmetric
-    if cmap in ['PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdGy', 'RdBu', 'RdYlBu', 'RdYlGn', 'Spectral', 'coolwarm', 'bwr', 'seismic'] \
+    symCmap1 = ['PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdGy', 'RdBu', 'RdYlBu', 'RdYlGn', 'Spectral', 'coolwarm', 'bwr', 'seismic']
+    symCmap2 = [c + '_r' for c in symCmap1]
+    symCmap = symCmap1 + symCmap2
+    if cmap in symCmap \
             and enforceSymmetric:
         symmetric = True
 
@@ -2125,32 +2180,31 @@ def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
     cond = ~hide
     if type(color) != str:
         color = np.asarray(color)
-        if color.shape == x.shape:
-            color = color[::inc_y, ::inc_x, :]
-            if color.shape != cond.shape:
-                for d in range(color.shape[-1]):
-                    color[..., d] = color[..., d][cond].reshape(cond.shape)
-            color = color.reshape((-1, color.shape[-1]))
+        color = color[::inc_y, ::inc_x, :]
+        if color.shape != cond.shape:
+            for d in range(color.shape[-1]):
+                color[..., d] = color[..., d][cond].reshape(cond.shape)
+        color = color.reshape((-1, color.shape[-1]))
 
-    U_absMean = np.nanmean(u_norm[cond])
-    if key_length is None:
-        # key_length = 10 ** round(np.log10(U_rms))
-        # key_length = 10 ** round(np.log10(U_rmedians))
-        # key_length = round(U_rmedians, int(-round(np.log10(U_rmedians))) + 1) * 5
-        key_length = round(u_rms, int(-round(np.log10(U_absMean))) + 1) * 3
 
-    if units=='inches':
+    if units=='inches' and scale is None:
         if key_length is None:
+            U_absMean = np.nanmean(u_norm[cond])
             scale = U_absMean * 2
         else:
             scale = key_length * 2
     Q = ax.quiver(x_tmp[cond], y_temp[cond], u_tmp[cond], v_tmp[cond], color=color, units=units, scale=scale, **kwargs)
 
     if key:
+        U_absMean = np.nanmean(u_norm[cond])
+        if key_length is None:
+            # key_length = 10 ** round(np.log10(U_rms))
+            # key_length = 10 ** round(np.log10(U_rmedians))
+            # key_length = round(U_rmedians, int(-round(np.log10(U_rmedians))) + 1) * 5
+            key_length = round(u_rms, int(-round(np.log10(U_absMean))) + 1)
         if key_label is None:
             key_label = '{:' + key_fmt + '} '
             key_label = key_label.format(key_length) + key_units
-
         title(ax, '   ') # dummy title to create space on the canvas
         ax._set_title_offset_trans(key_pad)
         # print(key_length)
@@ -2597,7 +2651,6 @@ def set_grid_invisible(ax):
 def show():
     plt.show()
 
-
 ## Lines
 def axhline(ax, y, x0=None, x1=None, color='black', linestyle='--', linewidth=1, zorder=0, **kwargs):
     """
@@ -2678,12 +2731,11 @@ def axhband(ax, y0, y1, x0=None, x1=None, color='C1', alpha=0.2, **kwargs):
         -------
 
         """
-    xmin, xmax = ax.get_xlim()
     ymin, ymax = ax.get_ylim()
     if x0 is None and x1 is None:
         x0, x1 = ax.get_xlim()
     ax.fill_between(np.linspace(x0, x1, 2), y0, y1, alpha=alpha, color=color, **kwargs)
-    ax.set_xlim(min(xmin, x0), max(xmax, x1))
+    ax.set_xlim(x0, x1)
     ax.set_ylim(ymin, ymax)
 
 def axvband(ax, x0, x1, y0=None, y1=None, color='C1', alpha=0.2, **kwargs):
@@ -2731,7 +2783,7 @@ def add_arrow_to_line(axes, line, arrow_locs=[0.2, 0.4, 0.6, 0.8], head_width=15
 
 
 def add_arrow_to_line2D(
-    axes, line, arrow_locs=[0.2, 0.4, 0.6, 0.8],
+    axes, line, arrow_locs=[0.2, 0.4, 0.6, 0.8], 
     arrowstyle='-|>', head_width=15, transform=None):
     """
     Add arrows to a matplotlib.lines.Line2D at selected locations.
@@ -2988,16 +3040,16 @@ def reset_sfmt(fformat="%03.1f"):
 
 reset_sfmt()
 
-def get_sfmt():
+def get_sfmt(fformat="%03.1f"):
     ""
     global sfmt
-    reset_sfmt()
+    reset_sfmt(fformat=fformat)
     return sfmt
 
 def add_colorbar_old(mappable, fig=None, ax=None, fignum=None, label=None, fontsize=__fontsize__,
                  vmin=None, vmax=None, cmap='jet', option='normal', **kwargs):
     """
-    Adds a color bar (DEPRECATED. replaced by add_colorbar)
+    Adds a color bar (Depricated. replaced by add_colorbar)
     Parameters
     ----------
     mappable : image like QuadMesh object to which the color bar applies (NOT a plt.figure instance)
@@ -3215,10 +3267,10 @@ def add_discrete_colorbar(ax, colors, vmin=0, vmax=None, label=None, fontsize=No
 
 
 
-def add_colorbar_alone(ax, values, cmap=cmap, label=None, fontsize=None, option='normal', fformat=None,
+def add_colorbar_alone(ax, values, cax=None, cmap=cmap, label=None, fontsize=None, option='normal', fformat=None,
                  tight_layout=True, ticklabelsize=None, ticklabel=None,
                  aspect = None, location='right', color='k',
-                 size='5%', pad=0.15, cax=None, **kwargs):
+                 size='5%', pad=0.15, **kwargs):
     """
     Add a colorbar to a figure without a mappable
     ... It creates a dummy mappable with given values
@@ -3268,10 +3320,10 @@ def add_colorbar_alone(ax, values, cmap=cmap, label=None, fontsize=None, option=
     sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
     sm.set_array([])  # dummy mappable
 
-    # make an axis instance for a colorbar
-    ## divider.append_axes(location, size=size, pad=pad) creates an Axes
-    ## s.t. the size of the cax becomes 'size' (e.g.'5%') of the ax.
     if cax is None:
+        # make an axis instance for a colorbar
+        ## divider.append_axes(location, size=size, pad=pad) creates an Axes
+        ## s.t. the size of the cax becomes 'size' (e.g.'5%') of the ax.
         divider = axes_grid.make_axes_locatable(ax)
         cax = divider.append_axes(location, size=size, pad=pad)
 
@@ -3309,7 +3361,7 @@ def add_colorbar_alone(ax, values, cmap=cmap, label=None, fontsize=None, option=
 
 def colorbar(fignum=None, label=None, fontsize=__fontsize__):
     """
-    Use is DEPRECATED. This method is replaced by add_colorbar(mappable)
+    Use is DEPRICATED. This method is replaced by add_colorbar(mappable)
     I keep this method for old codes which might have used this method
     Parameters
     ----------
@@ -3326,7 +3378,7 @@ def colorbar(fignum=None, label=None, fontsize=__fontsize__):
     return c
 
 def create_colorbar(values, cmap='viridis', figsize=None, orientation='vertical', label='qty (mm)', fontsize=11,
-                    labelpad=0, ticks=None, fignum=1, cax_rect=None, **kwargs):
+                    labelpad=0, ticks=None, **kwargs):
     """
     Creates a horizontal/vertical colorbar for reference using pylab.colorbar()
 
@@ -3340,8 +3392,6 @@ def create_colorbar(values, cmap='viridis', figsize=None, orientation='vertical'
     fontsize: fontsize for the label and the ticklabel
     labelpad: float, padding for the label
     ticks: 1d array, tick locations
-    cax_rect: 1d array, colorbar axes location and size [left, bottom, width, height]
-    ... e.g. [0.8, 0.1, 0.1, 0.8] for a vertical color bar
 
     Returns
     -------
@@ -3355,17 +3405,15 @@ def create_colorbar(values, cmap='viridis', figsize=None, orientation='vertical'
         figsize = (7.54 * 0.5, 1)
     elif orientation == 'vertical' and figsize is None:
         figsize = (1, 7.54 * 0.5)
-    fig = pl.figure(num=fignum, figsize=figsize)
+    fig = pl.figure(figsize=figsize)
     img = pl.imshow(values, cmap=cmap)
     ax = pl.gca()
     ax.set_visible(False)
-    if cax_rect is None:
-        if orientation == 'horizontal':
-            cax = pl.axes([0.1, 0.8, 0.8, 0.1])
-        else:
-            cax = pl.axes([0.8, 0.1, 0.1, 0.8])
+
+    if orientation == 'horizontal':
+        cax = pl.axes([0.1, 0.8, 0.8, 0.1])
     else:
-        cax = pl.axes(cax_rect)
+        cax = pl.axes([0.8, 0.1, 0.1, 0.8])
     cb = pl.colorbar(orientation=orientation, cax=cax, **kwargs)
     cb.set_label(label=label, fontsize=fontsize, labelpad=labelpad)
     if ticks is not None:
@@ -3496,10 +3544,8 @@ def force2showLogMinorTicks(ax, subs='all', numticks=9, axis='both'):
     """
     if axis in ['x', 'both']:
         ax.xaxis.set_minor_locator(ticker.LogLocator(subs=subs, numticks=numticks))  # set the ticks position
-        ax.set_xticklabels([], minor=True) # remove the label of x minor ticks
     if axis in ['y', 'both']:
         ax.yaxis.set_minor_locator(ticker.LogLocator(subs=subs, numticks=numticks))  # set the ticks position
-        ax.set_yticklabels([], minor=True)
 
 def force2showLogMajorTicks(ax, subs=[1.], numticks=9, axis='both'):
     """
@@ -3961,23 +4007,11 @@ def get_colors_and_cmap_using_values(values, cmap=None, color1='greenyellow', co
     colors = cmap(norm(values))
     return colors, cmap, norm
 
-def get_norm(values):
-    """
-    Returns a function that normalizes values (vmin-vmax)
-
-    Parameters
-    ----------
-    values: array-like
-
-    Returns
-    -------
-    norm: function, mpl.colors.Normalize(vmin=vmin, vmax=vmax)
-    """
-    values = np.asarray(values)
-    vmin = np.nanmin(values)
-    vmax = np.nanmax(values)
-    norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+def get_norm(cmapRange):
+    vmin, vmax = np.nanmin(cmapRange), np.nanmax(cmapRange)
+    norm = plt.Normalize(vmin, vmax)
     return norm
+
 
 def get_color_list_gradient(color1='greenyellow', color2='darkgreen', color3=None, n=100, return_cmap=False):
     """
@@ -4094,17 +4128,6 @@ def create_weight_shifted_cmap(cmapname, ratio=0.75, vmin=None, vmax=None, vcent
     newcmap = mpl.colors.ListedColormap(newcolors, name='shifted_' + cmapname)  # custom cmap
     return newcmap
 
-def get_truncated_cmap(cmap, vmin, vmax, n=100):
-    def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
-        new_cmap = mpl.colors.LinearSegmentedColormap.from_list(
-            'trunc({n},{a:.2f},{b:.2f})'.format(n=cmap.name, a=minval, b=maxval),
-            cmap(np.linspace(minval, maxval, n)))
-        return new_cmap
-    if type(cmap) == str:
-        cm = mpl.cm.get_cmap(cmap)
-    else: cm = cmap
-    new_cmap = truncate_colormap(cm, minval=vmin, maxval=vmax, n=n)
-    return new_cmap
 
 def choose_colors(**kwargs):
     """
@@ -4138,7 +4161,7 @@ def choose_colors(**kwargs):
     return colors
 
 
-def hex2rgb(hex):
+def hex2rgb(hex, normalize=False):
     """
     Converts a HEX code to RGB in a numpy array
     Parameters
@@ -4173,6 +4196,13 @@ def cname2hex(cname):
         print(cname, ' is not registered as default colors by matplotlib!')
         return None
 
+def cname2rgba(cname, normalize=True):
+    hex = cname2hex(cname)
+    rgba = hex2rgb(hex)
+    if normalize:
+        rgba = rgba / 255
+    return rgba
+
 def set_default_color_cycle(name='tab10', n=10, colors=None, reverse=False):
     """
     Sets a color cycle for plotting
@@ -4202,7 +4232,7 @@ def set_default_color_cycle(name='tab10', n=10, colors=None, reverse=False):
     sns.set_palette(colors)
     return colors
 
-def set_color_cycle(cmapname='tab10', ax=None, n=10, colors=None, cmap=None):
+def set_color_cycle(cmapname='tab10', ax=None, n=10, colors=None):
     """
     Sets a color cycle of a particular Axes instance
 
@@ -4219,7 +4249,6 @@ def set_color_cycle(cmapname='tab10', ax=None, n=10, colors=None, cmap=None):
     cmapname: str, name of the cmap like 'viridis', 'jet', etc.
     n: int, number of colors
     colors: list, a list of colors like ['r', 'b', 'g', 'magenta']
-    cmap: matplotlib.colors.ListedColormap, if given, it samples colors from this color map. cmap is prioritized over 'colors'.
 
     Returns
     -------
@@ -4227,8 +4256,6 @@ def set_color_cycle(cmapname='tab10', ax=None, n=10, colors=None, cmap=None):
     """
     if colors is None:
         colors = sns.color_palette(cmapname, n_colors=n)
-    if cmap is not None:
-        colors = get_color_from_cmap(cmap, n=n)
     if ax is None:
         sns.set_palette(colors)
     else:
@@ -4322,7 +4349,7 @@ def show_plot_styles():
     style_list = ['default'] + sorted(style for style in plt.style.available)
     print(style_list)
     return style_list
-def set_plot_style(stylename):
+def use_plot_style(stylename):
     """Reminder for me how to set a plotting style"""
     plt.style.use(stylename)
 
@@ -4430,9 +4457,9 @@ def draw_rectangle(ax, x, y, width, height, angle=0.0, linewidth=1, edgecolor='r
 
 
 def draw_box(ax, xx, yy, w_box=351., h_box=351., xoffset=0, yoffset=0, linewidth=5,
-             scalebar=True, sb_length=50., sb_units='mm', sb_loc=(0.95, 0.1), sb_txtloc=(0.0, 0.4),
+             scalebar=True, sb_length=50., sb_units='$mm$', sb_loc=(0.95, 0.1), sb_txtloc=(0.0, 0.4),
              sb_lw=10, sb_txtcolor='white', fontsize=None,
-             facecolor='k', fluidcolor=None, ch_color='r',
+             facecolor='k', fluidcolor=None,
              bounding_box=True, bb_lw=1, bb_color='w'):
     """
     Draws a box and fills the surrounding area with color (default: skyblue)
@@ -4477,7 +4504,6 @@ def draw_box(ax, xx, yy, w_box=351., h_box=351., xoffset=0, yoffset=0, linewidth
 
     facecolor
     fluidcolor
-    ch_color: str, chamber color
 
     Returns
     -------
@@ -4491,7 +4517,7 @@ def draw_box(ax, xx, yy, w_box=351., h_box=351., xoffset=0, yoffset=0, linewidth
     #     xc, yc = xmin + (xmax - xmin) / 2., ymin - (ymax - ymin) / 2.
     xc, yc = xmin + (xmax - xmin) / 2., ymin + (ymax - ymin) / 2.
     x0, y0 = xc - w_box / 2. + xoffset, yc - h_box / 2. + yoffset
-    draw_rectangle(ax, x0, y0, w_box, h_box, linewidth=linewidth, facecolor=facecolor, zorder=0, edgecolor=ch_color)
+    draw_rectangle(ax, x0, y0, w_box, h_box, linewidth=linewidth, facecolor=facecolor, zorder=0)
     if fluidcolor is not None:
         ax.set_facecolor(fluidcolor)
 
@@ -4501,6 +4527,7 @@ def draw_box(ax, xx, yy, w_box=351., h_box=351., xoffset=0, yoffset=0, linewidth
 
     if scalebar:
         dx, dy = np.abs(xx[0, 1] - xx[0, 0]), np.abs(yy[1, 0] - yy[0, 0]) # mm/px
+
         #         x0_sb, y0_sb = x0 + 0.8 * w_box, y0 + 0.1*h_box
         x1_sb, y1_sb = x0 + sb_loc[0] * w_box, y0 + sb_loc[1] * h_box
         x0_sb, y0_sb = x1_sb - sb_length, y1_sb
@@ -4720,7 +4747,7 @@ def get_scatter_data_from_fig(fig, axis_number=0):
     return data_list
 
 def get_plot_data_from_fig(*args, **kwargs):
-    """DEPRECATED. Use get_data_from_fig_plot"""
+    """Depricated. Use get_data_from_fig_plot"""
     get_data_from_fig_plot(*args, **kwargs)
 
 def get_data_from_fig_plot(fig, axis_number=0):
@@ -5461,7 +5488,7 @@ def adjust_colorbar(cb,
 
 
 def plot_colorbar(values, cmap='viridis', colors=None, ncolors=100,
-                  fignum=1, figsize=None,
+                  fignum=1, figsize=None, fig=None, ax=None, cax_spec=None,
                   orientation='vertical', label=None, labelpad=5,
                   fontsize=__fontsize__, option='normal', fformat=None,
                   ticks=None, tick_params=None, **kwargs):
@@ -5496,14 +5523,14 @@ def plot_colorbar(values, cmap='viridis', colors=None, ncolors=100,
     global sfmt
     if figsize is None:
         if orientation == 'horizontal':
-            figsize =(7.54 * 0.5, 1)
+            figsize = (7.54 * 0.5, 2)
         else:
-            figsize = (1, 7.54 * 0.5)
-
-    if orientation == 'horizontal':
-        cax_spec = [0.1, 0.8, 0.8, 0.1]
-    else:
-        cax_spec = [0.1, 0.1, 0.1, 0.8]
+            figsize = (2, 7.54 * 0.5)
+    if cax_spec is None:
+        if orientation == 'horizontal':
+            cax_spec = [0.1, 0.8, 0.8, 0.1]
+        else:
+            cax_spec = [0.1, 0.1, 0.1, 0.8]
 
     if colors is not None:
         cmap = mpl.colors.LinearSegmentedColormap.from_list('cutom_cmap', colors, N=ncolors)
@@ -5532,7 +5559,7 @@ def plot_colorbar(values, cmap='viridis', colors=None, ncolors=100,
     if tick_params is None:
         tick_params = {'labelsize': fontsize}
     cb.ax.tick_params(**tick_params)
-    fig.tight_layout()
+    # fig.tight_layout()
     return fig, cax, cb
 
 
@@ -5632,24 +5659,3 @@ def set_fontsize_scientific_text(ax, fontsize):
 
     """
     ax.yaxis.get_offset_text().set_fontsize(fontsize)
-
-
-def pie_marker(angle0, angle1, n=30):
-    """
-    Custom marker for ax.scatter()
-    ... the output can be passed to ax.scatter(x, y, marker=pie_marker(-30, 90))
-    """
-    if angle0==angle1:
-        theta = np.linspace(0, 2*np.pi, n)
-        x, y = np.cos(theta), np.sin(theta)
-    else:
-        theta0, theta1 = angle0 / 180.*np.pi,  angle1 / 180.*np.pi
-        theta = np.linspace(theta0, theta1, n-2)
-        x0, y0 = [0], [0]
-        x1, y1 = list(np.cos(theta)), list(np.sin(theta))
-        x2, y2 = [0], [0]
-        x, y = x0 + x1 + x2, y0 + y1 + y2
-    pie_marker = np.column_stack((x, y))
-    return pie_marker
-
-
