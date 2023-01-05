@@ -4309,9 +4309,7 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                            nd=10 ** 3, nr=70, rmax=None, notebook=True,
                            periodic=False):
     """
-    
     Returns the normalized two-point velocity tatistics (rrs, fs, f_errs, rrs, gs, g_errs)
-
     ... f(r): longitudinal two-pt  stat
     ... g(r): transverse two-pt  stat
     ... In order for f(r) and g(r) to have a meaning, the flow MUST be isotropic
@@ -4321,8 +4319,6 @@ def get_two_point_vel_corr(udata, x, y, z=None,
         3. f(r) = < (u(A) \cdot r) u(B) \cdot r)> /   < |u(A) \cdot r|^2>
            g(r) = < (u(A) \cdot n) u(B) \cdot n)> /   < |u(A) \cdot r|^2>
     ... The v-field must be isotropic for this result to make sense.
-
-
     Parameters
     ----------
     udata: nd array, a velocity field
@@ -4343,7 +4339,6 @@ def get_two_point_vel_corr(udata, x, y, z=None,
     rmax: float, maximum distance to compute the two-point correlation function
     notebook: bool, if True, tqdm_notebook is used instead of tqdm
     periodic: bool, if True, the velocity field is assumed to be periodic
-
     Returns
     -------
     autocorrs: tuple
@@ -4357,28 +4352,12 @@ def get_two_point_vel_corr(udata, x, y, z=None,
     ... g_errs: 2d array, transverse velocity correlation funciton error with shape (nd, duration)
     """
 
+
     if notebook:
         from tqdm import tqdm_notebook as tqdm
     else:
         from tqdm import tqdm
 
-    # def get_rotation_matrix_between_two_vectors(a, b):
-    #     """
-    #     Returns a 3D rotation matrix R that rotates a unit vector onto a unit vector of b
-    #     """
-    #     a, b = vec.norm(a), vec.norm(b)
-    #     v = vec.cross(a, b)
-    #     s = vec.mag1(v)
-    #     c = vec.dot(a, b)
-    #
-    #     A = np.asarray([[0, -v[2], v[1]],
-    #                     [v[2], 0, -v[0]],
-    #                     [-v[1], v[0], 0]])
-    #     I = np.asarray([[1, 0, 0],
-    #                     [0, 1, 0],
-    #                     [0, 0, 1]])
-    #     R = I + A + np.matmul(A, A) * (1 - c) / s ** 2
-    #     return R
     def get_rotation_matrix_between_two_vectors(a, b):
         """
         Returns a 3D rotation matrix R that rotates a unit vector of "a" onto a unit vector of "b"
@@ -4467,15 +4446,13 @@ def get_two_point_vel_corr(udata, x, y, z=None,
     if dim == 2:
         xmin, xmax, ymin, ymax = np.min(x_grid), np.max(x_grid), np.min(y_grid), np.max(y_grid)
         width, height = xmax - xmin, ymax - ymin
-        if rmax is None: rmax = min([width, height]) * prefactor
-        rs_ = np.linspace(dx * 2, rmax, nr)
+        rs_ = np.linspace(dx * 2, min([width, height]) * prefactor, nr)
     elif dim == 3:
         xmin, xmax, ymin, ymax, zmin, zmax = np.min(x_grid), np.max(x_grid), \
                                              np.min(y_grid), np.max(y_grid), \
                                              np.min(z_grid), np.max(z_grid)
         width, height, depth = xmax - xmin, ymax - ymin, zmax - zmin
-        if rmax is None: rmax = min([width, height, depth]) * prefactor
-        rs_ = np.linspace(dx * 2, rmax, nr)
+        rs_ = np.linspace(dx, min([width, height, depth]) * prefactor, nr)
     rs = np.empty(nd)
     fs_ = np.empty(nd)
     gs_ = np.empty(nd)
@@ -4501,12 +4478,14 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                                 X1 = - width
                             elif X1 < xmin:
                                 X1 += width
-                            else: pass
+                            else:
+                                pass
                             if Y1 > ymax:
                                 Y1 = - height
                             elif Y1 < ymin:
                                 Y1 += height
-                            else: pass
+                            else:
+                                pass
                         is_R1_reasonable = X1 < xmax and X1 > xmin and Y1 < ymax and Y1 > ymin
                         X1_ind, _ = find_nearest(x_grid[0, :], X1)
                         Y1_ind, _ = find_nearest(y_grid[:, 0], Y1)
@@ -4532,24 +4511,28 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                                 R01[0] -= width
                             elif R01[0] < -width / 2:
                                 R01[0] += width
+                            else:
+                                pass
                             if R01[1] > height / 2:
                                 R01[1] -= height
                             elif R01[1] < -height / 2:
                                 R01[1] += height
-                            if dim == 3:
-                                if R01[2] > depth / 2:
-                                    R01[2] -= depth
-                                elif R01[2] < -depth / 2:
-                                    R01[2] += depth
+                            else:
+                                pass
+                            if R01[2] > depth / 2:
+                                R01[2] -= depth
+                            elif R01[2] < -depth / 2:
+                                R01[2] += depth
+                            else:
+                                pass
                         is_R1_reasonable = X1 < xmax and X1 > xmin and Y1 < ymax and Y1 > ymin and Z1 < zmax and Z1 > zmin
                         X1_ind, _ = find_nearest(x_grid[0, :, 0], X1)
                         Y1_ind, _ = find_nearest(y_grid[:, 0, 0], Y1)
                         Z1_ind, _ = find_nearest(z_grid[0, 0, :], Z1)
                         R1 = np.asarray([x_grid[0, X1_ind, 0], y_grid[Y1_ind, 0, 0], z_grid[0, 0, Z1_ind]])
-                        if is_R1_reasonable and  X0_ind == X1_ind and Y0_ind == Y1_ind and Z0_ind == Z1_ind:
-                                is_R1_reasonable = False
-                else:
-                    raise ValueError('dim must be 2 ro 3.')
+                        if is_R1_reasonable and X0_ind == X1_ind and Y0_ind == Y1_ind and Z0_ind == Z1_ind:
+                            is_R1_reasonable = False
+
                 R01 = R1 - R0
 
                 basis = vec.get_an_orthonormal_basis(dim, v1=R01)
@@ -4566,8 +4549,8 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                                                                                          basis[:, 0])
                     gs_[j] = vec.dot(udata[:, Y0_ind, X0_ind, t], basis[:, 1]) * vec.dot(udata[:, Y1_ind, X1_ind, t],
                                                                                          basis[:, 1])
-                    denominators_f[j] = vec.dot(udata[:, Y0_ind, X0_ind, t], basis[:, 0])
-                    denominators_g[j] = vec.dot(udata[:, Y0_ind, X0_ind, t], basis[:, 1])
+                    denominators_f[j] = vec.dot(udata[:, Y0_ind, X0_ind, t], basis[:, 0]) ** 2
+                    denominators_g[j] = vec.dot(udata[:, Y0_ind, X0_ind, t], basis[:, 1]) ** 2
                 elif dim == 3:
                     if t == t0:
                         R01_0 = copy.deepcopy(R01)
@@ -4583,10 +4566,11 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                         udata[:, Y1_ind, X1_ind, Z0_ind, t], basis[:, 1])
                     # for k, Rt in enumerate(Rts):
                     #     gs_[j * nt + k] = vec.dot(udata[:, Y0_ind, X0_ind, Z0_ind, t], Rt) * vec.dot(udata[:, Y1_ind, X1_ind, Z0_ind, t], Rt) / denominator
-
                     denominators_f[j] = vec.dot(udata[:, Y0_ind, X0_ind, Z0_ind, t], basis[:, 0]) ** 2
                     denominators_g[j] = vec.dot(udata[:, Y0_ind, X0_ind, Z0_ind, t], basis[:, 1]) ** 2
-                is_R1_reasonable = False
+                else:
+                    raise ValueError('dim must be 2 ro 3.')
+                is_R1_reasonable = False # initialize
 
             rrs[i, t] = np.nanmean(rs)
             fs[i, t] = np.nanmean(fs_) / np.nanmean(denominators_f)
