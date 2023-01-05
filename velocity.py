@@ -4446,13 +4446,15 @@ def get_two_point_vel_corr(udata, x, y, z=None,
     if dim == 2:
         xmin, xmax, ymin, ymax = np.min(x_grid), np.max(x_grid), np.min(y_grid), np.max(y_grid)
         width, height = xmax - xmin, ymax - ymin
-        rs_ = np.linspace(dx * 2, min([width, height]) * prefactor, nr)
+        if rmax is None: rmax = (width ** 2 + height ** 2) ** 0.5
+        rs_ = np.linspace(dx * 2, min([width, height, rmax]) * prefactor, nr)
     elif dim == 3:
         xmin, xmax, ymin, ymax, zmin, zmax = np.min(x_grid), np.max(x_grid), \
                                              np.min(y_grid), np.max(y_grid), \
                                              np.min(z_grid), np.max(z_grid)
         width, height, depth = xmax - xmin, ymax - ymin, zmax - zmin
-        rs_ = np.linspace(dx, min([width, height, depth]) * prefactor, nr)
+        if rmax is None: rmax = (width ** 2 + height ** 2 + depth ** 2) ** 0.5
+        rs_ = np.linspace(dx*2, min([width, height, depth, rmax]) * prefactor, nr)
     rs = np.empty(nd)
     fs_ = np.empty(nd)
     gs_ = np.empty(nd)
@@ -5772,7 +5774,8 @@ def remove_nans_for_array_pair(arr1, arr2):
     return compressed_arr1, compressed_arr2
 
 
-def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.015, deg=2, return_err=False, npt_min=4):
+def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.05, deg=2, return_err=False, npt_min=4,
+                           verbose=False):
     """
     Returns Taylor microscales as the curvature of the autocorrelation functions at r=0
     ... Algorithm:
@@ -5810,7 +5813,7 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.015, d
     lambda_err_g: numpy 2d array with shape (duration, ), optional
     """
 
-    def compute_lambda_from_autocorr_func(r, g, deg=2):
+    def compute_lambda_from_autocorr_func(r, g, deg=2, enforce_init_cond=False):
         """
         Parameters
         ----------
@@ -5835,6 +5838,8 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.015, d
         p = np.poly1d(z)  # poly class instance
         p_der2 = np.polyder(p, m=2)  # take the second derivative
         lambdag = (-p_der2(0) / 2.) ** -0.5
+        if len(residual) == 0: residual = [0.]
+
         return lambdag, residual
 
     n, duration = r_long.shape
@@ -5858,20 +5863,19 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.015, d
             lambda_err_f.append(np.nan)
             lambda_err_g.append(np.nan)
         else:
-            # Make sure that f(r=0, t)=g(r=0,t)=1
-            f_long_tmp /= f_long_tmp[0]
-            g_tran_tmp /= g_tran_tmp[0]
+            # # Make sure that f(r=0, t)=g(r=0,t)=1
+            # f_long_tmp /= f_long_tmp[0]
+            # g_tran_tmp /= g_tran_tmp[0]
 
             lambdafs, lambdags = [], []
             residuals_f, residuals_g = [], []
             # Extract lambda from autocorrelation functions (long. and trans.)
             for n in range(npt_min, len(f_long_tmp)):
                 lambda_f_tmp, residual_f = compute_lambda_from_autocorr_func(r_long_tmp[:n], f_long_tmp[:n], deg=deg)
-                if len(residual_f) == 0:
-                    residual_f = 0
-                else:
-                    residual_f = residual_f[0]
-
+                residual_f = residual_f[0]
+                if verbose:
+                    print(f'--Step {t}, Long. Taylor microscale--')
+                    print(f'No of pts to fit a quadratic func, residual, residual_thd, accept: {n}, {residual_f:.2f}, {residual_thd}, {residual_f<residual_thd}')
                 if residual_f < residual_thd:
                     lambdafs.append(lambda_f_tmp)
                     residuals_f.append(residual_f)
@@ -5879,10 +5883,11 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.015, d
                     break
             for n in range(npt_min, len(g_tran_tmp)):
                 lambda_g_tmp, residual_g = compute_lambda_from_autocorr_func(r_tran_tmp[:n], g_tran_tmp[:n], deg=deg)
-                if len(residual_g) == 0:
-                    residual_g = 0
-                else:
-                    residual_g = residual_g[0]
+                residual_g = residual_g[0]
+                if verbose:
+                    print(f'--Step {t}, Trans. Taylor microscale--')
+                    print(
+                        f'No of pts to fit a quadratic func, residual, residual_thd, accept: {n}, {residual_g:.2f}, {residual_thd}, {residual_g < residual_thd}')
                 if residual_g < residual_thd:
                     lambdags.append(lambda_g_tmp)
                     residuals_g.append(residual_g)
