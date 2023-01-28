@@ -239,14 +239,14 @@ def add_subplot_custom(x0, y0 ,x1, y1):
     ----------
     x0: left, [0, 1]
     y0: bottom, [0, 1]
-    x1: right, [0, 1]
-    y1: top, [0, 1]
+    x1: width, [0, 1]
+    y1: height, [0, 1]
 
     Returns
     -------
     ax: Axes object
     """
-    ax = pl.axes([x0, y0 ,x1, y1])
+    ax = pl.axes([x0, y0, x1, y1])
     return ax
 
 def plotfunc(func, x, param, fignum=1, subplot=111, ax = None, label=None, color=None, linestyle='-', legend=False, figsize=None, **kwargs):
@@ -1668,6 +1668,7 @@ def bin_and_errorbar(x_, y_, xerr=None,
 
 ## Plot a fit curve
 def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figsize=None, linestyle='--',
+                   range2fit=(-np.inf, np.inf),
                    xmin=None, xmax=None, add_equation=True, eq_loc='bl', color=None, label='fit',
                    show_r2=False, return_r2=False, p0=None, bounds=(-np.inf, np.inf), maskon=True, thd=1,**kwargs):
     """
@@ -1722,6 +1723,8 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
             print('No data points for fitting!')
             raise RuntimeError
         xdata, ydata = xdata[cond], ydata[cond]
+    cond_fitRange = np.logical_and(xdata > range2fit[0], xdata < range2fit[1])
+    xdata, ydata = xdata[cond_fitRange], ydata[cond_fitRange]
 
     if xmin is None:
         xmin = np.nanmin(xdata)
