@@ -1140,7 +1140,6 @@ def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
         marker = None
     else:
         marker_list = None
-
     if fillstyle =='none':
         # Scatter plot with open markers
         facecolors = 'none'
@@ -1418,7 +1417,7 @@ def cdf(data, nbins=100, return_data=False, vmax=None, vmin=None,
         return fig, ax, bins, cdf
 
 
-def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', linestyle='None', label=None, mfc='white',
+def errorbar(x, y, xerr=None, yerr=0., fignum=1, marker='o', fillstyle='full', linestyle='None', label=None, mfc='white',
              subplot=None, legend=False, legend_remove_bars=False, figsize=None, maskon=False, thd=1, capsize=10,
              xmax=None, xmin=None, ax=None, **kwargs):
     """ errorbar plot
@@ -1449,17 +1448,8 @@ def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', lin
     # Make sure that xerr and yerr are numpy arrays
     ## x, y, xerr, yerr do not have to be numpy arrays. It is just a convention. - takumi 04/01/2018
     x, y = np.array(x), np.array(y)
-    # Make xerr and yerr numpy arrays if they are not scalar. Without this, TypeError would be raised.
-    if not (isinstance(xerr, int) or isinstance(xerr, float)):
-        xerr = np.array(xerr)
-    else:
-        xerr = np.ones_like(x) * xerr
-    if not (isinstance(yerr, int) or isinstance(yerr, float)):
-        yerr = np.array(yerr)
-    else:
-        yerr = np.ones_like(x) * yerr
-    xerr[xerr==0] = np.nan
-    yerr[yerr==0] = np.nan
+
+    # MASK FEATURE
     if maskon:
         keep = get_mask4erroneous_pts(x, y, thd=thd)
     else:
@@ -1468,11 +1458,32 @@ def errorbar(x, y, xerr=0., yerr=0., fignum=1, marker='o', fillstyle='full', lin
         keep *= x < xmax
     if xmin is not None:
         keep *= x >= xmin
+
+    # Make xerr and yerr numpy arrays if they are not scalar. Without this, TypeError would be raised.
+    if xerr is not None:
+        if not ((isinstance(xerr, int) or isinstance(xerr, float))):
+            xerr_ = np.array(xerr)
+        else:
+            xerr_ = np.ones_like(x) * xerr
+        xerr_[xerr_==0] = np.nan
+        xerr_ = xerr_[keep]
+    else:
+        xerr_ = xerr
+    if yerr is not None:
+        if not ((isinstance(yerr, int) or isinstance(yerr, float))):
+            yerr_ = np.array(yerr)
+        else:
+            yerr_ = np.ones_like(x) * yerr
+        yerr_[yerr_==0] = np.nan
+        yerr_ = yerr_[keep]
+    else:
+        yerr_ = yerr
+
     if fillstyle == 'none':
-        ax.errorbar(x[keep], y[keep], xerr=xerr[keep], yerr=yerr[keep], marker=marker, mfc=mfc, linestyle=linestyle,
+        ax.errorbar(x[keep], y[keep], xerr=xerr_, yerr=yerr_, marker=marker, mfc=mfc, linestyle=linestyle,
                     label=label, capsize=capsize, **kwargs)
     else:
-        ax.errorbar(x[keep], y[keep], xerr=xerr[keep], yerr=yerr[keep], marker=marker, fillstyle=fillstyle,
+        ax.errorbar(x[keep], y[keep], xerr=xerr, yerr=yerr, marker=marker, fillstyle=fillstyle,
                     linestyle=linestyle, label=label, capsize=capsize,  **kwargs)
 
     if legend:
@@ -4380,7 +4391,7 @@ def get_markers():
     return markers
 
 # Embedded plots
-def add_subplot_axes(ax, rect, axisbg='w', alpha=1, **kwargs):
+def add_subplot_axes(ax, rect, axisbg='w', alpha=1, spines2hide=['right', 'top'], **kwargs):
     """
     Creates a sub-subplot inside the subplot (ax)
     rect: list, [x, y, width, height] e.g. rect = [0.2,0.2,0.7,0.7]
@@ -4416,8 +4427,13 @@ def add_subplot_axes(ax, rect, axisbg='w', alpha=1, **kwargs):
     y_labelsize *= rect[3]**0.3
     subax.xaxis.set_tick_params(labelsize=x_labelsize)
     subax.yaxis.set_tick_params(labelsize=y_labelsize)
+
+    subax.spines[spines2hide].set_visible(False)
     return subax
 
+def create_inset_ax(ax, rect, axisbg='w', alpha=1, **kwargs):
+    """DEPRICATED. Use add_subplot_axes"""
+    return add_subplot_axes(ax, rect, axisbg=axisbg, alpha=alpha, **kwargs)
 
 # sketches
 def draw_circle(ax, x, y, r, linewidth=1, edgecolor='r', facecolor='none', fill=False, **kwargs):
