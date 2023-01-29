@@ -3713,7 +3713,7 @@ def get_epsilon_using_struc_func(dll, r_dll, c=2.1, p=2., n=5):
 #                         'Residuals \n$\sum | \log_{10}{\\tilde{E}_{11}(\kappa \eta)} - \log_{10}{\\tilde{E}_{11}^{Ref}(\kappa \eta)}|$')
 #     return epsilons
 
-def get_epsilon_from_1d_spectrum(udata, k='kx', dx=1., dy=1., c1=0.491, r=(1., np.inf), **kwargs):
+def get_epsilon_from_1d_spectrum(udata, k='kx', dx=1., dy=1., c1=0.491, krange=(1., np.inf), n=3, **kwargs):
     """
     Returns a dissipation rate from a 1D energy spectrum
     How it works:
@@ -3729,8 +3729,8 @@ def get_epsilon_from_1d_spectrum(udata, k='kx', dx=1., dy=1., c1=0.491, r=(1., n
     dx: float, spacing along x
     dy: float, spacing along y
     c1: kolmogorov constant for E11=c1 epsilon^(2/3) k^(-5/3)
-    r: tuple, (r0, r1)
-        ... (r0, r1) defines a inertial subrange
+    krange: tuple, (k0, k1)
+        ... (k0, k1) defines a inertial subrange
     kwargs: keyword arguments passed to get_1d_energy_spectrum()
 
     Returns
@@ -3738,7 +3738,8 @@ def get_epsilon_from_1d_spectrum(udata, k='kx', dx=1., dy=1., c1=0.491, r=(1., n
     epsilons: 1d array with shape (duration, )
     epsilon_stds: 1d array with shape (duration, ), std of the dissipation rate (std of the n largest values of f(r))
     """
-    kmin, kmax = 2 * np.pi / r[1], 2 * np.pi / r[0]
+    # rmin, rmax = 2 * np.pi / krange[1], 2 * np.pi / krange[0]
+    kmin, kmax = krange[0], krange[1]
     udata = fix_udata_shape(udata)
     eii, eii_err, k11 = get_1d_energy_spectrum(udata, k=k, dx=dx, dy=dy, **kwargs)
     e11 = eii[0]
@@ -3750,6 +3751,8 @@ def get_epsilon_from_1d_spectrum(udata, k='kx', dx=1., dy=1., c1=0.491, r=(1., n
         epsilon_ = (e11[..., t] / (c1 * k11 ** (-5 / 3.))) ** 1.5
         epsilons[t] = np.nanmean(epsilon_[indMin:indMax])
         epsilon_stds[t] = np.nanstd(epsilon_[indMin:indMax])
+        # epsilons[t] = np.nanmean(sorted(epsilon_[indMin:indMax], reverse=True)[:n])
+        # epsilon_stds[t] = np.nanstd(sorted(epsilon_[indMin:indMax], reverse=True)[:n])
     return epsilons, epsilon_stds
 
 
