@@ -17,10 +17,12 @@ import time as time_mod
 import subprocess, glob
 import cv2
 import math
+import copy
 
 import warnings
 import matplotlib.cbook
 import matplotlib.pyplot as plt
+import matplotlib.path as mpltPath
 
 warnings.filterwarnings("ignore", category=matplotlib.cbook.mplDeprecation)
 warnings.simplefilter('ignore', RuntimeWarning)
@@ -5777,7 +5779,7 @@ def remove_nans_for_array_pair(arr1, arr2):
     return compressed_arr1, compressed_arr2
 
 
-def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.05, deg=2, return_err=False, npt_min=4,
+def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.001, deg=2, return_err=False, npt_min=1,
                            verbose=False):
     """
     Returns Taylor microscales as the curvature of the autocorrelation functions at r=0
@@ -5816,7 +5818,7 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.05, de
     lambda_err_g: numpy 2d array with shape (duration, ), optional
     """
 
-    def compute_lambda_from_autocorr_func(r, g, deg=2, enforce_init_cond=False):
+    def compute_lambda_from_autocorr_func(r, g, deg=2):
         """
         Parameters
         ----------
@@ -5834,14 +5836,15 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.05, de
         warnings.simplefilter('ignore', np.RankWarning)
 
         # Make autocorrelation function an even function. This helps computing the second derivative robustly
-        r_tmp = np.concatenate((-np.flip(r, axis=0)[:-1], r))
-        g_tmp = np.concatenate((np.flip(g, axis=0)[:-1], g))
+        r_tmp = np.concatenate((-np.flip(r, axis=0)[::-1], [0], r))
+        g_tmp = np.concatenate((np.flip(g, axis=0)[::-1], [1], g))
 
         z, residual, rank, singular_values, rcond = np.polyfit(r_tmp, g_tmp, deg, full=True)
         p = np.poly1d(z)  # poly class instance
         p_der2 = np.polyder(p, m=2)  # take the second derivative
         lambdag = (-p_der2(0) / 2.) ** -0.5
-        if len(residual) == 0: residual = [0.]
+        if len(residual) == 0:
+            residual = [0.]
 
         return lambdag, residual
 
@@ -6701,7 +6704,7 @@ def get_unidirectional_flow(xx, yy, t=np.asarray([0, 1]), U=10, c=0,
     return udata
 
 
-def get_sample_turb_field_3d(return_coord=True):
+def get_sample_turb_field_3d(return_coord=True, return_2dslice=False):
     """
     Returns udata=(ux, uy, uz) of a slice of isotropic, homogeneous turbulence data (DNS, JHTD)
 
@@ -6743,13 +6746,22 @@ def get_sample_turb_field_3d(return_coord=True):
         udata[..., t] = udata_tmp
     data.close()
 
-    if return_coord:
-        x, y, z = list(range(width)), list(range(height)), list(range(depth))
-        xx, yy, zz = np.meshgrid(y, x, z)
-        xx, yy, zz = xx * dx, yy * dy, zz * dz
-        return udata, xx, yy, zz
+    if return_2dslice:
+        if return_coord:
+            x, y, z = list(range(width)), list(range(height)), list(range(depth))
+            xx, yy = np.meshgrid(y, x)
+            xx, yy = xx * dx, yy * dy
+            return udata[1:, ..., 0, :], xx, yy
+        else:
+            return udata[1:, ...]
     else:
-        return udata
+        if return_coord:
+            x, y, z = list(range(width)), list(range(height)), list(range(depth))
+            xx, yy, zz = np.meshgrid(y, x, z)
+            xx, yy, zz = xx * dx, yy * dy, zz * dz
+            return udata, xx, yy, zz
+        else:
+            return udata
 
 
 def fftnoise2d(f):
@@ -7016,7 +7028,9 @@ def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
                         x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, inc=10, notebook=True,
                         reynolds_decomposition=False, keep=None,
                         clean=False, cutoff=np.inf, method='nn',
-                        median_filter=False, replace_zeros=True, overwrite_udatam=False, **kwargs):
+                        median_filter=False, replace_zeros=True,
+                        clean_kwargs={'kernel_radius': 2},
+                        overwrite_udatam=False, **kwargs):
     """
     (Intended for 3D velocity field data)
     Given a path to a hdf5 file which stores udata,
@@ -7093,20 +7107,20 @@ def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
             add_data2udatapath(udatapath, {'udata_m': udata_m}, overwrite=overwrite_udatam)
 
     for i, t in enumerate(tqdm(range(t0, t1, inc), desc=func.__name__)):
-        # load a dummy data
+        # load a data at frame t
         try:
-            udata, xx, yy, zz = get_udata_from_path(udatapath, return_xy=True, t0=t, t1=t + 1,
-                                                    x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, verbose=False)
+            udata, xx, yy, zz = get_udata(udatapath, return_xy=True, t0=t, t1=t + 1,
+                                          x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, verbose=False)
         except:
-            udata, xx, yy = get_udata_from_path(udatapath, return_xy=True, t0=t, t1=t + 1,
-                                                x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, verbose=False)
+            udata, xx, yy = get_udata(udatapath, return_xy=True, t0=t, t1=t + 1,
+                                      x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, verbose=False)
         if clean:
             udata = clean_udata(udata, cutoff=cutoff, verbose=False, median_filter=median_filter,
-                                replace_zeros=replace_zeros, showtqdm=False)
+                                replace_zeros=replace_zeros, showtqdm=False, **clean_kwargs)
         if reynolds_decomposition:
             udata[..., 0] -= udata_m
         if keep is not None:
-            udata = fill_udata(udata, keep, duplicate=False, fill_value=np.nan)
+            udata = fill_udata(udata, keep, deepcopy=False, fill_value=np.nan)
         if i == 0:
             datalist = []
             result = func(udata, **kwargs)
@@ -7702,7 +7716,7 @@ def export_raw_file(data2save, savepath, dtype='uint32', thd=np.inf, interpolate
         'idw':  fills nans with the (inverse distancing weighting) Gaussian kernel
             - the kernel size can be changed by passing an extra kwargs to the method called replace_nan_w_nn) (slow)
 
-    
+
     Parameters
     ----------
     data2save: nd array, shape (Ny, Nx, Nz, Nt)
@@ -10135,7 +10149,7 @@ def get_instantaneous_center_of_energy(udata, xx, yy, zz=None,
                                        x0=0, x1=None, y0=0, y1=None, z0=0, z1=None):
     """
     This function calculates the center of energy from the instantaneous energy field.
-    
+
     Parameters
     ----------
     udata: nd array with shape (dim, width, height, (depth), (duration))
@@ -10168,7 +10182,60 @@ def get_instantaneous_center_of_energy(udata, xx, yy, zz=None,
 
 
 # FUNCTIONS FOR STB DATA ANALYSIS
-def get_center_of_energy(dpath, inc=10, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None):
+def get_weighted_center(xx, yy, qty, zz=None, inc=1, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None,
+                        notebook=True):
+    """
+    Returns a center weighted by a quantity (e.g. energy)
+
+    Parameters
+    ----------
+    xx: 2d/3d array, x-coordinate
+    yy: 2d/3d array, y-coordinate
+    qty: 3d/4d array, weight
+    zz: 3d array, z-coordinate (optional)
+    inc: int, increment at which the weighted center is computued
+    x0: int, index to specify the domain of the data to be used for computation xx[y0:y1, x0:x1]
+    x1: int, default: None
+    y0: int
+    y1: int, default: None
+    z0: int
+    z1: int, default: None
+    notebook
+
+    Returns
+    -------
+
+    """
+    if notebook:
+        from tqdm import tqdm_notebook as tqdm
+
+    if t1 is None:
+        t1 = qty.shape[-1]
+    n = len(range(t0, t1, inc))
+    xcs, ycs = np.empty(n), np.empty(n)
+    if zz is None:
+        for i, t in enumerate(tqdm(range(t0, t1, inc))):
+            xcs[i] = np.nansum(qty[y0:y1, x0:x1, t] * xx[y0:y1, x0:x1]) / np.nansum(qty[y0:y1, x0:x1, t])
+            ycs[i] = np.nansum(qty[y0:y1, x0:x1, t] * yy[y0:y1, x0:x1]) / np.nansum(qty[y0:y1, x0:x1, t])
+    else:
+        zcs = np.empty(n)
+        for i, t in enumerate(tqdm(range(t0, duration, inc))):
+            xcs[i] = np.nansum(qty[y0:y1, x0:x1, t] * xx[y0:y1, x0:x1, z0:z1]) / np.nansum(qty[y0:y1, x0:x1, z0:z1, t])
+            ycs[i] = np.nansum(qty[y0:y1, x0:x1, t] * yy[y0:y1, x0:x1, z0:z1]) / np.nansum(qty[y0:y1, x0:x1, z0:z1, t])
+            zcs[i] = np.nansum(qty[y0:y1, x0:x1, z0:z1, t] * zz[y0:y1, x0:x1, z0:z1]) / np.nansum(qty[y0:y1, x0:x1, z0:z1, t])
+
+    if zz is not None:
+        weighted_center = np.stack((xcs, ycs, zcs))
+    else:
+        weighted_center = np.stack((xcs, ycs))
+
+    if notebook:
+        from tqdm import tqdm as tqdm
+
+    return weighted_center
+
+
+def get_center_of_energy(dpath, inc=10, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,):
     """
     Returns the center of energy (essentially the center of the blob)- (xc, yc, zc)
     using the TIME-AVERAGED ENERGY FIELD.
@@ -11670,9 +11737,11 @@ def get_udata_from_path(*args, **kwargs):
 
 
 def get_udata(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
-                        t0=0, t1=None, inc=1, frame=None, return_xy=False, verbose=True,
-                        slicez=None, crop=None,
-                        reverse_x=False, reverse_y=False, reverse_z=False, ind=0):
+              t0=0, t1=None, inc=1, frame=None, return_xy=False, verbose=True,
+              slicez=None, crop=None,
+              reverse_x=False, reverse_y=False, reverse_z=False, ind=0,
+              applyMask=True,
+             ):
     """
     Returns udata from a path to udata
     If return_xy is True, it returns udata, xx(2d grid), yy(2d grid)
@@ -11788,24 +11857,32 @@ def get_udata(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
         if verbose:
             print(f'... time took to load udata: {tau1 - tau0:.2f} s')
 
+        if applyMask:
+            keys = get_h5_keys(udatapath)
+            if 'mask' in keys:
+                with h5py.File(udatapath, 'r') as f:
+                    mask = f['mask'][...]
+                udata = mask_udata(udata, mask, fill_value=np.nan)
+                udata[udata.mask] = np.nan
+
         if return_xy:
             if dim == 2:
                 if reverse_x:
                     udata[0, ...] = -udata[0, ...]
-                    xx[...] = -xx[:, :]
+                    xx[...] = -xx[:, :]  + np.nanmax(xx[0, :])
 
                 if reverse_y:
                     udata[1, ...] = -udata[1, ...]
-                    yy[...] = -yy[:, :]
+                    yy[...] = -yy[:, :] + np.nanmax(yy[:, 0])
                 return udata, xx, yy
             elif dim == 3:
                 if reverse_x:
                     udata[...] = -udata[:, :, ::-1, :, :]
-                    xx[...] = -xx[:, :, :]
+                    xx[...] = -xx[:, :, :] + np.nanmax(xx[0, :, 0])
 
                 if reverse_y:
                     udata[1, ...] = -udata[1, ...]
-                    yy[...] = -yy[:, :, :]
+                    yy[...] = -yy[:, :, :] + np.nanmax(yy[:, 0, 0])
 
                 if reverse_z:
                     udata[2, ...] = -udata[2, :, :, :, :]
@@ -12134,7 +12211,7 @@ def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=N
                         return_center=False,
                         zz=None, zc=None, z0=0, z1=None,
                         method=None,  # if qty contains nan, choose how to clean the array
-                        cutoff=np.inf, notebook=True, showtqdm=True
+                        cutoff=np.inf, return_std=True, notebook=True, showtqdm=True
                         ):
     """
     Returns a spatial profile (radial distribution) of 3D object with shape (height, width, duration)
@@ -12218,11 +12295,11 @@ def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=N
         rs = np.empty(shape)
         qty_ms = np.empty(shape)
         qty_errs = np.empty(shape)
-        for t in tqdm(list(range(duration))):
+        for t in tqdm(range(duration), disable=not showtqdm):
             rs[:, t], qty_ms[:, t], qty_errs[:, t] = get_binned_stats(r.flatten(),
                                                                       qty_local[..., t].flatten(),
                                                                       n_bins=n,
-                                                                      return_std=True)
+                                                                      return_std=return_std)
     else:
         x, y, z = xx[y0:y1, x0:x1, z0:z1], yy[y0:y1, x0:x1, z0:z1], zz[y0:y1, x0:x1, z0:z1],
         if len(qty.shape) == 3:
@@ -12247,11 +12324,11 @@ def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=N
         rs = np.empty(shape)
         qty_ms = np.empty(shape)
         qty_errs = np.empty(shape)
-        for t in tqdm(list(range(duration)), disable=not showtqdm):
+        for t in tqdm(range(duration), disable=not showtqdm):
             rs[:, t], qty_ms[:, t], qty_errs[:, t] = get_binned_stats(r.flatten(),
                                                                       qty_local[..., t].flatten(),
                                                                       n_bins=n,
-                                                                      return_std=True)
+                                                                      return_std=return_std)
 
     if notebook: from tqdm import tqdm as tqdm
 
@@ -12288,21 +12365,25 @@ def fix_udata_shape(udata):
     udata: nd array, with shape (height, width, depth, duration) (3D) or  (height, width, duration) (2D)
 
     """
+
+    if type(udata) == np.ma.core.MaskedArray:
+        dtype = 'maskedArray'
+        mask = udata.mask
+    else:
+        dtype = 'ndarray'
     shape = udata.shape  # shape=(dim, nrows, ncols, nstacks) if nstacks=0, shape=(dim, nrows, ncols)
-    if shape[0] == 2:
+    dim = shape[0]
+    if dim == 2:
         ux, uy = udata[0, ...], udata[1, ...]
         try:
             dim, nrows, ncols, duration = udata.shape
-            return udata
         except:
             dim, nrows, ncols = udata.shape
             duration = 1
             ux = ux.reshape((ux.shape[0], ux.shape[1], duration))
             uy = uy.reshape((uy.shape[0], uy.shape[1], duration))
-            return np.stack((ux, uy))
-
-    elif shape[0] == 3:
-        dim = 3
+            udata = np.stack((ux, uy))
+    elif dim == 3:
         ux, uy, uz = udata[0, ...], udata[1, ...], udata[2, ...]
         try:
             nrows, ncols, nstacks, duration = ux.shape
@@ -12313,7 +12394,10 @@ def fix_udata_shape(udata):
             ux = ux.reshape((ux.shape[0], ux.shape[1], ux.shape[2], duration))
             uy = uy.reshape((uy.shape[0], uy.shape[1], uy.shape[2], duration))
             uz = uz.reshape((uz.shape[0], uz.shape[1], uz.shape[2], duration))
-            return np.stack((ux, uy, uz))
+            udata = np.stack((ux, uy, uz))
+    if dtype =='maskedArray': # if dtype is a masked array, convert data to a masked array from a regular array
+        udata = np.ma.array(data = udata, mask = mask)
+    return udata
 
 def get_time_from_path(dpath, fps, inc=1, t0=0, t1=None, save=False, overwrite=False):
     """
@@ -12384,34 +12468,66 @@ def truncateXYZ(xxx, yyy, zzz, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None):
     return xxx[y0:y1, x0:x1, z0:z1], yyy[y0:y1, x0:x1, z0:z1], zzz[y0:y1, x0:x1, z0:z1]
 
 
-def fill_udata(udata, keep, duplicate=True, fill_value=np.nan):
+
+def load_mask(dpath2mask, xx, yy, dx):  # mm/px
     """
-    Replaces values in ~keep with 'filled_value'
-    ... For actual masking which does not involve replacing values of the array, use a numpy masked array.
+    Creates a boolean array (mask) based on the masking data exported by DaVis
 
     Parameters
     ----------
-    udata: nd array of a v-field
-    keep: 2/3d boolean array, where True indicates values to keep
-    copy: bool, default: True
-    ... If True, the given udata remains untouched.
+    dpath2mask: str, path to a file where mask data is stored
+    xx: 2d array, x-coordinate in physical units
+    yy: 2d array, x-coordinate in physical units
+    dx: float, spatial conversion rate between the original image and physical dimensions
+    ... DeltaX, DeltaY = get_grid_spacing(xx, yy)
+    ... dx = DeltaX / [W (1 - overlap)] # mm/px
+
     Returns
     -------
-    vdata: nd array- a masked array
+    mask: 2d array, boolean
+    ... If True: hide
+    ... If False, keep
+
+    Examples
+    -------
+    dpath2mask = r'D:/userdata/takumi/PIV_2021_10_31_turb_front/masksettings.set'
+    mask = load_mask(dpath2mask, xx, yy, 0.0757)
+
     """
-    if duplicate:
-        vdata = copy.deepcopy(udata)
-    else:
-        vdata = udata
-    vdata = fix_udata_shape(vdata)
-    dim = vdata.shape[0]
-    for t in range(vdata.shape[-1]):
-        for d in range(dim):
-            vdata[d, ..., t][~keep] = fill_value
-    return vdata
+    with open(dpath2mask) as f:
+        ln = 0
+        while True:
+            line = f.readline()
+            if ln == 30:  # MASKSA_CreateGeometric_OverlayStringArrayCamera
+                chr = ''
+                polygons = []
+                pt = ''
+                for s in line:
+                    chr += s
+                    pt += s
+                    if chr.endswith('\\nPoints=  '):
+                        pt = ''
+                    if chr.endswith('\\n\\n'):
+                        pt = pt[:-4]
+                        pt = pt.split(' ')
+                        polygon = [[float(pt[2 * i]) * dx, float(pt[2 * i + 1]) * dx] for i, p in enumerate(pt[::2])]
+                        polygons.append(polygon)
+            if not line:
+                break
+            ln += 1
+    M, N = xx.shape
+    mask = np.ones_like(xx).astype('bool')
+    for i in range(M):
+        for j in range(N):
+            pt = np.asarray([xx[i, j], yy[i, j]]).reshape(1, 2)
+            for polygon in polygons[0:1]:
+                path = mpltPath.Path(polygon)
+                if path.contains_points(pt):
+                    mask[i, j] = False
+    return mask
 
 
-def mask_udata(udata, mask):
+def mask_udata(udata, mask, fill_value=np.nan):
     """
     Returns a numpy.masked array of udata
     ... The shape of the mask must be one of ushape, ushape[1:], ushape[1:-1] where ushape=udata.shape
@@ -12422,6 +12538,8 @@ def mask_udata(udata, mask):
     mask: md boolean array
     ... The shape of the mask must be one of ushape=udata.shape, ushape[1:], ushape[1:-1] where ushape=udata.shape
     ... The mask must be a boolean array, where True indicates values to hide
+    ... If True: hide
+    ... If False, keep
 
     Returns
     -------
@@ -12438,17 +12556,41 @@ def mask_udata(udata, mask):
             rep = [1] * len(ushape)
             rep[0] = d
             mask_ = np.tile(mask[np.newaxis, ...], rep)
-            udata = np.ma.masked_array(udata, mask=mask_)
+            udata = np.ma.masked_array(udata, mask=mask_, fill_value=fill_value)
         elif ushape[1:-1] == mask.shape:
             rep = [1] * len(ushape)
             rep[0] = d
             rep[-1] = ushape[-1]
             mask_ = np.tile(mask[np.newaxis, ..., np.newaxis], rep)
-            udata = np.ma.masked_array(udata, mask=mask_)
+            udata = np.ma.masked_array(udata, mask=mask_, fill_value=fill_value)
         else:
             raise ValueError('mask shape must be one of these:', ushape, ushape[1:], ushape[1:-1])
     return udata
 
+def fill_udata(udata, mask, fill_value=np.nan, deepcopy=False):
+    """
+    Replace values in udata where `mask` is True with `fill_value`
+
+    Parameters
+    ----------
+    udata: nd array
+    mask: 2d or 3d array
+    fill_value: float, default: fill_value
+    deepcopy: bool, if True, it processes on a deepcopy of udata. Default: False
+
+    Returns
+    -------
+
+    """
+    udata = fix_udata_shape(udata)
+    if deepcopy:
+        udata_filled = copy.deepcopy(udata)
+    else:
+        udata_filled = udata
+    for d in range(udata_filled.shape[0]):
+        for t in range(udata_filled.shape[-1]):
+            udata_filled[d, ..., t][mask] = fill_value
+    return udata_filled
 
 def get_speed(udata):
     """
@@ -13423,13 +13565,13 @@ def get_running_avg_1d(x, t, returnSameShape=False, notebook=useNotebook):
         return y
 
 
-def get_running_avg_nd(udata, t, axis=-1, notebook=useNotebook):
+def get_running_avg_nd(data, t, axis=-1, notebook=useNotebook):
     """
     Calculate the running average of a nD array
 
     Parameters
     ----------
-    udata: nd array, a vector field
+    data: nd array, a scalar/vector field
     t: float, number of time steps to average over
     axis: int, axis along which to average
     notebook: bool, if True, it uses tqdm_notebook instead of tqdm to show a progress bar
@@ -13446,12 +13588,12 @@ def get_running_avg_nd(udata, t, axis=-1, notebook=useNotebook):
             print('Using tqdm_notebook. If this is a mistake, set notebook=False')
         else:
             from tqdm import tqdm
-        shape = udata.shape
+        shape = data.shape
         newshape = tuple(list(shape)[:-1] + [shape[-1] - t])
         vdata = np.zeros(newshape)
         for i in tqdm(list(range(t)), desc='Computing running average (nd)'):
             # if array contains nan, nans will be replaced by 0.
-            vdata += np.nan_to_num(np.roll(udata, -i, axis=axis)[..., :-t])
+            vdata += np.nan_to_num(np.roll(data, -i, axis=axis)[..., :-t])
         vdata /= float(t)
 
         if notebook:
@@ -15116,9 +15258,9 @@ def compute_streamfunction_values(udata, xx, yy,
     yy
     x
     y
-    xref, float
+    xref: float
     ... x coordinate of the reference point
-    yref, float
+    yref: float
     ... y coordinate of the reference point
     contours: 3d array with shape (number of contours, number of points on each contour, 2), default: None
         E.g. (x, y) on the 3rd contour is stored as (contours[2, :, 0], contours[2, :, 1])
@@ -16820,7 +16962,7 @@ def make_blocks_from_2d_array(arr, nrows, ncols):
 
 # Coarse-graining 3D
 def coarse_grain_3darr(arr, nrow_sub, ncol_sub, ndep_sub, overlap=0, showtqdm=True, notebook=True, verbose=False, squeeze=True):
-    
+
     """
     Coarse-grain a 3d array
     ... The idea is to split the original array into many subcells, and average over each subcell
