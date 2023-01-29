@@ -3713,7 +3713,7 @@ def get_epsilon_using_struc_func(dll, r_dll, c=2.1, p=2., n=5):
 #                         'Residuals \n$\sum | \log_{10}{\\tilde{E}_{11}(\kappa \eta)} - \log_{10}{\\tilde{E}_{11}^{Ref}(\kappa \eta)}|$')
 #     return epsilons
 
-def get_epsilon_from_1d_spectrum(udata, k='kx', dx=1., dy=1., c1=0.491, r=(1., np.inf), **kwargs):
+def get_epsilon_from_1d_spectrum(udata, k='kx', dx=1., dy=1., c1=0.491, krange=(1., np.inf), n=3, **kwargs):
     """
     Returns a dissipation rate from a 1D energy spectrum
     How it works:
@@ -3729,8 +3729,8 @@ def get_epsilon_from_1d_spectrum(udata, k='kx', dx=1., dy=1., c1=0.491, r=(1., n
     dx: float, spacing along x
     dy: float, spacing along y
     c1: kolmogorov constant for E11=c1 epsilon^(2/3) k^(-5/3)
-    r: tuple, (r0, r1)
-        ... (r0, r1) defines a inertial subrange
+    krange: tuple, (k0, k1)
+        ... (k0, k1) defines a inertial subrange
     kwargs: keyword arguments passed to get_1d_energy_spectrum()
 
     Returns
@@ -3738,7 +3738,8 @@ def get_epsilon_from_1d_spectrum(udata, k='kx', dx=1., dy=1., c1=0.491, r=(1., n
     epsilons: 1d array with shape (duration, )
     epsilon_stds: 1d array with shape (duration, ), std of the dissipation rate (std of the n largest values of f(r))
     """
-    kmin, kmax = 2 * np.pi / r[1], 2 * np.pi / r[0]
+    # rmin, rmax = 2 * np.pi / krange[1], 2 * np.pi / krange[0]
+    kmin, kmax = krange[0], krange[1]
     udata = fix_udata_shape(udata)
     eii, eii_err, k11 = get_1d_energy_spectrum(udata, k=k, dx=dx, dy=dy, **kwargs)
     e11 = eii[0]
@@ -3750,6 +3751,8 @@ def get_epsilon_from_1d_spectrum(udata, k='kx', dx=1., dy=1., c1=0.491, r=(1., n
         epsilon_ = (e11[..., t] / (c1 * k11 ** (-5 / 3.))) ** 1.5
         epsilons[t] = np.nanmean(epsilon_[indMin:indMax])
         epsilon_stds[t] = np.nanstd(epsilon_[indMin:indMax])
+        # epsilons[t] = np.nanmean(sorted(epsilon_[indMin:indMax], reverse=True)[:n])
+        # epsilon_stds[t] = np.nanstd(sorted(epsilon_[indMin:indMax], reverse=True)[:n])
     return epsilons, epsilon_stds
 
 
@@ -4309,9 +4312,7 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                            nd=10 ** 3, nr=70, rmax=None, notebook=True,
                            periodic=False):
     """
-    
     Returns the normalized two-point velocity tatistics (rrs, fs, f_errs, rrs, gs, g_errs)
-
     ... f(r): longitudinal two-pt  stat
     ... g(r): transverse two-pt  stat
     ... In order for f(r) and g(r) to have a meaning, the flow MUST be isotropic
@@ -4321,8 +4322,6 @@ def get_two_point_vel_corr(udata, x, y, z=None,
         3. f(r) = < (u(A) \cdot r) u(B) \cdot r)> /   < |u(A) \cdot r|^2>
            g(r) = < (u(A) \cdot n) u(B) \cdot n)> /   < |u(A) \cdot r|^2>
     ... The v-field must be isotropic for this result to make sense.
-
-
     Parameters
     ----------
     udata: nd array, a velocity field
@@ -4343,7 +4342,6 @@ def get_two_point_vel_corr(udata, x, y, z=None,
     rmax: float, maximum distance to compute the two-point correlation function
     notebook: bool, if True, tqdm_notebook is used instead of tqdm
     periodic: bool, if True, the velocity field is assumed to be periodic
-
     Returns
     -------
     autocorrs: tuple
@@ -4357,28 +4355,12 @@ def get_two_point_vel_corr(udata, x, y, z=None,
     ... g_errs: 2d array, transverse velocity correlation funciton error with shape (nd, duration)
     """
 
+
     if notebook:
         from tqdm import tqdm_notebook as tqdm
     else:
         from tqdm import tqdm
 
-    # def get_rotation_matrix_between_two_vectors(a, b):
-    #     """
-    #     Returns a 3D rotation matrix R that rotates a unit vector onto a unit vector of b
-    #     """
-    #     a, b = vec.norm(a), vec.norm(b)
-    #     v = vec.cross(a, b)
-    #     s = vec.mag1(v)
-    #     c = vec.dot(a, b)
-    #
-    #     A = np.asarray([[0, -v[2], v[1]],
-    #                     [v[2], 0, -v[0]],
-    #                     [-v[1], v[0], 0]])
-    #     I = np.asarray([[1, 0, 0],
-    #                     [0, 1, 0],
-    #                     [0, 0, 1]])
-    #     R = I + A + np.matmul(A, A) * (1 - c) / s ** 2
-    #     return R
     def get_rotation_matrix_between_two_vectors(a, b):
         """
         Returns a 3D rotation matrix R that rotates a unit vector of "a" onto a unit vector of "b"
@@ -4467,15 +4449,15 @@ def get_two_point_vel_corr(udata, x, y, z=None,
     if dim == 2:
         xmin, xmax, ymin, ymax = np.min(x_grid), np.max(x_grid), np.min(y_grid), np.max(y_grid)
         width, height = xmax - xmin, ymax - ymin
-        if rmax is None: rmax = min([width, height]) * prefactor
-        rs_ = np.linspace(dx * 2, rmax, nr)
+        if rmax is None: rmax = (width ** 2 + height ** 2) ** 0.5
+        rs_ = np.linspace(dx * 2, min([width, height, rmax]) * prefactor, nr)
     elif dim == 3:
         xmin, xmax, ymin, ymax, zmin, zmax = np.min(x_grid), np.max(x_grid), \
                                              np.min(y_grid), np.max(y_grid), \
                                              np.min(z_grid), np.max(z_grid)
         width, height, depth = xmax - xmin, ymax - ymin, zmax - zmin
-        if rmax is None: rmax = min([width, height, depth]) * prefactor
-        rs_ = np.linspace(dx * 2, rmax, nr)
+        if rmax is None: rmax = (width ** 2 + height ** 2 + depth ** 2) ** 0.5
+        rs_ = np.linspace(dx*2, min([width, height, depth, rmax]) * prefactor, nr)
     rs = np.empty(nd)
     fs_ = np.empty(nd)
     gs_ = np.empty(nd)
@@ -4501,12 +4483,14 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                                 X1 = - width
                             elif X1 < xmin:
                                 X1 += width
-                            else: pass
+                            else:
+                                pass
                             if Y1 > ymax:
                                 Y1 = - height
                             elif Y1 < ymin:
                                 Y1 += height
-                            else: pass
+                            else:
+                                pass
                         is_R1_reasonable = X1 < xmax and X1 > xmin and Y1 < ymax and Y1 > ymin
                         X1_ind, _ = find_nearest(x_grid[0, :], X1)
                         Y1_ind, _ = find_nearest(y_grid[:, 0], Y1)
@@ -4532,24 +4516,28 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                                 R01[0] -= width
                             elif R01[0] < -width / 2:
                                 R01[0] += width
+                            else:
+                                pass
                             if R01[1] > height / 2:
                                 R01[1] -= height
                             elif R01[1] < -height / 2:
                                 R01[1] += height
-                            if dim == 3:
-                                if R01[2] > depth / 2:
-                                    R01[2] -= depth
-                                elif R01[2] < -depth / 2:
-                                    R01[2] += depth
+                            else:
+                                pass
+                            if R01[2] > depth / 2:
+                                R01[2] -= depth
+                            elif R01[2] < -depth / 2:
+                                R01[2] += depth
+                            else:
+                                pass
                         is_R1_reasonable = X1 < xmax and X1 > xmin and Y1 < ymax and Y1 > ymin and Z1 < zmax and Z1 > zmin
                         X1_ind, _ = find_nearest(x_grid[0, :, 0], X1)
                         Y1_ind, _ = find_nearest(y_grid[:, 0, 0], Y1)
                         Z1_ind, _ = find_nearest(z_grid[0, 0, :], Z1)
                         R1 = np.asarray([x_grid[0, X1_ind, 0], y_grid[Y1_ind, 0, 0], z_grid[0, 0, Z1_ind]])
-                        if is_R1_reasonable and  X0_ind == X1_ind and Y0_ind == Y1_ind and Z0_ind == Z1_ind:
-                                is_R1_reasonable = False
-                else:
-                    raise ValueError('dim must be 2 ro 3.')
+                        if is_R1_reasonable and X0_ind == X1_ind and Y0_ind == Y1_ind and Z0_ind == Z1_ind:
+                            is_R1_reasonable = False
+
                 R01 = R1 - R0
 
                 basis = vec.get_an_orthonormal_basis(dim, v1=R01)
@@ -4566,8 +4554,8 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                                                                                          basis[:, 0])
                     gs_[j] = vec.dot(udata[:, Y0_ind, X0_ind, t], basis[:, 1]) * vec.dot(udata[:, Y1_ind, X1_ind, t],
                                                                                          basis[:, 1])
-                    denominators_f[j] = vec.dot(udata[:, Y0_ind, X0_ind, t], basis[:, 0])
-                    denominators_g[j] = vec.dot(udata[:, Y0_ind, X0_ind, t], basis[:, 1])
+                    denominators_f[j] = vec.dot(udata[:, Y0_ind, X0_ind, t], basis[:, 0]) ** 2
+                    denominators_g[j] = vec.dot(udata[:, Y0_ind, X0_ind, t], basis[:, 1]) ** 2
                 elif dim == 3:
                     if t == t0:
                         R01_0 = copy.deepcopy(R01)
@@ -4583,10 +4571,11 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                         udata[:, Y1_ind, X1_ind, Z0_ind, t], basis[:, 1])
                     # for k, Rt in enumerate(Rts):
                     #     gs_[j * nt + k] = vec.dot(udata[:, Y0_ind, X0_ind, Z0_ind, t], Rt) * vec.dot(udata[:, Y1_ind, X1_ind, Z0_ind, t], Rt) / denominator
-
                     denominators_f[j] = vec.dot(udata[:, Y0_ind, X0_ind, Z0_ind, t], basis[:, 0]) ** 2
                     denominators_g[j] = vec.dot(udata[:, Y0_ind, X0_ind, Z0_ind, t], basis[:, 1]) ** 2
-                is_R1_reasonable = False
+                else:
+                    raise ValueError('dim must be 2 ro 3.')
+                is_R1_reasonable = False # initialize
 
             rrs[i, t] = np.nanmean(rs)
             fs[i, t] = np.nanmean(fs_) / np.nanmean(denominators_f)
@@ -5788,7 +5777,8 @@ def remove_nans_for_array_pair(arr1, arr2):
     return compressed_arr1, compressed_arr2
 
 
-def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.015, deg=2, return_err=False, npt_min=4):
+def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.05, deg=2, return_err=False, npt_min=4,
+                           verbose=False):
     """
     Returns Taylor microscales as the curvature of the autocorrelation functions at r=0
     ... Algorithm:
@@ -5826,7 +5816,7 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.015, d
     lambda_err_g: numpy 2d array with shape (duration, ), optional
     """
 
-    def compute_lambda_from_autocorr_func(r, g, deg=2):
+    def compute_lambda_from_autocorr_func(r, g, deg=2, enforce_init_cond=False):
         """
         Parameters
         ----------
@@ -5851,6 +5841,8 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.015, d
         p = np.poly1d(z)  # poly class instance
         p_der2 = np.polyder(p, m=2)  # take the second derivative
         lambdag = (-p_der2(0) / 2.) ** -0.5
+        if len(residual) == 0: residual = [0.]
+
         return lambdag, residual
 
     n, duration = r_long.shape
@@ -5874,20 +5866,19 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.015, d
             lambda_err_f.append(np.nan)
             lambda_err_g.append(np.nan)
         else:
-            # Make sure that f(r=0, t)=g(r=0,t)=1
-            f_long_tmp /= f_long_tmp[0]
-            g_tran_tmp /= g_tran_tmp[0]
+            # # Make sure that f(r=0, t)=g(r=0,t)=1
+            # f_long_tmp /= f_long_tmp[0]
+            # g_tran_tmp /= g_tran_tmp[0]
 
             lambdafs, lambdags = [], []
             residuals_f, residuals_g = [], []
             # Extract lambda from autocorrelation functions (long. and trans.)
             for n in range(npt_min, len(f_long_tmp)):
                 lambda_f_tmp, residual_f = compute_lambda_from_autocorr_func(r_long_tmp[:n], f_long_tmp[:n], deg=deg)
-                if len(residual_f) == 0:
-                    residual_f = 0
-                else:
-                    residual_f = residual_f[0]
-
+                residual_f = residual_f[0]
+                if verbose:
+                    print(f'--Step {t}, Long. Taylor microscale--')
+                    print(f'No of pts to fit a quadratic func, residual, residual_thd, accept: {n}, {residual_f:.2f}, {residual_thd}, {residual_f<residual_thd}')
                 if residual_f < residual_thd:
                     lambdafs.append(lambda_f_tmp)
                     residuals_f.append(residual_f)
@@ -5895,10 +5886,11 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.015, d
                     break
             for n in range(npt_min, len(g_tran_tmp)):
                 lambda_g_tmp, residual_g = compute_lambda_from_autocorr_func(r_tran_tmp[:n], g_tran_tmp[:n], deg=deg)
-                if len(residual_g) == 0:
-                    residual_g = 0
-                else:
-                    residual_g = residual_g[0]
+                residual_g = residual_g[0]
+                if verbose:
+                    print(f'--Step {t}, Trans. Taylor microscale--')
+                    print(
+                        f'No of pts to fit a quadratic func, residual, residual_thd, accept: {n}, {residual_g:.2f}, {residual_thd}, {residual_g < residual_thd}')
                 if residual_g < residual_thd:
                     lambdags.append(lambda_g_tmp)
                     residuals_g.append(residual_g)
