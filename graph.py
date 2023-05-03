@@ -1,5 +1,5 @@
 '''
-Module for plotting and saving figures
+Module for plotting figures
 '''
 import os, copy
 import matplotlib as mpl
@@ -39,13 +39,12 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-
 #Global variables
 #Default color cycle: iterator which gets repeated if all elements were exhausted
 #__color_cycle__ = itertools.cycle(iter(plt.rcParams['axes.prop_cycle'].by_key()['color']))
 __def_colors__ = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
 __color_cycle__ = itertools.cycle(['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'])  #matplotliv v2.0
-__old_color_cycle__ = itertools.cycle(['b', 'g', 'r', 'c', 'm', 'y', 'k'])  #matplotliv classic
+__old_color_cycle__ = itertools.cycle(['b', 'g', 'r', 'c', 'm', 'y', 'k'])  #matplotlib classic
 mycolors5 = np.asarray([
                      [0.2298057 , 0.29871797, 0.75368315, 1.        ], # Left-handed: blue, #3B4CC0
                      [0.18431373, 0.49019608, 0.33333333, 1.        ], # Non-helical 1:, #4A7D55, green
@@ -71,7 +70,9 @@ params = {'figure.figsize': __figsize__,
          'axes.titlesize': __fontsize__,
          'xtick.labelsize': __fontsize__, # tick
          'ytick.labelsize': __fontsize__,
-          'lines.linewidth': 3}
+          'lines.linewidth': 3,
+          'figure.dpi': 200,
+          }
 
 default_custom_cycler = {'color': ['r', 'b', 'g', 'y'],
                           'linestyle': ['-', '-', '-', '-'],
@@ -1123,7 +1124,7 @@ def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
 
     x, y = np.array(x), np.array(y)
     if len(x.flatten()) > len(y.flatten()):
-        print("Warning : x and y data do not have the same length")
+        print(f"Warning : x and y data do not have the same length, {len(x.flatten())}, {len(y.flatten())}")
         x = x[:len(y)]
 
     if maskon:
@@ -1143,23 +1144,25 @@ def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
     if fillstyle =='none':
         # Scatter plot with open markers
         facecolors = 'none'
-        if type(alpha) == float or type(alpha) == int:
-            # ax.scatter(x, y, color=color, label=label, marker=marker, facecolors=facecolors, edgecolors=edgecolors, **kwargs)
+        if isinstance(alpha, float) or isinstance(alpha, int):
             sc = ax.scatter(x[keep], y[keep], label=label, marker=marker, facecolors=facecolors, alpha=alpha,
                             edgecolor=edgecolor, **kwargs)
         else:
-            for i, alpha_ in enumerate(alpha[keep]):
-                if i != 0:
-                    label=None
-                sc = ax.scatter(x[keep][i], y[keep][i], label=label, marker=marker, facecolors=facecolors, alpha=alpha_, edgecolor=edgecolor, **kwargs)
+            sc = ax.scatter(x[keep], y[keep], label=label, marker=marker, facecolors=facecolors, alpha=alpha[keep],
+                                edgecolor=edgecolor, **kwargs)
+            # for i, alpha_ in enumerate(alpha[keep]):
+            #     if i != 0:
+            #         label=None
+            #     sc = ax.scatter(x[keep][i], y[keep][i], label=label, marker=marker, facecolors=facecolors, alpha=alpha_, edgecolor=edgecolor, **kwargs)
     else:
-        if type(alpha) == float or type(alpha) == int:
+        if isinstance(alpha, float) or isinstance(alpha, int):
             sc = ax.scatter(x[keep], y[keep], label=label, marker=marker, alpha=alpha, **kwargs)
         else:
-            for i, alpha_ in enumerate(alpha[keep]):
-                if i != 0:
-                    label=None
-                sc = ax.scatter(x[keep][i], y[keep][i], label=label, marker=marker, alpha=alpha_, **kwargs)
+            sc = ax.scatter(x[keep], y[keep], label=label, marker=marker, alpha=alpha[keep], **kwargs)
+            # for i, alpha_ in enumerate(alpha[keep]):
+            #     if i != 0:
+            #         label=None
+            #     sc = ax.scatter(x[keep][i], y[keep][i], label=label, marker=marker, alpha=alpha_, **kwargs)
     if legend:
         plt.legend()
 
@@ -1677,6 +1680,106 @@ def bin_and_errorbar(x_, y_, xerr=None,
     else:
         return fig, ax, x[mask], y[mask], xerr[mask], yerr[mask]
 
+def bin_and_scatter(x_, y_, xerr=None,
+                     n_bins=100, mode='linear', bin_center=True, return_std=False,
+                     fignum=1, ax=None, marker='o', fillstyle='full',
+                     linestyle='None', linewidth=1, label=None, mfc='white',
+                     subplot=None, legend=False, figsize=None, maskon=False, thd=1, capsize=5,
+                     set_bottom_zero=False, symmetric=False, #y-axis
+                     set_left_zero=False,
+                     return_stats=False, **kwargs):
+    """
+    Takes scattered data points (x, y), bin them (compute avg and std), then plots the results with error bars
+
+    Parameters
+    ----------
+    x : array-like
+    y : array-like
+    xerr: must be a scalar or numpy array with shape (N,1) or (2, N)... [xerr_left, xerr_right]
+        ... if xerr==0, it removes the error bars in x.
+    yerr:  must be a scalar or numpy array with shape (N,) or (2, N)... [yerr_left, yerr_right]
+    n_bins: int, number of bins used to compute a histogram between xmin and xmax
+    mode: str, default: 'linear', options are 'linear' and 'log'. Select either linear binning or logarithmic binning
+        ... If "linear", it computes statistics using evenly separated bins between xmin and xmax.
+        ... If "log", it uses bins evenly separted in the log space. (It assumes that xmin>0)
+            i.e. The bin edges are like (10^-1.0, 10^-0.5),  (10^-0.5, 10^0),  (10^0, 10^0.5), and so on.
+    bin_center: bool, default: True.
+        ... passed to get_binned_stats()
+    return_std: bool, default: False.
+        ... passed to get_binned_stats()
+        ... If False, it uses standard errors as error bars, instead of using standard deviations
+    fignum: int, figure number
+    ax: Axes object, default: None
+        ... If given, this becomes the Axes on which the results are plotted
+    marker: str, default: 'o', marker style
+    fillstyle: str, default: 'full'. Options: 'full', 'none'. See matplotlib scatter for more details
+    linestyle: str, default:'None'
+    linewidth: float, linewidth of the error bars
+    label: str, label for a legend
+    mfc: str, default:'white', marker face color
+        ... Use this with fillstyle='none' in order to change the face color of the marker.
+        ... Common usage: empty circles- fillstyle='none', mfc='white'
+    subplot: int, three-digit number. e.g.-111
+    legend: bool, default: False. If True, ax.legend is called at the end.
+    figsize: tuple, figure size in inches
+    maskon: bool, default: False
+        ... This hides "suspicious" data points / outliers.
+        ... See the docstr of get_mask4erroneous_pts() for more details
+    thd: float, threshold value used for get_mask4erroneous_pts() to determine the outliers
+    capsize: float, width of the error bars
+    return_stats: bool, default: False
+        ... If True, it returns the binned results (that are being plotted): x[mask], y[mask], xerr[mask], yerr[mask]
+    kwargs: passed to ax.errorbar()
+
+    Returns
+    -------
+    If not return_stats (default),
+        fig, ax: a Figure instance, an Axes instance
+    If return_stats:
+        fig, ax, x[mask], y[mask], xerr[mask], yerr[mask]: a Figure instance, an Axes instance, binned results (x, y, x_err, y_err)
+    """
+    if ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    else:
+        fig = plt.gcf()
+
+    # Make sure that xerr and yerr are numpy arrays
+    ## x, y, xerr, yerr do not have to be numpy arrays. It is just a convention. - takumi 04/01/2018
+    x_, y_ = np.array(x_), np.array(y_)
+    x, y, yerr = get_binned_stats(x_, y_, n_bins=n_bins, mode = mode, bin_center=bin_center, return_std = return_std)
+    if xerr is None:
+        xerr = np.ones_like(x) * (x[1] - x[0]) / 2.
+    elif type(xerr) in [int, float]:
+        xerr = np.ones_like(x) * xerr
+    xerr[xerr == 0] = np.nan
+    yerr[yerr == 0] = np.nan
+
+    if maskon:
+        mask = get_mask4erroneous_pts(x, y, thd=thd)
+    else:
+        mask = [True] * len(x)
+    ax.scatter(x[mask], y[mask], marker=marker,
+                    linestyle=linestyle, label=label, **kwargs)
+    if legend:
+        ax.legend()
+
+    if set_bottom_zero:
+        ax.set_ylim(bottom=0)
+    if set_left_zero:
+        ax.set_xlim(left=0)
+    if symmetric:
+        xmin, xmax = ax.get_xlim()
+        xabs = np.abs(max(-xmin, xmax))
+        ymin, ymax = ax.get_ylim()
+        yabs = np.abs(max(-ymin, ymax))
+        ax.set_xlim(-xabs, xabs)
+        ax.set_ylim(-yabs, yabs)
+
+    if not return_stats: # default
+        return fig, ax
+    else:
+        return fig, ax, x[mask], y[mask], xerr[mask], yerr[mask]
+
 ## Plot a fit curve
 def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figsize=None, linestyle='--',
                    range2fit=(-np.inf, np.inf),
@@ -1985,6 +2088,7 @@ def color_plot(x, y, z,
             cb = add_colorbar(cc, ax=ax, label=label, option=option, vmax=vmax, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize, **cb_kwargs)
         else:
             cb = add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, vmax=vmax, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize, **cb_kwargs)
+
     ax.set_aspect(aspect)
     # set edge color to face color
     cc.set_edgecolor('face')
@@ -2695,11 +2799,10 @@ def axhline(ax, y, x0=None, x1=None, color='black', linestyle='--', linewidth=1,
     -------
 
     """
+    xmin, xmax = ax.get_xlim()
     if x1 is None:
-        xmin, xmax = ax.get_xlim()
         x1 = xmax
     if x0 is None:
-        xmin, xmax = ax.get_xlim()
         x0 = xmin
     if x0 is not None or x1 is not None:
         if ax.get_xscale()=='linear':
@@ -3119,7 +3222,7 @@ def add_colorbar_old(mappable, fig=None, ax=None, fignum=None, label=None, fonts
     return cb
 
 
-def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', label=None, fontsize=None, option='normal',
+def add_colorbar(mappable, fig=None, ax=None, cax=None, fignum=None, location='right', label=None, fontsize=None, option='normal',
                  tight_layout=True, ticklabelsize=None, aspect='equal', ntick=5, tickinc=None,
                  size='5%', pad=0.15, caxAspect=None, fformat="%03.1f", labelpad=1, **kwargs):
 
@@ -3191,22 +3294,21 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
             del kwargs['vmax']
         return kwargs
 
-    # ax = mappable.axes
     # fig = ax.figure
     # Get a Figure instance
     if fig is None:
         fig = plt.gcf()
         if fignum is not None:
             fig = plt.figure(num=fignum)
-    if ax is None:
-        ax = plt.gca()
-    if fig is None:
-        fig = plt.gcf()
+    if cax is None:
+        # ax = mappable.axes
+        if ax is None:
+            ax = plt.gca()
+        divider = axes_grid.make_axes_locatable(ax)
+        cax = divider.append_axes(location, size=size, pad=pad, )
 
     reset_sfmt(fformat=fformat)
 
-    divider = axes_grid.make_axes_locatable(ax)
-    cax = divider.append_axes(location, size=size, pad=pad)
     if caxAspect is not None:
         cax.set_aspect(caxAspect)
     if option == 'scientific_custom':
@@ -3237,8 +3339,9 @@ def add_colorbar(mappable, fig=None, ax=None, fignum=None, location='right', lab
     # cb.ax.yaxis.get_offset_text().set_fontsize(__fontsize__) # For scientific format
 
     # Adding a color bar may distort the aspect ratio. Fix it.
-    if aspect=='equal':
-        ax.set_aspect('equal')
+    if ax is not None:
+        if aspect=='equal':
+            ax.set_aspect('equal')
 
     # Adding a color bar may disport the overall balance of the figure. Fix it.
     if tight_layout:
@@ -3260,7 +3363,7 @@ def add_discrete_colorbar(ax, colors, vmin=0, vmax=None, label=None, fontsize=No
     # if there are too many ticks, just use 3 ticks
     if len(ticks) > 10:
         n = len(ticks)
-        ticks = [ticks[0], ticks[n/2], ticks[-2]]
+        ticks = [ticks[0], ticks[n//2]-1, ticks[-2]]
         if ticklabel is not None:
             ticklabel = [ticklabel[0], ticklabel[n/2], ticklabel[-1]]
 
@@ -3516,17 +3619,29 @@ def setaxes(ax, xmin, xmax, ymin, ymax, **kwargs):
     return ax
 
 ## Set axes to semilog or loglog
-def tosemilogx(ax=None, **kwargs):
+def tosemilogx(ax=None, xmin_default=1e-2, **kwargs):
     if ax == None:
         ax = plt.gca()
+    xmin, xmax = ax.get_xlim()
+    if xmin == 0:
+        ax.set_xlim(xmin_default, xmax)
     ax.set_xscale("log", **kwargs)
-def tosemilogy(ax=None, **kwargs):
+def tosemilogy(ax=None, ymin_default=1e-6, **kwargs):
     if ax == None:
         ax = plt.gca()
+    ymin, ymax = ax.get_ylim()
+    if ymin == 0:
+        ax.set_ylim(ymin_default, ymax)
     ax.set_yscale("log", **kwargs)
 def tologlog(ax=None, **kwargs):
     if ax == None:
         ax = plt.gca()
+    xmin, xmax = ax.get_xlim()
+    ymin, ymax = ax.get_ylim()
+    if xmin==0:
+        ax.set_xlim(xmin, xmax)
+    if ymin==0:
+        ax.set_ylim(ymin, ymax)
     ax.set_xscale("log", **kwargs)
     ax.set_yscale("log", **kwargs)
 
@@ -3620,7 +3735,7 @@ def title(ax, title, **kwargs):
 
 def suptitle(title, fignum=None,
              tight_layout=True,
-             rect=[0, 0.03, 1, 0.95],
+             rect=[0, 0.03, 1, 1.05],
              **kwargs):
     """
     Add a centered title to the figure.
@@ -3781,6 +3896,7 @@ def addtext(ax, text='text goes here', x=0, y=0, color='k',
 
 
 def draw_power_triangle(ax, x, y, exponent, w=None, h=None, facecolor='none', edgecolor='r', alpha=1.0, flip=False,
+                        linewidth=1.,
                         fontsize=__fontsize__, set_base_label_one=False, beta=20, zorder=100,
                         x_base=None, y_base=None, x_height=None, y_height=None,
                         **kwargs):
@@ -3887,7 +4003,7 @@ def draw_power_triangle(ax, x, y, exponent, w=None, h=None, facecolor='none', ed
         path = mpl.path.Path([[x, y], [x + w, y], [x + w, y + h], [x, y]])
     else:
         path = mpl.path.Path([[x, y], [x, y + h], [x + w, y + h], [x, y]])
-    patch = mpatches.PathPatch(path, facecolor=facecolor, edgecolor=edgecolor, alpha=alpha, zorder=zorder)
+    patch = mpatches.PathPatch(path, facecolor=facecolor, edgecolor=edgecolor, alpha=alpha, zorder=zorder, linewidth=linewidth)
     ax.add_patch(patch)
 
     # annotate
@@ -4430,8 +4546,8 @@ def add_subplot_axes(ax, rect, axisbg='w', alpha=1, spines2hide=['right', 'top']
     y_labelsize *= rect[3]**0.3
     subax.xaxis.set_tick_params(labelsize=x_labelsize)
     subax.yaxis.set_tick_params(labelsize=y_labelsize)
-
-    subax.spines[spines2hide].set_visible(False)
+    if spines2hide is not None:
+        subax.spines[spines2hide].set_visible(False)
     return subax
 
 def create_inset_ax(ax, rect, axisbg='w', alpha=1, **kwargs):
@@ -4493,7 +4609,7 @@ def draw_rectangle(ax, x, y, width, height, angle=0.0, linewidth=1, edgecolor='r
 
 
 def draw_box(ax, xx, yy, w_box=351., h_box=351., xoffset=0, yoffset=0, linewidth=5,
-             scalebar=True, sb_length=50., sb_units='$mm$', sb_loc=(0.95, 0.1), sb_txtloc=(0.0, 0.4),
+             scalebar=True, sb_length=50., sb_units=' mm', sb_loc=(0.95, 0.1), sb_txtloc=(0.0, 0.4),
              sb_lw=10, sb_txtcolor='white', fontsize=None,
              facecolor='k', fluidcolor=None,
              bounding_box=True, bb_lw=1, bb_color='w'):
@@ -4559,7 +4675,8 @@ def draw_box(ax, xx, yy, w_box=351., h_box=351., xoffset=0, yoffset=0, linewidth
 
     if bounding_box:
         w, h = xmax-xmin, ymax-ymin
-        draw_rectangle(ax, xmin, ymin, width=w, height=h, edgecolor=bb_color, linewidth=bb_lw)
+        dx, dy = np.abs(xx[0, 1] - xx[0, 0]), np.abs(yy[1, 0] - yy[0, 0])
+        draw_rectangle(ax, xmin-dx, ymin-dy, width=w+2*dx, height=h+2*dy, edgecolor=bb_color, linewidth=bb_lw)
 
     if scalebar:
         dx, dy = np.abs(xx[0, 1] - xx[0, 0]), np.abs(yy[1, 0] - yy[0, 0]) # mm/px
@@ -5084,7 +5201,7 @@ def smooth1d(x, window_len=11, window='hanning', log=False):
 
     t=linspace(-2,2,0.1)
     x=sin(t)+randn(len(t))*0.1
-    y=smooth(x)
+    y=smoothen(x)
 
     see also:
 
@@ -5096,7 +5213,7 @@ def smooth1d(x, window_len=11, window='hanning', log=False):
     """
 
     if x.ndim != 1:
-        raise ValueError("smooth() only accepts 1 dimension arrays.")
+        raise ValueError("smoothen() only accepts 1 dimension arrays.")
 
     if x.size < window_len:
         raise ValueError("Input vector needs to be bigger than window size.")
@@ -5407,7 +5524,7 @@ def color_axis(ax, locs=['bottom', 'left', 'right'], colors=['k', 'C0', 'C1'],
 
 
 
-def smooth(x, window_len=11, window='hanning', log=False):
+def smoothen(x, window_len=11, window='hanning', log=False):
     """smooth the data using a window with requested size.
 
     This method is based on the convolution of a scaled window with a given signal.
@@ -5428,7 +5545,7 @@ def smooth(x, window_len=11, window='hanning', log=False):
 
     t=linspace(-2,2,0.1)
     x=sin(t)+randn(len(t))*0.1
-    y=smooth(x)
+    y=smoothen(x)
 
     see also:
 
@@ -5440,7 +5557,7 @@ def smooth(x, window_len=11, window='hanning', log=False):
     """
 
     if x.ndim != 1:
-        raise ValueError("smooth() only accepts 1 dimension arrays.")
+        raise ValueError("smoothen() only accepts 1 dimension arrays.")
 
     if x.size < window_len:
         raise ValueError("Input vector needs to be bigger than window size.")
