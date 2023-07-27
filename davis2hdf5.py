@@ -10,6 +10,7 @@ from tqdm import tqdm
 import os
 import re
 import datetime
+import cine
 
 def write_hdf5_dict(filepath, data_dict, chunks=None):
     """
@@ -362,7 +363,7 @@ def davis2hdf5_stb(datadir, use_chunks, savedir=None, savepath=None, header='B',
         savedir_default, dirname = os.path.split(datadir)
     if savedir is None:
         savedir = savedir_default
-    savepath = savedir + '/davis_stb_outpus/' + dirname
+    savepath = savedir + '/davis_stb_output/' + dirname
     if start != 0 or end is not None:
         if end is None:
             end = len(davis_dpaths)-1
@@ -577,8 +578,8 @@ def davis2hdf5_stb_scalar(datadir, use_chunks, arr_shape=None, savedir=None, sav
 
 ## Job processing for decay experiments
 
-def davis2hdf5_piv_decay(datadir, fps_list, frame_list, use_chunks, savedir=None, savepath=None, header='B', scale=1000., chunks=None, fps=1.,
-                   start=0, end=None, h5name=None, savetime=False ,step=1):
+def davis2hdf5_piv_decay(datadir, fps_list, frame_list, use_chunks, savedir=None, savepath=None, header='B', scale=1000., fps=1.,
+                   start=0, end=None, h5name=None, savetime=False ,step=1, cinepath=None):
     """
      Convert multiple DaVis output (PIV) into a hdf5 file
 
@@ -596,19 +597,40 @@ def davis2hdf5_piv_decay(datadir, fps_list, frame_list, use_chunks, savedir=None
     nDavisOutput = len(davis_dpaths)
     davis_dpaths = natural_sort(davis_dpaths)
     davis_dpaths = davis_dpaths[start:end:step]
-    nFrames = sum(frame_list)
 
-    # Error handling
-    if nFrames != nDavisOutput:
-        print(f'(Number of Davis Output Files, Sume of frame_list), ({nDavisOutput}, {nFrames})')
-        raise ValueError('Sum of frame_list must match the number of Davis Output in the given directory')
-    if len(fps_list) != len(frame_list):
-        raise ValueError('fps_list and frame_list must have the same length!')
-    frame_rates = []
-    for fps, nFrame in zip(fps_list, frame_list):
-        frame_rates += [fps] * nFrame
-    frame_rates = frame_rates[start:end:step]
-
+    if cinepath is None:
+        nFrames = sum(frame_list)
+        # Error handling
+        if nFrames != nDavisOutput:
+            print(f'(Number of Davis Output Files, Sum of frame_list), ({nDavisOutput}, {nFrames})')
+            raise ValueError('Sum of frame_list must match the number of Davis Output in the given directory')
+        elif len(fps_list) != len(frame_list):
+            raise ValueError('fps_list and frame_list must have the same length!')
+    else:
+        cc = cine.Cine(cinepath)
+        tt = cc.get_time_list()
+        cc.close()
+        dt = np.diff(tt)
+        frame_rates = list(1./dt)
+        nFrames = len(dt)
+        # Error handling
+        if nFrames != nDavisOutput:
+            print(f'(Number of Davis Output Files, Sum of frame_list), ({nDavisOutput}, {nFrames})')
+            print('Sum of frame_list must match the number of Davis Output in the given directory')
+            isDataPyramid = input('Did you process this data with the pyramid algorithm? (y/n)')
+            if isDataPyramid.lower() in ['y', 'yes']:
+                pass
+            else:
+                raise ValueError('Aborting')
+        
+    if cinepath is None:
+        frame_rates = []
+        tt = [0]
+        for fps, nFrame in zip(fps_list, frame_list):
+            frame_rates += [fps] * nFrame
+            tt += list(np.arange(1, nFrame + 1, ) / fps + tt[-1])
+        frame_rates = frame_rates[start:end:step]
+        tt = tt[:-1]
     duration = len(davis_dpaths)
 
     for t, dpath in enumerate(tqdm(davis_dpaths)):
@@ -700,6 +722,7 @@ def davis2hdf5_piv_decay(datadir, fps_list, frame_list, use_chunks, savedir=None
     data2write['x'] = x_arr
     data2write['y'] = y_arr
     data2write['conversion_factors'] = {'scale': scale, 'fps': fps}
+    data2write['t'] = tt[:udata_d.shape[-1]]
     if use_chunks:
         chunks = udata_d.shape[1:-1] + (1, )
     else:
@@ -760,9 +783,16 @@ def main(args):
                 print('... skipping...')
                 continue
     elif args.mode == 'decay':
-        print('... Making a hdf5 file for the following directory: ' + args.dir)
-        davis2hdf5_piv_decay(args.dir, args.fps_list, args.frame_list, args.chunks, scale=args.scale, fps=args.fps,
-                   start=args.start, end=args.end, savetime=args.save_time, step=args.step)
+        if args.dirbase is None:
+            print('... Making a hdf5 file for the following directory: ' + args.dir)
+            davis2hdf5_piv_decay(args.dir, args.fps_list, args.frame_list, args.chunks, scale=args.scale, fps=args.fps,
+                       start=args.start, end=args.end, savetime=args.save_time, step=args.step, cinepath=args.cine)
+        else:
+            target_dirs = sorted(glob.glob(os.path.join(args.dirbase, '*')))
+            for i, tdir in tqdm(enumerate(target_dirs)):
+                print('... Making a hdf5 file for the following directory: ' + tdir)
+                davis2hdf5_piv_decay(tdir, args.fps_list, args.frame_list, args.chunks, scale=args.scale, fps=args.fps,
+                                     start=args.start, end=args.end, savetime=args.save_time, step=args.step, cinepath=args.cine)
 
     else: # STANDARD PROCESSING SCHEMES
         if args.qty == 'velocity':
@@ -796,7 +826,7 @@ if __name__ == "__main__":
                         default=1000.)
     parser.add_argument('-fps', '--fps', help='In frame per second. ux = ux*scale*fps.', type=float,
                         default=1.)
-    parser.add_argument('-mode', '--mode', help='Type of the experiment: PIV, STB? Choose from piv or stb', type=str,
+    parser.add_argument('-mode', '--mode', help='Type of the experiment: PIV, STB? Choose from [piv, stb, custom, decay]', type=str,
                         default='piv')
     parser.add_argument('-start', '--start', help='index which specifies the range of data data to be used [start, end)'
                                                   'default: 0', type=int,
@@ -820,6 +850,8 @@ if __name__ == "__main__":
                         help='List of frame rates used for decay PIV experiments')
     parser.add_argument('-frame_list', '--frame_list', type=int, nargs='+',
                         help='List of number of frames used for decay PIV experiments')
+    parser.add_argument('-cine', '--cine', type=str,
+                        help='A path to a corresponding cinefile- used to extract the frame rate (if mode==decay')
 
     args = parser.parse_args()
 
