@@ -8,6 +8,8 @@ import matplotlib.patches as mpatches
 import matplotlib.pylab as pylab
 import matplotlib.ticker as ticker
 import mpl_toolkits.axes_grid1 as axes_grid
+from matplotlib.offsetbox import AnchoredOffsetbox
+from matplotlib.transforms import Bbox
 from matplotlib.lines import Line2D
 import matplotlib.lines as mlines
 from mpl_toolkits.mplot3d import Axes3D
@@ -58,22 +60,27 @@ mycolors3 = np.asarray([
                      [0.70567316, 0.01555616, 0.15023281, 1.        ], # Right-handed: maroon, #C80426
                     ])
 __my_ccycle__ = itertools.cycle(mycolors5)
-__fontsize__ = 11
-__figsize__ = (7.54, 7.54)
 cmap = 'magma'
 
 # See all available arguments in matplotlibrc
+__fontsize__ = 14
+__figsize__ = (7.54*0.667, 7.54*0.667)
 params = {'figure.figsize': __figsize__,
           'font.size': __fontsize__,  #text
-        'legend.fontsize': __fontsize__, # legend
+        'legend.fontsize': 11
+          , # legend
          'axes.labelsize': __fontsize__, # axes
          'axes.titlesize': __fontsize__,
+          'lines.linewidth': 2,
+         'lines.markersize': 3,
          'xtick.labelsize': __fontsize__, # tick
          'ytick.labelsize': __fontsize__,
-          'lines.linewidth': 3,
-          'figure.dpi': 200,
-          }
-
+         'xtick.major.size': 3.5, #3.5 def
+         'xtick.minor.size': 2, # 2.
+         'ytick.major.size': 3.5,
+         'ytick.minor.size': 2,
+          'figure.dpi': 500,
+         }
 default_custom_cycler = {'color': ['r', 'b', 'g', 'y'],
                           'linestyle': ['-', '-', '-', '-'],
                           'linewidth': [3, 3, 3, 3],
@@ -326,7 +333,7 @@ def plot(x, y=None, fmt='-', fignum=1, figsize=None, label='', color=None, subpl
     else:
         keep = [True] * len(x)
     if xmax is not None:
-        keep *= x < xmax
+        keep *= x <= xmax
     if xmin is not None:
         keep *= x >= xmin
     try:
@@ -370,7 +377,7 @@ def plot_multicolor(x, y=None, colored_by=None, cmap='viridis',
                     fignum=1, figsize=None,
                     subplot=None,
                     fig=None, ax=None, maskon=False, thd=1,
-                    linewidth=2, vmin=None, vmax=None, verbose=True,
+                    linewidth=2, vmin=None, vmax=None, norm=None, verbose=True,
                     smooth=False, mode='linear', window_len=5, window='hanning',
                     xmin=None, xmax=None, add_scatter=False, return_xy=True, zorder=None,
                     **kwargs):
@@ -448,7 +455,8 @@ def plot_multicolor(x, y=None, colored_by=None, cmap='viridis',
     points = np.array([x, y]).T.reshape(-1, 1, 2)
     segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
-    norm = plt.Normalize(vmin, vmax)
+    if norm is None:
+        norm = plt.Normalize(vmin, vmax)
     lc = LineCollection(segments, cmap=cmap, norm=norm, zorder=zorder)
 
     # Set the values used for colormapping
@@ -1101,7 +1109,7 @@ def plot_saddoughi_struc_func(fignum=1, fig=None, ax=None, figsize=None,
 
 def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
             marker='o', fillstyle='full', label=None, subplot=None, legend=False,
-            maskon=False, thd=1,
+            maskon=False, thd=1, inc=1,
             xmin=None, xmax=None, alpha=1.,
             set_bottom_zero=False, symmetric=False,
             set_left_zero=False, edgecolor='k',
@@ -1145,10 +1153,10 @@ def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
         # Scatter plot with open markers
         facecolors = 'none'
         if isinstance(alpha, float) or isinstance(alpha, int):
-            sc = ax.scatter(x[keep], y[keep], label=label, marker=marker, facecolors=facecolors, alpha=alpha,
+            sc = ax.scatter(x[keep][::inc], y[keep][::inc], label=label, marker=marker, facecolors=facecolors, alpha=alpha,
                             edgecolor=edgecolor, **kwargs)
         else:
-            sc = ax.scatter(x[keep], y[keep], label=label, marker=marker, facecolors=facecolors, alpha=alpha[keep],
+            sc = ax.scatter(x[keep][::inc], y[keep][::inc], label=label, marker=marker, facecolors=facecolors, alpha=alpha[keep][::inc],
                                 edgecolor=edgecolor, **kwargs)
             # for i, alpha_ in enumerate(alpha[keep]):
             #     if i != 0:
@@ -1158,11 +1166,7 @@ def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
         if isinstance(alpha, float) or isinstance(alpha, int):
             sc = ax.scatter(x[keep], y[keep], label=label, marker=marker, alpha=alpha, **kwargs)
         else:
-            sc = ax.scatter(x[keep], y[keep], label=label, marker=marker, alpha=alpha[keep], **kwargs)
-            # for i, alpha_ in enumerate(alpha[keep]):
-            #     if i != 0:
-            #         label=None
-            #     sc = ax.scatter(x[keep][i], y[keep][i], label=label, marker=marker, alpha=alpha_, **kwargs)
+            sc = ax.scatter(x[keep][::inc], y[keep][::inc], label=label, marker=marker, alpha=alpha[keep][::inc], **kwargs)
     if legend:
         plt.legend()
 
@@ -2285,7 +2289,9 @@ def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
     key_labelpos
     key_pad
     key_fmt
-    key_kwargs
+    key_kwargs: dict, passed to Axes.quiverkey()
+        ... A dictionary with keyword arguments accepted by the FontProperties initializer: family, style, variant, size, weight.
+        ... e.g. Change fontsize of a key- colorkey_kwargs={'fontproperties': {'size': 12}}
     aspect
     kwargs
 
@@ -3267,9 +3273,7 @@ def add_colorbar(mappable, fig=None, ax=None, cax=None, fignum=None, location='r
         if 'vmax' in kwargs.keys():
             zmax = kwargs['vmax']
 
-        # ticks = np.linspace(zmin, zmax, 2*n)
         exponent = int(np.floor(np.log10(np.abs(zmax))))
-        # ticks = np.around(ticks[1::2], decimals=-exponent + 1)
         if tickinc is not None:
             # Specify the increment of ticks!
             dz = inc * 10 ** exponent
@@ -3278,12 +3282,7 @@ def add_colorbar(mappable, fig=None, ax=None, cax=None, fignum=None, location='r
             # Specify the number of ticks!
             exp = int(np.floor(np.log10((zmax - zmin) / n)))
             dz = np.round((zmax - zmin) / n, -exp)
-            # exp = int(np.ceil(np.log10((zmax - zmin) / n)))
-            # dz = (zmax - zmin) / n
             ticks = [i * dz for i in range(int(zmin / dz), int(zmax / dz) + 1)]
-            # print(np.log10((zmax - zmin) / n), exp)
-            # print((zmax - zmin) / n, dz)
-            # print(ticks)
 
         return ticks
 
@@ -4275,6 +4274,124 @@ def create_weight_shifted_cmap(cmapname, ratio=0.75, vmin=None, vmax=None, vcent
     newcmap = mpl.colors.ListedColormap(newcolors, name='shifted_' + cmapname)  # custom cmap
     return newcmap
 
+# Scale bar
+class AnchoredScaleBar(AnchoredOffsetbox):
+    def __init__(self, transform, sizex=0, sizey=0, labelx=None, labely=None,
+                 loc=4,
+                 xmin=None, ymin=None, width=None, height=None,
+                 pad=0.1, borderpad=0.1, sep=2, prop=None, color="black", barwidth=None,
+                 fontsize=None, frameon=False,
+                 **kwargs):
+        """
+        Draw a horizontal and/or vertical  bar with the size in data coordinate
+        of the give axes. A label will be drawn underneath (center-aligned).
+        - transform : the coordinate frame (typically axes.transData)
+        - sizex,sizey : width of x,y bar, in data units. 0 to omit
+        - labelx,labely : labels for x,y bars; None to omit
+        - loc : position in containing axes
+        - pad, borderpad : padding, in fraction of the legend font size (or prop)
+        - sep : separation between labels and bars in points.
+        - **kwargs : additional arguments passed to base class constructor
+        """
+        from matplotlib.patches import Rectangle
+        from matplotlib.offsetbox import AuxTransformBox, VPacker, HPacker, TextArea, DrawingArea
+        bars = AuxTransformBox(transform)
+        if sizex:
+            bars.add_artist(Rectangle((0, 0), sizex, 0, ec=color, lw=barwidth, fc="none"))
+        if sizey:
+            bars.add_artist(Rectangle((0, 0), 0, sizey, ec=color, lw=barwidth, fc="none"))
+
+        if sizex and labelx:
+            self.xlabel = TextArea(labelx, textprops={'size': fontsize, 'color': color})
+            bars = VPacker(children=[bars, self.xlabel], align="center", pad=0, sep=sep)
+        if sizey and labely:
+            self.ylabel = TextArea(labely, textprops={'size': fontsize, 'color': color})
+            bars = HPacker(children=[self.ylabel, bars], align="center", pad=0, sep=sep)
+        AnchoredOffsetbox.__init__(self, loc, pad=pad, borderpad=borderpad,
+                                   child=bars, prop=prop, frameon=frameon,
+                                   #                                    bbox_to_anchor = kwargs['bbox_to_anchor'], #(xmin, ymin, width, height)
+                                   #                                    bbox_transform =  kwargs['bbox_transform'],
+                                   **kwargs,
+                                   )
+
+def add_scalebar(ax,
+                 show_xscale=True, show_yscale=False,
+                 xscale=None, yscale=None, units='mm',
+                 labelx=None, labely=None,
+                 barwidth=2,
+                 loc='lower right',
+                 facecolor=None,
+                 hidex=True, hidey=True,
+                 **kwargs):
+    """ Add scalebars to axes
+    Adds a set of scale bars to *ax*, matching the size to the ticks of the plot
+    and optionally hiding the x and y axes
+    - ax : the axis to attach ticks to
+    - show_xscale, show_yscale: bool, if True, it draws a scale bar
+    - xscale, yscale: float, length of the scale bar(s)
+    - labelx, labely: str, label of x and y
+    - units: if labelx or labely is not provided, it creates a label such that "50.0" + 'units'
+    - barwidth: float, linewidth of a scale bar
+    - loc: str, int, or tuple, location of the scale bar
+        ... If loc is tuple, loc = (xmin, ymin, width, height) specifies the location of a scale bar.
+        ... xmin, ymin, width, height must be between 0-1
+        ... To adjust the label position, vary 'sep'.
+    - hidex,hidey : if True, hide x-axis and y-axis of the parent Axes instance
+    - **kwargs : additional arguments passed to AnchoredScaleBars
+    Returns a created scalebar object
+
+    Example: Place a scale bar outside the axis
+        add_scalebar(ax, color='w', xscale=30, loc=(0.78, 0.67, 0.05, 0.05),
+    #              barwidth=2, pad=-0.2, sep=-12)
+
+
+    """
+
+    def f(axis):
+        l = axis.get_majorticklocs()
+        return len(l) > 1 and (l[1] - l[0])
+
+    # X SCALE
+    if show_xscale:
+        if xscale is None:
+            kwargs['sizex'] = f(ax.xaxis)
+        else:
+            kwargs['sizex'] = xscale
+
+        if labelx is None:
+            kwargs['labelx'] = str(kwargs['sizex']) + units
+        else:
+            kwargs['labelx'] = labelx
+    if show_yscale:
+        if yscale is None:
+            kwargs['sizey'] = f(ax.yaxis)
+        else:
+            kwargs['sizey'] = yscale
+
+        if labely is None:
+            kwargs['labely'] = str(kwargs['sizey']) + units
+        else:
+            kwargs['labely'] = labely
+    kwargs['barwidth'] = barwidth
+    if isinstance(loc, list) or isinstance(loc, tuple):
+        xmin, ymin, width, height = loc
+        if all(loc):
+            kwargs['bbox_to_anchor'] = Bbox.from_bounds(xmin, ymin, width, height)  # (xmin, ymin, width, height)
+            kwargs['bbox_transform'] = ax.figure.transFigure
+            loc = 1
+    sb = AnchoredScaleBar(ax.transData, loc=loc, **kwargs)
+    if facecolor is not None:
+        sb.patch.set_linewidth(0)
+        sb.patch.set_facecolor(facecolor)
+    ax.add_artist(sb)
+
+    # Hide x-, y-axis of the axis
+    if hidex: ax.xaxis.set_visible(False)
+    if hidey: ax.yaxis.set_visible(False)
+    if hidex and hidey: ax.set_frame_on(False)
+
+    return sb
+
 
 def choose_colors(**kwargs):
     """
@@ -4497,6 +4614,10 @@ def show_plot_styles():
     print(style_list)
     return style_list
 def use_plot_style(stylename):
+    """Reminder for me how to set a plotting style"""
+    plt.style.use(stylename)
+
+def set_plot_style(stylename):
     """Reminder for me how to set a plotting style"""
     plt.style.use(stylename)
 
@@ -5481,6 +5602,18 @@ def make_ticks_scientific(ax, axis='both', **kwargs):
     """
     ax.ticklabel_format(style='sci', scilimits=(0, 0), axis=axis, **kwargs)
 
+def match_lims(ax1, ax2, axis='both'):
+    xmin1, xmax1 = ax1.get_xlim()
+    ymin1, ymax1 = ax1.get_ylim()
+    xmin2, xmax2 = ax2.get_xlim()
+    ymin2, ymax2 = ax2.get_ylim()
+    xmin, xmax = min(xmin1, xmin2), max(xmax1, xmax2)
+    ymin, ymax = min(ymin1, ymin2), max(ymax1, ymax2)
+    for ax in [ax1, ax2]:
+        if axis in ['x', 'both']:
+            ax.set_xlim(xmin, xmax)
+        if axis in ['y', 'both']:
+            ax.set_ylim(ymin, ymax)
 def color_axis(ax, locs=['bottom', 'left', 'right'], colors=['k', 'C0', 'C1'],
                xlabel_color=None, ylabel_color=None,
                xtick_color=None, ytick_color=None):
