@@ -1,28 +1,29 @@
 # coding=utf-8
-from tqdm import tqdm
+import copy
+import cv2
+import glob
+import h5py
+import itertools
+import math
+import matplotlib.cbook
+import matplotlib.path as mpltPath
+import matplotlib.pyplot as plt
 import numpy as np
 import numpy.ma as ma
-import re
-import h5py
+import os
 import pickle
-from scipy import fftpack, signal, integrate
-from scipy.interpolate import interp2d, griddata, UnivariateSpline, RegularGridInterpolator, LinearNDInterpolator
-from scipy.stats import binned_statistic, binned_statistic_2d, binned_statistic_dd, multivariate_normal
-from scipy.optimize import minimize, curve_fit
-from scipy import ndimage, interpolate, signal, special
-from scipy.signal import butter, medfilt, filtfilt  # filters for signal processing
-import itertools
-import os, copy, sys, re, copy  # fundamentals
+import re
+import subprocess
+import sys
 import time as time_mod
-import subprocess, glob
-import cv2
-import math
-import copy
-
 import warnings
-import matplotlib.cbook
-import matplotlib.pyplot as plt
-import matplotlib.path as mpltPath
+from scipy import fftpack, signal, integrate
+from scipy import ndimage, interpolate, signal, special
+from scipy.interpolate import interp2d, griddata, UnivariateSpline, RegularGridInterpolator, LinearNDInterpolator
+from scipy.optimize import minimize, curve_fit
+from scipy.signal import butter, medfilt, filtfilt  # filters for signal processing
+from scipy.stats import binned_statistic, binned_statistic_2d, binned_statistic_dd, multivariate_normal
+from tqdm import tqdm
 
 warnings.filterwarnings("ignore", category=matplotlib.cbook.mplDeprecation)
 warnings.simplefilter('ignore', RuntimeWarning)
@@ -31,10 +32,10 @@ warnings.simplefilter('ignore', FutureWarning)
 import tflow.vector as vec
 import tflow.graph as graph
 
-
 global bezier_installed
 try:
     import bezier  # required to plot bezier curves (not critical)
+
     bezier_installed = True
 except:
     bezier_installed = False
@@ -44,7 +45,7 @@ global useNotebook
 useNotebook = True
 
 path_mod = os.path.abspath(__file__)
-moddirpath = os.path.dirname(path_mod)
+mod_dir_path = os.path.dirname(path_mod)
 
 """
 Module designed to process a planar/volumetric velocity field
@@ -274,7 +275,8 @@ def reynolds_decomposition(udata, t0=0, t1=None, udata_mean=None):
                 raise ValueError('udata and udata_m must have the same shape')
     return udata_mean, u_turb
 
-def reynolds_decomposition_using_phase_matched_mean_flow(udata, phase, udata_pavg, phase_ref, notebook=True):
+
+def reynolds_decomposition_using_phase_matched_mean_flow(udata, phase, udata_pavg, phase_ref, notebook=useNotebook):
     """
     Conduct Reynolds decomposition using a phase-matched mean flow
     Returns a mean field (time-averaged) and a fluctuating field
@@ -477,8 +479,8 @@ def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT=None,
         for t in range(t0, t1):
             if cond[t]:
                 udata_pavg[..., i] += \
-                get_udata_from_path(dpath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, t0=t, t1=t + 1,
-                                    verbose=False)[..., 0]
+                    get_udata_from_path(dpath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, t0=t, t1=t + 1,
+                                        verbose=False)[..., 0]
                 counter += 1
         udata_pavg[..., i] /= float(counter)
 
@@ -519,7 +521,9 @@ def subtract_mean_flow(udata, udata_m, notebook=useNotebook):
         from tqdm import tqdm as tqdm
     return udata_t
 
-def subtract_phase_dependent_mean_flow(udata, udata_pavg, time, freq, phase_ref=None, phase_shift=0., notebook=useNotebook):
+
+def subtract_phase_dependent_mean_flow(udata, udata_pavg, time, freq, phase_ref=None, phase_shift=0.,
+                                       notebook=useNotebook):
     """
     Returns a phase-dependent, fluctuating velocity field
     u(x, t) = U(x, t) - <U>_p(x, theta)
@@ -548,7 +552,7 @@ def subtract_phase_dependent_mean_flow(udata, udata_pavg, time, freq, phase_ref=
     udata = fix_udata_shape(udata)
     udata_t = np.empty_like(udata)
 
-    period = 1./float(freq)
+    period = 1. / float(freq)
     phase = (np.asarray(time) % period) * freq + phase_shift
     if phase_ref is None:
         phase_ref = np.linspace(0, 1, udata_pavg.shape[-1], endpoint=False)
@@ -771,7 +775,6 @@ def dot(udata, vdata):
                 return scaData
 
 
-
 def cross(udata, vdata):
     """
     Cross product of two udata
@@ -847,6 +850,7 @@ def mag(udata):
     umag = np.sqrt(umag)
     return umag
 
+
 ########## Elementary analysis ##########
 def get_energy(udata):
     """
@@ -907,6 +911,7 @@ def get_enstrophy(udata, dx=1., dy=1., dz=1., xx=None, yy=None, zz=None):
             enstrophy += omega[d, ...] ** 2
     return enstrophy
 
+
 def get_q_criterion(udata, xx, yy, zz):
     """
     Returns Q criterion
@@ -925,10 +930,11 @@ def get_q_criterion(udata, xx, yy, zz):
     -------
     q: 4d array, (y, x, z, t), q-criterion; Q(x, y, z) = 0.5 (gij gij - eij eij) = 0.5 ( |Omega|^2  - |S|^2 )
     """
-    duidxj = get_duidxj_tensor(udata, xx=xx, yy=yy,zz=zz)
+    duidxj = get_duidxj_tensor(udata, xx=xx, yy=yy, zz=zz)
     eij, gij = decompose_duidxj(duidxj)
-    q = np.nansum(gij**2 - eij**2, axis=(-2, -1)) / 2
+    q = np.nansum(gij ** 2 - eij ** 2, axis=(-2, -1)) / 2
     return q
+
 
 def get_lambda2_criterion(udata, xx, yy, zz):
     """
@@ -947,8 +953,8 @@ def get_lambda2_criterion(udata, xx, yy, zz):
     -------
     lambda2: 4d array, (y, x, z, t), lambda2 criterion
     """
-    duidxj = get_duidxj_tensor(udata, xx=xx, yy=yy,zz=zz)
-    eij, gij = decompose_duidxj(duidxj) # eij: rate-of-strain tensor, gij: vorticity tensor
+    duidxj = get_duidxj_tensor(udata, xx=xx, yy=yy, zz=zz)
+    eij, gij = decompose_duidxj(duidxj)  # eij: rate-of-strain tensor, gij: vorticity tensor
     width, height, depth, duration, dim, _ = duidxj.shape
     lambda2 = np.empty((width, height, depth, duration))
     for t in tqdm(range(duration)):
@@ -960,6 +966,7 @@ def get_lambda2_criterion(udata, xx, yy, zz):
                     w, v = np.linalg.eig(aij)
                     lambda2[i, j, k, t] = w[1]
     return lambda2
+
 
 def get_time_avg_energy(udata):
     """
@@ -1165,7 +1172,7 @@ def get_spatial_avg_enstrophy(udata, dx=1., dy=1., dz=1., x0=0, x1=None, y0=0, y
 
 
 def get_radial_enstrophy_dist_from_path(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None, inc=1,
-                                        notebook=True,
+                                        notebook=useNotebook,
                                         xc=None, yc=None, zc=None, n=50,
                                         clean=False,
                                         clean_kwargs={'u_cutoff': np.inf, 'method': 'nn', 'median_filter': False}):
@@ -1230,7 +1237,8 @@ def get_radial_enstrophy_dist_from_path(udatapath, x0=0, x1=None, y0=0, y1=None,
                     except:
                         xc, yc = get_center_of_energy(udatapath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
         else:
-            udata = get_udata_from_path(udatapath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, t0=t, t1=t + 1, verbose=False)
+            udata = get_udata_from_path(udatapath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, t0=t, t1=t + 1,
+                                        verbose=False)
         if clean:
             udata = clean_udata(udata, **clean_kwargs)
         enst = get_enstrophy(udata, xx=xx, yy=yy, zz=zz)[..., 0]
@@ -1623,6 +1631,7 @@ def fft_nd(udata, dx=1, dy=1, dz=1,
     else:
         return ukdata
 
+
 #
 # def get_energy_spectrum_nd_ver2(udata, x0=0, x1=None, y0=0, y1=None,
 #                                 z0=0, z1=None, dx=None, dy=None, dz=None,
@@ -1811,7 +1820,7 @@ def fft_nd(udata, dx=1, dy=1, dz=1,
 # def get_energy_spectrum_ver2(udata, x0=0, x1=None, y0=0, y1=None,
 #                              z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
 #                              window=None, correct_signal_loss=True, remove_undersampled_region=True,
-#                              cc=1, notebook=True, debug=False):
+#                              cc=1, notebook=useNotebook, debug=False):
 #     """
 #     Returns 1D energy spectrum from velocity field data
 #     ... The algorithm implemented in this function is VERY QUICK because it does not use the two-point  autorcorrelation tensor.
@@ -2165,9 +2174,11 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
     e11, e11_err = np.empty((n_samples, duration)), np.empty((n_samples, duration))
     for t in range(duration):
         ux_k = np.fft.fftshift(np.fft.fft(ux[..., t], axis=ax_ind))
-        e11_nd = np.abs(ux_k * np.conj(ux_k)) * 2 / (2 * np.pi * deltaf) / n_samples ** 2 # e11 is defined as twice as the square of the 1D FT of u1
+        e11_nd = np.abs(ux_k * np.conj(ux_k)) * 2 / (
+                    2 * np.pi * deltaf) / n_samples ** 2  # e11 is defined as twice as the square of the 1D FT of u1
         e11[..., t] = np.nanmean(e11_nd, axis=ax_ind_for_avg)
-        e11_err[..., t] = np.nanstd(e11_nd, axis=ax_ind_for_avg) / np.sqrt(np.product([l for i, l in enumerate(e11_nd.shape) if i in [ax_ind_for_avg]]))
+        e11_err[..., t] = np.nanstd(e11_nd, axis=ax_ind_for_avg) / np.sqrt(
+            np.product([l for i, l in enumerate(e11_nd.shape) if i in [ax_ind_for_avg]]))
 
     # E22
     e22, e22_err = np.empty((n_samples, duration)), np.empty((n_samples, duration))
@@ -2175,7 +2186,8 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
         uy_k = np.fft.fftshift(np.fft.fft(uy[..., t], axis=ax_ind))
         e22_nd = np.abs(uy_k * np.conj(uy_k)) * 2 / (2 * np.pi * deltaf) / n_samples ** 2
         e22[..., t] = np.nanmean(e22_nd, axis=ax_ind_for_avg)
-        e22_err[..., t] = np.nanstd(e22_nd, axis=ax_ind_for_avg) / np.sqrt(np.product([l for i, l in enumerate(e22_nd.shape) if i in [ax_ind_for_avg]]))
+        e22_err[..., t] = np.nanstd(e22_nd, axis=ax_ind_for_avg) / np.sqrt(
+            np.product([l for i, l in enumerate(e22_nd.shape) if i in [ax_ind_for_avg]]))
 
     # Get an array for wavenumber
     k = np.fft.fftfreq(n, d=d) * 2 * np.pi  # shape=(n, duration)
@@ -2187,7 +2199,8 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
             uz_k = np.fft.fftshift(np.fft.fft(uz[..., t], axis=ax_ind))
             e33_nd = np.abs(uz_k * np.conj(uz_k)) * 2 / (2 * np.pi * deltaf) / n_samples ** 2
             e33[..., t] = np.nanmean(e33_nd, axis=ax_ind_for_avg)
-            e33_err[..., t] = np.nanstd(e33_nd, axis=ax_ind_for_avg) / np.sqrt(np.product([l for i, l in enumerate(e33_nd.shape) if i in [ax_ind_for_avg]]))
+            e33_err[..., t] = np.nanstd(e33_nd, axis=ax_ind_for_avg) / np.sqrt(
+                np.product([l for i, l in enumerate(e33_nd.shape) if i in [ax_ind_for_avg]]))
 
         eiis, eii_errs = np.array([e11, e22, e33]), np.array([e11_err, e22_err, e33_err])
     elif dim == 2:
@@ -2209,8 +2222,10 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
             k_i, eiis_i = clean_data_interp1d(eiis[i, ..., 0], k)
             integral_i = np.trapz(eiis_i[..., 0], x=k_i[:, 0], axis=0)
             print('... ui2_tavg, integral_i, n_samples', ui2_tavg, integral_i, udata.shape, ux_k.shape, n_samples)
-            print('...Frame0: <u%d squared> / integral of E_%d%d: ' % (i + 1, i + 1, i + 1), ui2_tavg / integral_i,  '. Expected to be approx 0.5')
+            print('...Frame0: <u%d squared> / integral of E_%d%d: ' % (i + 1, i + 1, i + 1), ui2_tavg / integral_i,
+                  '. Expected to be approx 0.5')
     return eiis, eii_errs, k
+
 
 def get_dissipation_spectrum(udata, nu, x0=0, x1=None, y0=0, y1=None,
                              z0=0, z1=None, dx=None, dy=None, dz=None, nkout=None,
@@ -2370,7 +2385,7 @@ def get_rescaled_energy_spectrum(udata, epsilon=10 ** 5, nu=1.0034, x0=0, x1=Non
 
 def get_1d_rescaled_energy_spectrum(udata, epsilon=None, nu=1.0034, x0=0, x1=None,
                                     y0=0, y1=None, z0=0, z1=None,
-                                    dx=1, dy=1, dz=1, notebook=True, window='flattop', correct_signal_loss=True):
+                                    dx=1, dy=1, dz=1, notebook=useNotebook, window='flattop', correct_signal_loss=True):
     """
     Returns SCALED 1D energy spectra (E11 and E22)
     ... Applies the flattop window function by default
@@ -2898,6 +2913,7 @@ def get_epsilon_using_diss_spectrum(udata, nu=1.0034, x0=0, x1=None,
         # Recall D ~ k^2dk. this is why there are (2pi)^3
         epsilon[t] = np.trapz(D_k[:, t], k1d[:, t])
     return epsilon
+
 
 def get_epsilon_using_struc_func_old(rrs, Dxxs, epsilon_guess=100000, r0=1.0, r1=10.0, p=2, method='Nelder-Mead'):
     """
@@ -3576,8 +3592,8 @@ def compute_spatial_autocorr3d(ui, x, y, z, roll_axis=1, n_bins=None,
         for j, i in enumerate(tqdm(roll_indices, desc='computing correlation')):
             uu_rolled = np.roll(uu, i, axis=roll_axis)
             x_grid_rolled, y_grid_rolled, z_grid_rolled = np.roll(x_grid, i, axis=roll_axis), \
-                                                          np.roll(y_grid, i, axis=roll_axis), \
-                                                          np.roll(z_grid, i, axis=roll_axis)
+                np.roll(y_grid, i, axis=roll_axis), \
+                np.roll(z_grid, i, axis=roll_axis)
             rx = x_grid_rolled - x_grid
             ry = y_grid_rolled - y_grid
             rz = z_grid_rolled - z_grid
@@ -3715,7 +3731,7 @@ def get_two_point_vel_corr_roll(ui, x, y, z=None, roll_axis=1, n_bins=None,
 
 def get_two_point_vel_corr(udata, x, y, z=None,
                            x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None,
-                           nd=10 ** 3, nr=70, rmax=None, notebook=True,
+                           nd=10 ** 3, nr=70, rmax=None, notebook=useNotebook,
                            periodic=False):
     """
     Returns the normalized two-point velocity tatistics (rrs, fs, f_errs, rrs, gs, g_errs)
@@ -3760,7 +3776,6 @@ def get_two_point_vel_corr(udata, x, y, z=None,
     ... gs: 2d array, transverse velocity correlation funcitonwith shape (nd, duration)
     ... g_errs: 2d array, transverse velocity correlation funciton error with shape (nd, duration)
     """
-
 
     if notebook:
         from tqdm import tqdm_notebook as tqdm
@@ -3834,8 +3849,8 @@ def get_two_point_vel_corr(udata, x, y, z=None,
     if dim == 3:
         z_grid, y_grid, x_grid = z[y0:y1, x0:x1, z0:z1], y[y0:y1, x0:x1, z0:z1], x[y0:y1, x0:x1, z0:z1]
         dx, dy, dz = np.abs(x_grid[0, 1, 0] - x_grid[0, 0, 0]), \
-                     np.abs(y_grid[1, 0] - y_grid[0, 0, 0]), \
-                     np.abs(y_grid[0, 0, 1] - z_grid[0, 0, 0])
+            np.abs(y_grid[1, 0] - y_grid[0, 0, 0]), \
+            np.abs(y_grid[0, 0, 1] - z_grid[0, 0, 0])
     else:
         y_grid, x_grid = y[y0:y1, x0:x1], x[y0:y1, x0:x1]
         dx, dy = np.abs(x_grid[0, 1] - x_grid[0, 0]), np.abs(y_grid[1, 0] - y_grid[0, 0])
@@ -3846,7 +3861,7 @@ def get_two_point_vel_corr(udata, x, y, z=None,
     is_R1_reasonable = False
 
     if periodic:
-        prefactor = 0.5 # Scan r in [dx * 2, min([width, height, depth, rmax])]
+        prefactor = 0.5  # Scan r in [dx * 2, min([width, height, depth, rmax])]
     else:
         prefactor = 1.
 
@@ -3861,14 +3876,14 @@ def get_two_point_vel_corr(udata, x, y, z=None,
         rs_ = np.linspace(dx * 2, min([width, height, rmax]) * prefactor, nr)
     else:
         xmin, xmax, ymin, ymax, zmin, zmax = np.min(x_grid), np.max(x_grid), \
-                                             np.min(y_grid), np.max(y_grid), \
-                                             np.min(z_grid), np.max(z_grid)
+            np.min(y_grid), np.max(y_grid), \
+            np.min(z_grid), np.max(z_grid)
         if periodic:
             width, height, depth = xmax - xmin + dx, ymax - ymin + dy, zmax - zmin + dz
         else:
             width, height, depth = xmax - xmin, ymax - ymin, zmax - zmin
         if rmax is None: rmax = (width ** 2 + height ** 2 + depth ** 2) ** 0.5
-        rs_ = np.linspace(dx*2, min([width, height, depth, rmax]) * prefactor, nr)
+        rs_ = np.linspace(dx * 2, min([width, height, depth, rmax]) * prefactor, nr)
     rs = np.empty(nd)
     fs_ = np.empty(nd)
     gs_ = np.empty(nd)
@@ -3894,7 +3909,7 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                         if periodic:
                             if X1 < xmin:
                                 X1 = X1 + width
-                                shifting_vector[0] = -width # the actual width of the box is `width` + `dx`
+                                shifting_vector[0] = -width  # the actual width of the box is `width` + `dx`
                             elif X1 > xmax:
                                 X1 = X1 - width
                                 shifting_vector[0] = width
@@ -3902,7 +3917,7 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                                 pass
                             if Y1 < ymin:
                                 Y1 = Y1 + height
-                                shifting_vector[1] = -height # the actual height of the box is `height` + `dy`
+                                shifting_vector[1] = -height  # the actual height of the box is `height` + `dy`
                             elif Y1 > ymax:
                                 Y1 = Y1 - height
                                 shifting_vector[1] = height
@@ -3935,7 +3950,7 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                         if periodic:
                             if X1 < xmin:
                                 X1 = X1 + width
-                                shifting_vector[0] = -width # the actual width of the box is `width` + `dx`
+                                shifting_vector[0] = -width  # the actual width of the box is `width` + `dx`
                             elif X1 > xmax:
                                 X1 = X1 - width
                                 shifting_vector[0] = width
@@ -3943,7 +3958,7 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                                 pass
                             if Y1 < ymin:
                                 Y1 = Y1 + height
-                                shifting_vector[1] = -height # the actual height of the box is `height` + `dy`
+                                shifting_vector[1] = -height  # the actual height of the box is `height` + `dy`
                             elif Y1 > ymax:
                                 Y1 = Y1 - height
                                 shifting_vector[1] = height
@@ -3962,7 +3977,8 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                         X1_ind, _ = find_nearest(x_grid[0, :, 0], X1)
                         Y1_ind, _ = find_nearest(y_grid[:, 0, 0], Y1)
                         Z1_ind, _ = find_nearest(z_grid[0, 0, :], Z1)
-                        R1 = np.asarray([x_grid[0, X1_ind, 0], y_grid[Y1_ind, 0, 0], z_grid[0, 0, Z1_ind]]) + shifting_vector
+                        R1 = np.asarray(
+                            [x_grid[0, X1_ind, 0], y_grid[Y1_ind, 0, 0], z_grid[0, 0, Z1_ind]]) + shifting_vector
                         if is_R1_reasonable and X0_ind == X1_ind and Y0_ind == Y1_ind and Z0_ind == Z1_ind:
                             is_R1_reasonable = False
 
@@ -4002,7 +4018,7 @@ def get_two_point_vel_corr(udata, x, y, z=None,
                     denominators_g[j] = vec.dot(udata[:, Y0_ind, X0_ind, Z0_ind, t], basis[:, 1]) ** 2
                 else:
                     raise ValueError('dim must be 2 ro 3.')
-                is_R1_reasonable = False # initialize
+                is_R1_reasonable = False  # initialize
 
             rrs[i, t] = np.nanmean(rs)
             fs[i, t] = np.nanmean(fs_) / np.nanmean(denominators_f)
@@ -4020,7 +4036,7 @@ def get_two_point_vel_corr(udata, x, y, z=None,
 
 def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None,
                                x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=None, t1=None,
-                               coarse=1.0, coarse2=0.2, notebook=True, return_rij=False):
+                               coarse=1.0, coarse2=0.2, notebook=useNotebook, return_rij=False):
     """
     Returns two-point velocity autocorrelation tensor, and autocorrelation functions.
     Uses the x-component of velocity. (CAUTION required for unisotropic flows)
@@ -4455,8 +4471,8 @@ def get_structure_function_long(udata, x, y, z=None, p=2, roll_axis=1, n_bins=No
             # for i in range(int(coarse * limits[roll_axis])):
             if dim == 3:
                 x_grid_rolled, y_grid_rolled, z_grid_rolled = np.roll(x_grid, i, axis=roll_axis), \
-                                                              np.roll(y_grid, i, axis=roll_axis), \
-                                                              np.roll(z_grid, i, axis=roll_axis)
+                    np.roll(y_grid, i, axis=roll_axis), \
+                    np.roll(z_grid, i, axis=roll_axis)
                 r_grid = np.sqrt(
                     (x_grid_rolled - x_grid) ** 2 + (y_grid_rolled - y_grid) ** 2 + (z_grid_rolled - z_grid) ** 2)
             elif dim == 2:
@@ -4730,8 +4746,8 @@ def get_structure_function_roll(udata, x, y, z=None, indices=('x', 'x'), roll_ax
             # for i in range(int(coarse * limits[roll_axis])):
             if dim == 3:
                 x_grid_rolled, y_grid_rolled, z_grid_rolled = np.roll(x_grid, i, axis=roll_axis), \
-                                                              np.roll(y_grid, i, axis=roll_axis), \
-                                                              np.roll(z_grid, i, axis=roll_axis)
+                    np.roll(y_grid, i, axis=roll_axis), \
+                    np.roll(z_grid, i, axis=roll_axis)
                 r_grid = np.sqrt(
                     (x_grid_rolled - x_grid) ** 2 + (y_grid_rolled - y_grid) ** 2 + (z_grid_rolled - z_grid) ** 2)
             elif dim == 2:
@@ -4958,8 +4974,8 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
     if dim == 3:
         z_grid, y_grid, x_grid = z[y0:y1, x0:x1, z0:z1], y[y0:y1, x0:x1, z0:z1], x[y0:y1, x0:x1, z0:z1]
         dx, dy, dz = np.abs(x_grid[0, 1, 0] - x_grid[0, 0, 0]), \
-                     np.abs(y_grid[1, 0] - y_grid[0, 0, 0]), \
-                     np.abs(y_grid[0, 0, 1] - z_grid[0, 0, 0])
+            np.abs(y_grid[1, 0] - y_grid[0, 0, 0]), \
+            np.abs(y_grid[0, 0, 1] - z_grid[0, 0, 0])
     elif dim == 2:
         y_grid, x_grid = y[y0:y1, x0:x1], x[y0:y1, x0:x1]
         dx, dy = np.abs(x_grid[0, 1] - x_grid[0, 0]), np.abs(y_grid[1, 0] - y_grid[0, 0])
@@ -4993,9 +5009,9 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
         else:
             ls = [lx, ly]
         if spacing == 'log':
-            rs_ = np.logspace(np.log10(rs_[0]), np.log10(rs_[-1]//2), num=nr)
+            rs_ = np.logspace(np.log10(rs_[0]), np.log10(rs_[-1] // 2), num=nr)
         else:
-            rs_ = np.linspace(rs_[0], rs_[-1]//2, nr)
+            rs_ = np.linspace(rs_[0], rs_[-1] // 2, nr)
 
     rs = np.empty(nd)
     Dijks_ = np.empty(nd)
@@ -5055,9 +5071,12 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
                 R01 = R1 - R0
                 if periodic:
                     for d in range(dim):
-                        if R01[d] > ls[d]//2: R01[d] -= ls[d]
-                        elif R01[d] < -ls[d]//2: R01[d] += ls[d]
-                        else: pass
+                        if R01[d] > ls[d] // 2:
+                            R01[d] -= ls[d]
+                        elif R01[d] < -ls[d] // 2:
+                            R01[d] += ls[d]
+                        else:
+                            pass
 
                 basis = vec.get_an_orthonormal_basis(dim, v1=R01)
                 # CRUCIAL: make sure to use the same convention to define the direction of the transverse vector
@@ -5093,7 +5112,7 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
     for k, p_ in enumerate(ps):
         Dijks_scaled[:, k, :] = Dijks[:, k, :] / (epsilon * rrs) ** (p_ / 3.)
         Dijk_errs_scaled[:, k, :] = Dijk_errs[:, k, :] / (epsilon * rrs) ** (p_ / 3.)
-    if Dijks.shape[1] == 1: # iget_structure_functionf a single p is given, then squeeze the returning array
+    if Dijks.shape[1] == 1:  # iget_structure_functionf a single p is given, then squeeze the returning array
         Dijks, Dijk_errs = Dijks[:, 0, :], Dijk_errs[:, 0, :]
         Dijks_scaled, Dijk_errs_scaled = Dijks_scaled[:, 0, :], Dijk_errs_scaled[:, 0, :]
 
@@ -5101,7 +5120,6 @@ def get_structure_function(udata, x, y, z=None, nu=1.004,
     if notebook:
         from tqdm import tqdm as tqdm
     return rrs, Dijks, Dijk_errs, rrs_scaled, Dijks_scaled, Dijk_errs_scaled
-
 
 
 def scale_raw_structure_funciton_long(rrs, Dxxs, epsilon, Dxx_errs=None, nu=1.004, p=2):
@@ -5154,6 +5172,7 @@ def scale_raw_structure_funciton_long(rrs, Dxxs, epsilon, Dxx_errs=None, nu=1.00
         return rrs_s, Dxxs_s, Dxx_errs_s
     else:
         return rrs_s, Dxxs_s,
+
 
 ########## Length scales ##########
 ## TAYLOR MICROSCALES ##
@@ -5306,7 +5325,8 @@ def get_taylor_microscales(r_long, f_long, r_tran, g_tran, residual_thd=0.001, d
                 residual_f = residual_f[0]
                 if verbose:
                     print(f'--Step {t}, Long. Taylor microscale--')
-                    print(f'No of pts to fit a quadratic func, residual, residual_thd, accept: {n}, {residual_f:.2f}, {residual_thd}, {residual_f<residual_thd}')
+                    print(
+                        f'No of pts to fit a quadratic func, residual, residual_thd, accept: {n}, {residual_f:.2f}, {residual_thd}, {residual_f < residual_thd}')
                 if residual_f < residual_thd:
                     lambdafs.append(lambda_f_tmp)
                     residuals_f.append(residual_f)
@@ -5528,6 +5548,7 @@ def get_integral_scale_large_eddy(udata, epsilon):
     L = u_irms ** 3 / epsilon
     return L
 
+
 def get_integral_scale_large_eddy_using_esavg(esavg, tt, dimMeas=2, dimFlow=3, smooth=True, window_len=None,
                                               window='hanning', resampleData=True, log=True, n=100):
     """
@@ -5579,10 +5600,10 @@ def get_integral_scale_large_eddy_using_esavg(esavg, tt, dimMeas=2, dimFlow=3, s
         mode = 'log'
     else:
         mode = 'linear'
-    k = esavg * (dimFlow / float(dimMeas)) # average energy density
+    k = esavg * (dimFlow / float(dimMeas))  # average energy density
     if smooth:
         if window_len is None:
-            window_len = (len(k) // n // 2) * 2 + 1 # length of a smoothening filter
+            window_len = (len(k) // n // 2) * 2 + 1  # length of a smoothening filter
         k = smoothen(k, window_len=window_len, window=window)
 
     # RESAMPLE
@@ -5593,10 +5614,11 @@ def get_integral_scale_large_eddy_using_esavg(esavg, tt, dimMeas=2, dimFlow=3, s
     epsilon = - np.gradient(k_rs, t_rs)
     L = k_rs ** 1.5 / epsilon
 
-    if resampleData: # return the result with the same length as esavg by interpolating the result
+    if resampleData:  # return the result with the same length as esavg by interpolating the result
         f = interpolate.interp1d(t_rs, L, bounds_error=False, fill_value=np.nan)
         L = f(tt)
     return L
+
 
 def get_integral_velocity_scale(udata):
     """
@@ -6225,7 +6247,7 @@ def get_sample_turb_field_3d(return_coord=True, return_2dslice=False):
     # get module location
     mod_loc = os.path.abspath(__file__)
     pdir, filename = os.path.split(mod_loc)
-    datapath = os.path.join(pdir, 'reference_data/isoturb_slice2.h5')
+    datapath = os.path.join(pdir, 'velocity_ref/isoturb_slice2.h5')
     data = h5py.File(datapath, 'r')
 
     keys = list(data.keys())
@@ -6448,10 +6470,10 @@ def get_energy_spectra_jhtd():
     Returns
     -------
     datadict: dict
-        data stored is stored in '/reference_data/jhtd_e_specs.h5'
+        data stored is stored in '/velocity_ref/jhtd_e_specs.h5'
     """
     faqm_dir = os.path.split(os.path.realpath(__file__))[0]
-    datapath = faqm_dir + '/reference_data/jhtd_e_specs.h5'
+    datapath = faqm_dir + '/velocity_ref/jhtd_e_specs.h5'
 
     datadict = {}
     with h5py.File(datapath, 'r') as data:
@@ -6474,7 +6496,7 @@ def get_rescaled_energy_spectra_jhtd():
         data stored in jhtd_e_specs.h5 is stored: Scaled k, Scaled ek
     """
     faqm_dir = os.path.split(os.path.realpath(__file__))[0]
-    datapath = faqm_dir + '/reference_data/jhtd_e_specs.h5'
+    datapath = faqm_dir + '/velocity_ref/jhtd_e_specs.h5'
 
     datadict = {}
     with h5py.File(datapath, 'r') as data:
@@ -6501,7 +6523,7 @@ def get_rescaled_structure_function_saddoughi(p=2):
     """
     tflow_dir = os.path.split(os.path.realpath(__file__))[0]
     if p == 2:
-        datapath = tflow_dir + '/reference_data/sv_struc_func.h5'
+        datapath = tflow_dir + '/velocity_ref/sv_struc_func.h5'
         # datapath = tflow_dir + '/velocity_ref/sv_struc_func.txt'
         # data = np.loadtxt(datapath, skiprows=1, delimiter=',')
         # r_scaled, dll = data[:, 0], data[:, 1]
@@ -6522,7 +6544,7 @@ def get_rescaled_structure_function_saddoughi(p=2):
 # To do so, use the following helper.
 
 def process_large_udata(udatapath, func=get_spatial_avg_energy, t0=0, t1=None,
-                        x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, inc=10, notebook=True,
+                        x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, inc=10, notebook=useNotebook,
                         reynolds_decomposition=False, keep=None,
                         clean=False, cutoff=np.inf, method='nn',
                         median_filter=False, replace_zeros=True,
@@ -6663,7 +6685,7 @@ def get_time_avg_energy_from_udatapath(udatapath,
                                        clean=False, median_filter=False,
                                        thd=np.inf, fill_value=np.nan,
                                        udata_mean=None,
-                                       notebook=True, **kwargs):
+                                       notebook=useNotebook, **kwargs):
     """
     Returns time-averaged energy when a path to udata is provided
     ... recommended to use if udata is large (> half of your memory size)
@@ -6858,7 +6880,7 @@ def get_time_avg_enstrophy_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=Non
                                           clean=False, median_filter=False,
                                           thd=np.inf, fill_value=np.nan,
                                           udata_mean=None,
-                                          notebook=True, **kwargs):
+                                          notebook=useNotebook, **kwargs):
     """
     Returns time-averaged energy from a path to udata
     ... recommended to use if udata is large (> half of your memory size)
@@ -7036,7 +7058,12 @@ def get_time_avg_field_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None, z
                 counters_ux, counters_uy, counters_uz = np.zeros((height, width, depth)), np.zeros(
                     (height, width, depth)), np.zeros((height, width, depth))
                 for t in tqdm(range(t0, t1, inc)):
-                    ux_inst, uy_inst, uz_inst = f['ux'][y0:y1, x0:x1, z0:z1, t], f['uy'][y0:y1, x0:x1, z0:z1, t], f['uz'][y0:y1, x0:x1, z0:z1, t]
+                    ux_inst, uy_inst, uz_inst = f['ux'][y0:y1, x0:x1, z0:z1, t], f['uy'][y0:y1, x0:x1, z0:z1, t], f[
+                                                                                                                      'uz'][
+                                                                                                                  y0:y1,
+                                                                                                                  x0:x1,
+                                                                                                                  z0:z1,
+                                                                                                                  t]
                     ux_inst[ux_inst > thd] = fill_value
                     uy_inst[uy_inst > thd] = fill_value
                     uz_inst[uz_inst > thd] = fill_value
@@ -7095,7 +7122,7 @@ def get_time_avg_field_from_udatapath(udatapath, x0=0, x1=None, y0=0, y1=None, z
 
 def export_raw_file_from_dpath(udatapath, func=get_energy, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                                t0=0, t1=None, inc=1, savedir=None, dtype='uint32', thd=None,
-                               interpolate=None, notebook=True, running_avg=1, **kwargs):
+                               interpolate=None, notebook=useNotebook, running_avg=1, **kwargs):
     """
     Exports a raw file of the output of a given function (default: get_energuy) at each time step.
     (Intended for 4D visualization. e.g. use ORS Dragonfly for visualiztion)
@@ -7204,7 +7231,7 @@ def export_raw_file_from_dpath(udatapath, func=get_energy, x0=0, x1=None, y0=0, 
 
 
 def export_raw_file(data2save, savepath, dtype='uint32', thd=np.inf, interpolate=None, fill_value=np.nan,
-                    contrast=True, contrast_value=None, log10=False, notebook=True, **kwargs):
+                    contrast=True, contrast_value=None, log10=False, notebook=useNotebook, **kwargs):
     """
     Exports a raw file from a numpy array with inteprolation features
     ... The intended use is to convert the numpy array to a raw file which can be loaded to Dragonfly
@@ -7485,7 +7512,8 @@ def get_intersecting_vertices(xxx, yyy, zzz, a, b, c, x0, y0, z0):
         verts = np.asarray(verts)
         return verts
 
-def slicer_old(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, show=False, notebook=True,
+
+def slicer_old(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=True, show=False, notebook=useNotebook,
                debug=False):
     """
     DEPRECATED (this slicer function uses a brute-force approach. Use slicer() instead.
@@ -7833,7 +7861,7 @@ def slicer_old(xx, yy, zz, n, pt, basis=None, spacing=None, apply_convention=Tru
 ## Get a slice of a 3D velocity field
 def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
                    method='nn', max_iter=10, tol=0.05, median_filter=True,
-                   basis=None, u_basis='npq', showtqdm=True, verbose=False, notebook=True,
+                   basis=None, u_basis='npq', showtqdm=True, verbose=False, notebook=useNotebook,
                    **kwargs):
     """
     Returns a spatially 2D udata which is on the cross section of a volumetric data
@@ -7957,7 +7985,7 @@ def slice_udata_3d(udata, xx, yy, zz, n, pt, spacing=None, show=False,
         uzi = fs[2]((yy_plane, xx_plane, zz_plane))
         # shape = uxi.shape
         uis_xyz = np.stack((uxi.flatten(), uyi.flatten(), uzi.flatten()))
-        uis_npq = np.matmul(Mab, uis_xyz).reshape((3,) + shape) # Mab (ux, uy, uz) -> (un, up, uq)
+        uis_npq = np.matmul(Mab, uis_xyz).reshape((3,) + shape)  # Mab (ux, uy, uz) -> (un, up, uq)
         uis_xyz = uis_xyz.reshape((3,) + shape)
 
         # pts_b = np.stack((nn.flatten(), pp.flatten(), qq.flatten()))  # npq
@@ -8174,7 +8202,7 @@ def slice_udata_3d_old(udata, xx, yy, zz, n, pt, spacing=None, show=False,
 ## Get a slice of a 3D scalar field
 def slice_3d_scalar_field(field, xx, yy, zz, n, pt, spacing=None,
                           basis=None,
-                          showtqdm=True, verbose=False, notebook=True, **kwargs):
+                          showtqdm=True, verbose=False, notebook=useNotebook, **kwargs):
     """
     Returns a spatially 2D udata which is on the cross section of a volumetric data
     ... There are two ways to return the velocity field on the cross section.
@@ -8586,7 +8614,7 @@ def interpolate_vector_field_at_instant_of_time(vfield, xx, yy, zz=None, t=0, bo
 
 
 def griddata_easy(x, y, data, xi=None, yi=None, dx=None, dy=None, nx=10, ny=10, method='nearest',
-                   xmin=None, xmax=None, ymin=None, ymax=None, fill_value=None):
+                  xmin=None, xmax=None, ymin=None, ymax=None, fill_value=None):
     """
     Conduct 2D interpolation of data from a nonuniformly spaced rectangular grid
     ... A wrapper of scipy.interplate.griddata
@@ -8895,7 +8923,8 @@ def get_window_radial(xx, yy, zz=None, wtype='hamming', rmax=None, duration=None
         rr = np.sqrt((xx - origin[0]) ** 2 + (yy - origin[1]) ** 2 + (zz - origin[2]) ** 2)
 
     if rmax is None:
-        xmax, ymax = np.nanmax(np.nanmax(xx[0, :]) - np.nanmin(xx[0, :])), np.nanmax(np.nanmax(yy[:, 0]) - np.nanmin(yy[:, 0]))
+        xmax, ymax = np.nanmax(np.nanmax(xx[0, :]) - np.nanmin(xx[0, :])), np.nanmax(
+            np.nanmax(yy[:, 0]) - np.nanmin(yy[:, 0]))
         rmax = min(xmax, ymax)
     if wtype is None:
         window = np.ones_like(rr)
@@ -9092,7 +9121,7 @@ def clean_udata(udata,
                 cutoff=np.inf,
                 median_filter=True,
                 replace_zeros=True,
-                showtqdm=True, verbose=False, notebook=True, make_copy=True):
+                showtqdm=True, verbose=False, notebook=useNotebook, make_copy=True):
     """
     Cleans up the velocity field udata.
     ... 1. Thresholding to spot unphysical values
@@ -9190,7 +9219,7 @@ def clean_udata(udata,
 
     if notebook:
         from tqdm import tqdm as tqdm
-    udata_i = np.squeeze(udata_i) # remove singleton dimensions
+    udata_i = np.squeeze(udata_i)  # remove singleton dimensions
     return udata_i
 
 
@@ -9312,7 +9341,7 @@ def replace_nan_w_nn(data, notebook=False):
         return data
 
 
-def replace_nan_w_nn_udata(udata, notebook=True, showtqdm=True):
+def replace_nan_w_nn_udata(udata, notebook=useNotebook, showtqdm=True):
     """
     Nearest neighbor filling for nans in udata
     The fastest and most robust function to fill the missing values in udata
@@ -9351,7 +9380,7 @@ def replace_nan_w_nn_udata(udata, notebook=True, showtqdm=True):
 
 
 def replace_nans(array, max_iter=10, tol=0.05, kernel_radius=2, kernel_sigma=2, method='nn',
-                 notebook=True, verbose=False, showtqdm=True):
+                 notebook=useNotebook, verbose=False, showtqdm=True):
     """
     Replace NaN elements in an array using an iterative inpainting algorithm.
     The algorithm is the following:
@@ -9509,7 +9538,7 @@ def replace_nans(array, max_iter=10, tol=0.05, kernel_radius=2, kernel_sigma=2, 
 def clean_data(data_org, mask=None,
                method='nn', max_iter=5, tol=0.05, kernel_radius=2, kernel_sigma=2,
                replace_val=None,
-               cutoff=np.inf, fill_value=0, verbose=False, notebook=True, makecopy=True,
+               cutoff=np.inf, fill_value=0, verbose=False, notebook=useNotebook, makecopy=True,
                median_filter=True, showtqdm=True):
     """
     This fills missing values (np.nan) in an array by one of the listed procedures below.
@@ -9697,7 +9726,7 @@ def get_instantaneous_center_of_energy(udata, xx, yy, zz=None,
 
 # FUNCTIONS FOR STB DATA ANALYSIS
 def get_weighted_center(xx, yy, qty, zz=None, inc=1, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None,
-                        notebook=True):
+                        notebook=useNotebook):
     """
     Returns a center weighted by a quantity (e.g. energy)
 
@@ -9736,7 +9765,8 @@ def get_weighted_center(xx, yy, qty, zz=None, inc=1, x0=0, x1=None, y0=0, y1=Non
         for i, t in enumerate(tqdm(range(t0, duration, inc))):
             xcs[i] = np.nansum(qty[y0:y1, x0:x1, t] * xx[y0:y1, x0:x1, z0:z1]) / np.nansum(qty[y0:y1, x0:x1, z0:z1, t])
             ycs[i] = np.nansum(qty[y0:y1, x0:x1, t] * yy[y0:y1, x0:x1, z0:z1]) / np.nansum(qty[y0:y1, x0:x1, z0:z1, t])
-            zcs[i] = np.nansum(qty[y0:y1, x0:x1, z0:z1, t] * zz[y0:y1, x0:x1, z0:z1]) / np.nansum(qty[y0:y1, x0:x1, z0:z1, t])
+            zcs[i] = np.nansum(qty[y0:y1, x0:x1, z0:z1, t] * zz[y0:y1, x0:x1, z0:z1]) / np.nansum(
+                qty[y0:y1, x0:x1, z0:z1, t])
 
     if zz is not None:
         weighted_center = np.stack((xcs, ycs, zcs))
@@ -9749,7 +9779,7 @@ def get_weighted_center(xx, yy, qty, zz=None, inc=1, x0=0, x1=None, y0=0, y1=Non
     return weighted_center
 
 
-def get_center_of_energy(dpath, inc=10, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,):
+def get_center_of_energy(dpath, inc=10, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, ):
     """
     Returns the center of energy (essentially the center of the blob)- (xc, yc, zc)
     using the TIME-AVERAGED ENERGY FIELD.
@@ -10565,7 +10595,7 @@ def plot_spatial_avg_energy(udata, time, x0=0, x1=None, y0=0, y1=None, t0=0, t1=
 def make_movie(imgname=None, imgdir=None, movname=None, indexsz='05', framerate=10, crf=12,
                bkgColor=None, bkgWidth=800, bkgHeight=800, rm_images=False,
                save_into_subdir=False, start_number=0, framestep=1, ext='png', option='normal', overwrite=False,
-               invert=False, add_commands=[], ffmpeg_path=os.path.join(moddirpath, 'ffmpeg')):
+               invert=False, add_commands=[], ffmpeg_path=os.path.join(mod_dir_path, 'ffmpeg')):
     """Create a movie from a sequence of images using the ffmpeg supplied with ilpm.
     Options allow for deleting folder automatically after making movie.
     Will run './ffmpeg', '-framerate', str(int(framerate)), '-i', imgname + '%' + indexsz + 'd.png', movname + '.mov',
@@ -10699,8 +10729,8 @@ def make_time_evo_movie_from_udata(qty, xx, yy, time, t=1, inc=100, label='$\\fr
                                    draw_box=True, xlabel='$x$ ($mm$)', ylabel='$y$ ($mm$)',
                                    invert_y=False,
                                    savedir='./', qtyname='qty', framerate=10,
-                                   ffmpeg_path=os.path.join(moddirpath, 'ffmpeg'), overwrite=True, redo=False,
-                                   notebook=True, verbose=False, box_kwargs={}):
+                                   ffmpeg_path=os.path.join(mod_dir_path, 'ffmpeg'), overwrite=True, redo=False,
+                                   notebook=useNotebook, verbose=False, box_kwargs={}):
     """
     Make a movie about the running average (number of frames to average is specified by "t")
 
@@ -10759,7 +10789,8 @@ def make_time_evo_movie_from_udata(qty, xx, yy, time, t=1, inc=100, label='$\\fr
             t1 = qty_ravg.shape[-1]
 
         for t_ind, t in enumerate(tqdm(time[:-t][t0:t1:inc])):
-            fig1, ax1, cc1 = graph.color_plot(xx[y0:y1, x0:x1], yy[y0:y1, x0:x1], qty_ravg[y0:y1, x0:x1, t0 + t_ind * inc],
+            fig1, ax1, cc1 = graph.color_plot(xx[y0:y1, x0:x1], yy[y0:y1, x0:x1],
+                                              qty_ravg[y0:y1, x0:x1, t0 + t_ind * inc],
                                               fignum=1, vmin=vmin, vmax=vmax, label=label, option=option,
                                               cmap=cmap)
             if invert_y:
@@ -10788,15 +10819,13 @@ def make_time_evo_movie_from_udata(qty, xx, yy, time, t=1, inc=100, label='$\\fr
         from tqdm import tqdm as tqdm
 
 
-
-
 #
 # def make_time_evo_movie_from_udata_1d(qty, x, time, t=1, inc=100, label='$\\frac{1}{2} U_i U_i$ ($mm^2/s^2$)',
 #                                    option='loglog', xlim = [None, None], ylim=[None, None],
 #                                    xlabel='$x$ ($mm$)', ylabel='$y$ ($mm$)',
 #                                    savedir='./', qtyname='qty', framerate=10,
 #                                    ffmpeg_path='ffmpeg', overwrite=True, only_movie=False,
-#                                    notebook=True, verbose=False):
+#                                    notebook=useNotebook, verbose=False):
 #     ## Plotting helpers
 #     def tosemilogx(ax=None, **kwargs):
 #         if ax == None:
@@ -10954,7 +10983,7 @@ def get_binned_stats(arg, var, n_bins=100, mode='linear',
     except:
         arg_means = var_mean = np.asarray([np.nan] * n_bins)
         var_std = np.asarray([np.nan] * n_bins)
-        arg_edges = bin_edges = np.asarray([np.nan] * (n_bins+1))
+        arg_edges = bin_edges = np.asarray([np.nan] * (n_bins + 1))
 
         counts = np.asarray([np.nan] * n_bins)
     # bin centers
@@ -11250,6 +11279,7 @@ def get_binned_stats3d(x, y, z, var, n_bins=100, nx_bins=None, ny_bins=None, nz_
     else:
         return xx_binned, yy_binned, zz_binned, var_mean, var_err
 
+
 # LOADING UDATA
 def get_udata_from_path(*args, **kwargs):
     """Deprecated: Use get_udata()"""
@@ -11261,7 +11291,7 @@ def get_udata(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
               slicez=None, crop=None,
               reverse_x=False, reverse_y=False, reverse_z=False, ind=0,
               applyMask=True,
-             ):
+              ):
     """
     Returns udata from a path to udata
     If return_xy is True, it returns udata, xx(2d grid), yy(2d grid)
@@ -11370,7 +11400,8 @@ def get_udata(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                 udata = np.stack((ux, uy, uz))
                 if return_xy:
                     if slicez is None:
-                        xx, yy, zz = f['x'][y0:y1, x0:x1, z0:z1], f['y'][y0:y1, x0:x1, z0:z1], f['z'][y0:y1, x0:x1, z0:z1]
+                        xx, yy, zz = f['x'][y0:y1, x0:x1, z0:z1], f['y'][y0:y1, x0:x1, z0:z1], f['z'][y0:y1, x0:x1,
+                                                                                               z0:z1]
                     else:
                         xx, yy, zz = f['x'][y0:y1, x0:x1, slicez], f['y'][y0:y1, x0:x1, slicez], f['z'][0, 0, slicez]
         tau1 = time_mod.time()
@@ -11395,30 +11426,30 @@ def get_udata(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                 if reverse_x:
                     udata[0, ...] = -udata[0, ...]
                     xx[...] = -xx[:, :] + np.nanmax(xx[0, :])
-                    xx = xx[:, ::-1] # update July 2023
-                    udata = udata[:, :, ::-1, :] # update July 2023
+                    xx = xx[:, ::-1]  # update July 2023
+                    udata = udata[:, :, ::-1, :]  # update July 2023
                 if reverse_y:
                     udata[1, ...] = -udata[1, ...]
                     yy[...] = -yy[:, :] + np.nanmax(yy[:, 0])
-                    yy = yy[::-1, :] # update July 2023
-                    udata = udata[:, ::-1, :, :] # update July 2023
+                    yy = yy[::-1, :]  # update July 2023
+                    udata = udata[:, ::-1, :, :]  # update July 2023
                 return udata, xx, yy
             elif dim == 3:
                 if reverse_x:
                     udata[...] = -udata[:, :, ::-1, :, :]
                     xx[...] = -xx[:, :, :] + np.nanmax(xx[0, :, 0])
-                    xx = xx[:, ::-1] # update July 2023
-                    udata = udata[:, :, ::-1, :] # update July 2023
+                    xx = xx[:, ::-1]  # update July 2023
+                    udata = udata[:, :, ::-1, :]  # update July 2023
                 if reverse_y:
                     udata[1, ...] = -udata[1, ...]
                     yy[...] = -yy[:, :, :] + np.nanmax(yy[:, 0, 0])
-                    yy = yy[::-1, :] # update July 2023
-                    udata = udata[:, ::-1, :, :] # update July 2023
+                    yy = yy[::-1, :]  # update July 2023
+                    udata = udata[:, ::-1, :, :]  # update July 2023
                 if reverse_z:
                     udata[2, ...] = -udata[2, :, :, :, :]
                     zz[...] = -zz[:, :, :]
-                    zz = zz[:, :, :-1] # update July 2023
-                    udata = udata[:, :, :, ::-1, :] # update July 2023
+                    zz = zz[:, :, :-1]  # update July 2023
+                    udata = udata[:, :, :, ::-1, :]  # update July 2023
 
                 return udata, xx, yy, zz
         else:
@@ -11743,7 +11774,7 @@ def get_spatial_profile(xx, yy, qty, xc=None, yc=None, x0=0, x1=None, y0=0, y1=N
                         return_center=False,
                         zz=None, zc=None, z0=0, z1=None,
                         method=None,  # if qty contains nan, choose how to clean the array
-                        cutoff=np.inf, return_std=True, notebook=True, showtqdm=True
+                        cutoff=np.inf, return_std=True, notebook=useNotebook, showtqdm=True
                         ):
     """
     Returns a spatial profile (radial distribution) of 3D object with shape (height, width, duration)
@@ -11927,9 +11958,10 @@ def fix_udata_shape(udata):
             uy = uy.reshape((uy.shape[0], uy.shape[1], uy.shape[2], duration))
             uz = uz.reshape((uz.shape[0], uz.shape[1], uz.shape[2], duration))
             udata = np.stack((ux, uy, uz))
-    if dtype =='maskedArray': # if dtype is a masked array, convert data to a masked array from a regular array
-        udata = np.ma.array(data = udata, mask = mask)
+    if dtype == 'maskedArray':  # if dtype is a masked array, convert data to a masked array from a regular array
+        udata = np.ma.array(data=udata, mask=mask)
     return udata
+
 
 def get_time_from_path(dpath, fps, inc=1, t0=0, t1=None, save=False, overwrite=False):
     """
@@ -11958,6 +11990,7 @@ def get_time_from_path(dpath, fps, inc=1, t0=0, t1=None, save=False, overwrite=F
         add_data2udatapath(dpath, {'t': realtimes}, overwrite=overwrite)
     return realtimes
 
+
 def truncateXY(xx, yy, x0=0, x1=None, y0=0, y1=None):
     """
     Returns a truncated grid
@@ -11976,6 +12009,7 @@ def truncateXY(xx, yy, x0=0, x1=None, y0=0, y1=None):
     xx[y0:y1, x0:x1], yy[y0:y1, x0:x1]
     """
     return xx[y0:y1, x0:x1], yy[y0:y1, x0:x1]
+
 
 def truncateXYZ(xxx, yyy, zzz, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None):
     """
@@ -11998,7 +12032,6 @@ def truncateXYZ(xxx, yyy, zzz, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None):
     xxx[y0:y1, x0:x1, z0:z1], yyy[y0:y1, x0:x1, z0:z1], zzz[y0:y1, x0:x1, z0:z1]
     """
     return xxx[y0:y1, x0:x1, z0:z1], yyy[y0:y1, x0:x1, z0:z1], zzz[y0:y1, x0:x1, z0:z1]
-
 
 
 def load_mask(dpath2mask, xx, yy, dx):  # mm/px
@@ -12104,6 +12137,7 @@ def mask_udata(udata, mask, fill_value=np.nan, fill=True):
             udata_masked.data[...] = np.ma.filled(udata_masked)
         return udata_masked
 
+
 def mask_data(sdata, mask, fill_value=np.nan):
     """
     Returns a numpy.masked array of udata
@@ -12137,6 +12171,7 @@ def mask_data(sdata, mask, fill_value=np.nan):
             raise ValueError('mask shape must be one of these:', sshape, sshape[:-1])
     return sdata
 
+
 def fill_udata(udata, mask, fill_value=np.nan, deepcopy=False):
     """
     Replace values in udata where `mask` is True with `fill_value`
@@ -12161,6 +12196,7 @@ def fill_udata(udata, mask, fill_value=np.nan, deepcopy=False):
         for t in range(udata_filled.shape[-1]):
             udata_filled[d, ..., t][mask] = fill_value
     return udata_filled
+
 
 def get_speed(udata):
     """
@@ -13160,8 +13196,8 @@ def get_running_avg_nd(data, t, axis=-1, notebook=useNotebook, showtqdm=True):
             from tqdm import tqdm
         shape = data.shape
         newshape = list(shape)[:axis] + [shape[-1] - t + 1]
-        if axis not in [-1, len(shape)-1]:
-            newshape += list(shape)[axis+1:]
+        if axis not in [-1, len(shape) - 1]:
+            newshape += list(shape)[axis + 1:]
 
         data_ravg = np.zeros(newshape)
         for i in tqdm(list(range(t)), disable=not showtqdm, desc='Computing running average (nd)'):
@@ -13172,7 +13208,6 @@ def get_running_avg_nd(data, t, axis=-1, notebook=useNotebook, showtqdm=True):
         if notebook:
             from tqdm import tqdm
         return data_ravg
-
 
 
 def get_phase_average(x, period_ind=None,
@@ -13287,7 +13322,7 @@ def get_phase_average(x, period_ind=None,
 
 def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT=None,
                                        x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
-                                       t0=0, t1=None, notebook=True, use_masked_array=True):
+                                       t0=0, t1=None, notebook=useNotebook, use_masked_array=True):
     """
     Returns the phase-averaged udata (velocity field) without loading the entire udata from dpath
 
@@ -13362,8 +13397,8 @@ def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT=None,
         for t in range(t0, t1):
             if cond[t]:
                 udata_pavg[..., i] += \
-                get_udata_from_path(dpath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, t0=t, t1=t + 1,
-                                    verbose=False)[..., 0]
+                    get_udata_from_path(dpath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, t0=t, t1=t + 1,
+                                        verbose=False)[..., 0]
                 counter += 1
         udata_pavg[..., i] /= float(counter)
 
@@ -13478,6 +13513,34 @@ def read_simple_hdf5(datapath, grpname=None):
     return datadict
 
 
+def add_data(udatapath, datadict, attrdict=None, grpname=None, overwrite=False, verbose=True,
+             ):
+    """
+        Writes a data stored in a dictionary into a hdf5 at udatatapth
+        ... datadict = {"name1": value1, "name2":value2, ...} will be stored like /name1, /name2 in the hdf5 file
+        ... datadict = {"grp1": {"name1": value1, "name2":value2, ...},
+                        "grp1": {"name1": value1, "name2":value2, ...}, ... }
+            will be stored like /grp1/name1, /grp1/name2, /grp2/name1, /grp2/name2, ...
+
+        Parameters
+        ----------
+        udatapath: str, a path to the hdf5 file
+        datadict: dictionary, or a nested dictionary (up to level 2)
+            ... data must be stored like {"name1": value1, "name2": value2, ...}
+        grpname: str
+            ... if given, it saves the datadict like
+                /grpname/name1, /grpname/name2
+        overwrite: bool, if True, it overwrites the data in the target hdf5 file
+        verbose: bool, if True, it prints out details during saving the data
+
+        Returns
+        -------
+        None
+    """
+    add_data2udatapath(udatapath, datadict, attrdict=attrdict, grpname=grpname, overwrite=overwrite, verbose=verbose,
+                       )
+
+
 def add_data2udatapath(udatapath, datadict, attrdict=None, grpname=None, overwrite=False, verbose=True,
                        ):
     """
@@ -13536,7 +13599,7 @@ def add_data2udatapath(udatapath, datadict, attrdict=None, grpname=None, overwri
                     if verbose:
                         print('add_data2udatapath(): %s already exists! Skipping...' % new_key)
                 else:
-                    if type(datadict[new_key]) == dict: # {'key1': {'subkey1': data}}
+                    if type(datadict[new_key]) == dict:  # {'key1': {'subkey1': data}}
                         if not new_key in existing_keys:
                             grp = f.create_group('/%s/' % new_key)
                         else:
@@ -13595,6 +13658,61 @@ def add_data2udatapath(udatapath, datadict, attrdict=None, grpname=None, overwri
                         print(f'add_data2udatapath(): {key}.attrs[\'{attrname}\'] already exists. Skipping...')
 
 
+def remove_data(filename, datanames, protected=['ux', 'uy', 'uz', 'x', 'y', 'z']):
+    """
+    Remove specific data entries from an hdf5 file.
+
+    This function attempts to delete entries from an hdf5 file. Entries that are
+    listed in the 'protected' list will not be removed. The function prints a
+    confirmation message for each removed entry and an error message if an entry
+    is not found or is protected.
+
+    Parameters
+    ----------
+    filename : str
+        A string representing the path to the hdf5 file.
+    datanames : list
+        A list of strings representing the names of the data entries to be removed.
+        These should match the keys used in the hdf5 file. e.g., ['data1', 'grp/data2'].
+    protected : list, optional
+        A list of strings representing the names of the data entries that should
+        not be removed. By default, this list includes ['ux', 'uy', 'uz', 'x', 'y', 'z'].
+
+    Examples
+    --------
+    To remove data entries 'data1' and 'grp/data2' from an hdf5 file at '/path/to/file.h5':
+
+    >>> remove_data('/path/to/file.h5', ['data1', 'grp/data2'])
+
+    Without modifying `protected`, protected data does not get deleted.:
+
+    >>> remove_data('/path/to/file.h5', ['data1', 'grp/data2', 'x'])
+    This line removes only 'data1', 'grp/data2'.
+
+    To remove protected data, modify `protected`.
+
+    >>> remove_data('/path/to/file.h5', ['data1', 'grp/data2', 'x'], protected=['ux', 'uy', 'uz', 'y', 'z'])
+    This line removes 'data1', 'grp/data2', and 'x'.
+
+    """
+    # check if datadict contains data that must not be overwritten
+    for key in datanames:
+        if key in protected:
+            print(f"'{key}' is forbidden to overwrite. To remove this data, eliminate {key} from `protected`")
+    # remove keys that are restricted to remove
+    keys2remove = [key for key in datanames if key not in protected]
+
+    with h5py.File(filename, 'a') as f:
+        for key in keys2remove:
+            try:
+                del f[key]
+                print(f"Removed '{key}'")
+            except KeyError:
+                print(f"KeyError: Unable to open object (object '{key}' doesn't exist). Ignoring the request...")
+                continue
+    print('... Done')
+
+
 def write_udata(udatapath, datadict, verbose=True):
     """
     Write velocity field data to a hdf5 in the default format
@@ -13623,7 +13741,8 @@ def write_udata(udatapath, datadict, verbose=True):
                         print('write_udata(): Adding %s...' % key)
                     f.create_dataset(key, data=datadict[key])
                 except:
-                    raise ValueError(f'write_udata(): {key} already exists! If you want to overwrite the data, manually delete the existing file.')
+                    raise ValueError(
+                        f'write_udata(): {key} already exists! If you want to overwrite the data, manually delete the existing file.')
                     # NEVER OVERWRITE udata. If one wants to do this, the file should be manually deleted.
                     # if overwrite:
                     #     del f[key]
@@ -13691,8 +13810,9 @@ def write_pickle(filepath, obj, verbose=True):
         print('Saved data as ' + filepath)
     pickle_out.close()
 
+
 def read_pickle(filename):
-    with open(filename, "rb" ) as pickle_in:
+    with open(filename, "rb") as pickle_in:
         try:
             obj = pickle.load(pickle_in)
         except UnicodeDecodeError:
@@ -13701,6 +13821,7 @@ def read_pickle(filename):
             except:
                 obj = pandas.read_pickle(filename)
     return obj
+
 
 def convert_dat2h5files(dpath, savedir=None, verbose=False, overwrite=True, start=0):
     """
@@ -13944,6 +14065,7 @@ def suggest_udata_dim2load(dpath, p=1., n=5, show=True, return_tuple=False, retu
         ind_dict = {"x0": x0, "x1": x1, "y0": y0, "y1": y1, "z0": z0, "z1": z1}
         return ind_dict
 
+
 # functions to derive major quantities of turbulence from udata and save it into a hdf5 format
 def derive_all(udata, dx, dy, savepath, udatapath='none', **kwargs):
     """
@@ -13973,7 +14095,7 @@ def derive_easy(udata, dx, dy, savepath, time=None, inc=1,
                 x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None,
                 reynolds_decomp=False,
                 udatapath='none',
-                notebook=True, overwrite=True):
+                notebook=useNotebook, overwrite=True):
     """
     Function to derive quantities which are (relatively) computationally cheap
     ... energy spectra, energy, enstrophy, skewness etc.
@@ -14117,7 +14239,7 @@ def derive_hard(udata, dx, dy, savepath, time=None, inc=1,
                 x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, t0=0, t1=None,
                 reynolds_decomp=False,
                 coarse=1.0, coarse2=1.0,  # structure function parameters
-                notebook=True, overwrite=True):
+                notebook=useNotebook, overwrite=True):
     """
     Function to derive quantities which are (relatively) computationally expensive
     ... structure function, two_point correlation function,
@@ -14316,6 +14438,7 @@ def run_vel_statistics(dpath, inc=1, overwrite=False, t0=0, t1=None):
     -------
     None
     """
+
     def compute_pdf(data, nbins=100, vmin=None, vmax=None):
         """Get a normalized histogram"""
         data = np.asarray(data)
@@ -14496,11 +14619,11 @@ def default_analysis_piv(dpath, inc=1, overwrite=False, time=None, t0=0, t1=None
         # center of energy
         xc, yc, zc = np.nansum(xx * etavg) / np.nansum(etavg), \
                      np.nansum(yy * etavg) / np.nansum(etavg), \
-                     np.nan
+            np.nan
         # center of enstrophy
         xc_enst, yc_enst, zc_enst = np.nansum(xx * enst_tavg) / np.nansum(enst_tavg), \
                                     np.nansum(yy * enst_tavg) / np.nansum(enst_tavg), \
-                                    np.nan
+            np.nan
 
         datadict = {'xc': xc, 'yc': yc, 'zc': np.nan,  # Center of energy
                     'xc_enst': xc_enst, 'yc_enst': yc_enst, 'zc_enst': np.nan,  # Center of enstrophy
@@ -14526,11 +14649,11 @@ def default_analysis_piv(dpath, inc=1, overwrite=False, time=None, t0=0, t1=None
         enst_savg, enst_savg_err = results_enst
 
         datadict = {
-                    'esavg': esavg,  # spatially averaged energy
-                    'esavg_err': esavg_err,  # standard error of spatially averaged energy
-                    'enst_savg': enst_savg,  # spatially averaged enstrophy
-                    'enst_savg_err': enst_savg_err,  # standard error of spatially averaged enstrophy
-                    }
+            'esavg': esavg,  # spatially averaged energy
+            'esavg_err': esavg_err,  # standard error of spatially averaged energy
+            'enst_savg': enst_savg,  # spatially averaged enstrophy
+            'enst_savg_err': enst_savg_err,  # standard error of spatially averaged enstrophy
+        }
         add_data2udatapath(dpath, datadict, overwrite=overwrite, grpname=grpname)
     else:
         enst_tavg, enst_savg = read_data_from_h5(dpath, ['enst_tavg', 'enst_savg'])
@@ -14540,7 +14663,7 @@ def default_analysis_piv(dpath, inc=1, overwrite=False, time=None, t0=0, t1=None
         udata_m = get_mean_flow_field_using_udatapath(dpath, inc=inc, t0=t0, t1=t1,
                                                       clean=True, cutoff=np.inf, method='nn', median_filter=False,
                                                       verbose=False,
-                                                      notebook=True)
+                                                      notebook=useNotebook)
         add_data2udatapath(dpath, {'udata_m': udata_m}, overwrite=overwrite, grpname=grpname)
 
     # Radial profile
@@ -14565,7 +14688,7 @@ def default_analysis_piv(dpath, inc=1, overwrite=False, time=None, t0=0, t1=None
                         radial_dist ** 2 * eTimeThetaPhi_avg, x=radial_dist),
                     'r_blob_enst': np.trapz(radial_dist_enst ** 3 * enstTimeThetaPhi_avg,
                                             x=radial_dist_enst) / np.trapz(radial_dist ** 2 * enstTimeThetaPhi_avg,
-                                            x=radial_dist_enst),
+                                                                           x=radial_dist_enst),
                     }
         add_data2udatapath(dpath, datadict, overwrite=overwrite, grpname=grpname)
     # else:
@@ -14746,9 +14869,9 @@ def default_analysis_stb(dpath, inc=1, overwrite=False, time=None):
 
 # functions related to turbulence decay
 def get_time_indices_for_selfsimilar_movie(tt, tv, tstart, urms_at_tstart, d=5.,
-                                            exponent=-1., allowDuplicate=False,
-                                            dt_lin=None, includeLinearIdx=False,
-                                            scale=False,
+                                           exponent=-1., allowDuplicate=False,
+                                           dt_lin=None, includeLinearIdx=False,
+                                           scale=False,
                                            ):
     """
     Returns indices of a time array required to make a self-similar movie
@@ -15745,7 +15868,7 @@ def get_streamfunction_thin_cored_vring(xx, yy, x0=0, y0=0, gamma=1., R=1., a=0.
         pass
     elif reference_frame == 'vortex':
         ucThinCoreApprox = -gamma / (4 * np.pi * R) * (
-                    np.log(8 * R / a) - 0.25)  # this is only valid for a thin-cored a<<R (practially a/R<<0.01)
+                np.log(8 * R / a) - 0.25)  # this is only valid for a thin-cored a<<R (practially a/R<<0.01)
         if uc is None:
             uc = ucThinCoreApprox
             if verbose:
@@ -15946,7 +16069,6 @@ def sample_streamlines(udata, xx, yy, zz, npt=1,
         return strmlines_master[0]
     else:
         return strmlines_master
-
 
 
 # APPROACH2: Solve a poisson equation (This will not work in general!)
@@ -16375,7 +16497,6 @@ def coarse_grain_udata(udata, nrows_sub, ncolumns_sub, overlap=0.5, xx=None, yy=
         else:
             return udata
 
-
     udata = fix_udata_shape(udata)
     dim, duration = udata.shape[0], udata.shape[-1]
     if dim == 3:
@@ -16387,7 +16508,7 @@ def coarse_grain_udata(udata, nrows_sub, ncolumns_sub, overlap=0.5, xx=None, yy=
     for t in tqdm(range(duration), desc='coarse-graining'):
         for d in range(dim):
             udata_c[d, ..., t] = coarse_grain_2darr_overlap(udata[d, ..., t], nrows_sub, ncolumns_sub,
-                                                             overlap=overlap)
+                                                            overlap=overlap)
 
     if xx is not None and yy is not None:
         xx_c = coarse_grain_2darr_overlap(xx, nrows_sub, ncolumns_sub, overlap=overlap)
@@ -16581,8 +16702,8 @@ def make_blocks_from_2d_array(arr, nrows, ncols):
 
 
 # Coarse-graining 3D
-def coarse_grain_3darr(arr, nrow_sub, ncol_sub, ndep_sub, overlap=0, showtqdm=True, notebook=True, verbose=False, squeeze=True):
-
+def coarse_grain_3darr(arr, nrow_sub, ncol_sub, ndep_sub, overlap=0, showtqdm=True, notebook=useNotebook, verbose=False,
+                       squeeze=True):
     """
     Coarse-grain a 3d array
     ... The idea is to split the original array into many subcells, and average over each subcell
@@ -16638,7 +16759,8 @@ def coarse_grain_3darr(arr, nrow_sub, ncol_sub, ndep_sub, overlap=0, showtqdm=Tr
         return new_arr
 
 
-def coarse_grain_3dudata(udata_3d, nrow_sub, ncol_sub, ndep_sub, overlap=0, showtqdm=False, notebook=useNotebook, squeeze=False):
+def coarse_grain_3dudata(udata_3d, nrow_sub, ncol_sub, ndep_sub, overlap=0, showtqdm=False, notebook=useNotebook,
+                         squeeze=False):
     """
 
     Coarse-grain a 3d udata
@@ -16953,7 +17075,7 @@ def convertNDto1D(ef_nd, freqs, nkout=None, mode='linear', cc=1.):
     if nkout is None:
         nkout = int(max(ef_nd.shape) * 1)
     fr_binned, efnd_binned, ef1d_err = get_binned_stats(fr.flatten(), ef_nd.flatten(),
-                                                    n_bins=nkout, mode=mode, )
+                                                        n_bins=nkout, mode=mode, )
     deltaf = (max(fr_binned) - min(fr_binned)) / (nkout - 1)
 
     if dim == 3:
@@ -17016,12 +17138,13 @@ def pad_udata(udata, mode='edge', **kwargs):
         depth = udata.shape[3]
         k = int((length - udata.shape[3]) / 2)
         udata_padded = np.pad(udata, (
-        (0, 0), (i, length - height - i), (j, length - width - j), (k, length - depth - k), (0, 0)),
+            (0, 0), (i, length - height - i), (j, length - width - j), (k, length - depth - k), (0, 0)),
                               mode=mode, **kwargs)
     else:
         udata_padded = np.pad(udata, ((0, 0), (i, length - height - i), (j, length - width - j), (0, 0)),
                               mode=mode, **kwargs)
     return udata_padded
+
 
 def get_energy_spectrum_nd(udata,
                            x0=0, x1=None, y0=0, y1=None,
@@ -17266,7 +17389,7 @@ def get_energy_spectrum(udata, x0=0, x1=None, y0=0, y1=None,
         e_k, e_k_err, kk = np.empty(shape), np.empty(shape), np.empty(nkout)
         for t in range(duration):
             kk, e_k[:, t], e_k_err[:, t] = convertNDto1D(e_ks[..., t], ks, nkout=nkout, mode=mode, cc=cc)
-            kk += min(kk) # This is a choice. Without this line, kk is the center of the bins.
+            kk += min(kk)  # This is a choice. Without this line, kk is the center of the bins.
         return e_k, e_k_err, kk
 
     e_ks, ks = get_energy_spectrum_nd(udata, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1, dx=dx, dy=dy, dz=dz,
@@ -17387,7 +17510,7 @@ def get_enstrophy_spectrum_nd(udata, sigma=None,
             x0 = y0 = z0 = 0
             x1 = y1 = z1 = udata.shape[1]
             volume = (x1 - x0) * dx * (y1 - y0) * dy * (
-                        z1 - z0) * dz  # Should the volume be the squared/cubic volume? This is a choice
+                    z1 - z0) * dz  # Should the volume be the squared/cubic volume? This is a choice
 
         dxs = [dy, dx, dz]
 
@@ -17474,7 +17597,7 @@ def get_enstrophy_spectrum(udata, sigma=None,
                            x0=0, x1=None, y0=0, y1=None,
                            z0=0, z1=None, xx=None, yy=None, zz=None, nkout=None,
                            window=None, correct_signal_loss=True,
-                           cc=1, notebook=True, mode='linear',
+                           cc=1, notebook=useNotebook, mode='linear',
                            dealiasing=True, padding_mode='edge', padding_kwargs={},
                            debug=False):
     """
@@ -17573,7 +17696,7 @@ def get_enstrophy_spectrum(udata, sigma=None,
                                             window=window, correct_signal_loss=correct_signal_loss,
                                             return_in='wavenumber',
                                             dealiasing=dealiasing, padding_mode=padding_mode,
-                                            padding_kwargs=padding_kwargs )
+                                            padding_kwargs=padding_kwargs)
     enst_k, enst_k_err, kk = convert_nd_spec_to_1d(enst_ks, ks, nkout=nkout, cc=cc, mode=mode)
 
     if debug:
@@ -17597,7 +17720,7 @@ def get_confidence_levels_on_energy_spectrum(iw_wrt_eta, keta, alpha_min=0.1, sl
     ... Returned array can be used as alpha values. To plot values with varying alpha, use plt.scatter or
     graph.plot_with_varying_alphas. The latter allows to draw lines with different alpha values.
 
-    ... path/to/module_dir/reference_data/error_functions_of_ek_args_iweta_keta.pkl
+    ... path/to/module_dir/velocity_ref/error_functions_of_ek_args_iweta_keta.pkl
     contains an function which gives LOGARITHMIC ERROR of the spectrum (log10[Observed E(k) / True E(k)])
     with arguments (interrogation window size / eta, keta)
 
@@ -17623,7 +17746,7 @@ def get_confidence_levels_on_energy_spectrum(iw_wrt_eta, keta, alpha_min=0.1, sl
         alphas[keta > keta_c] = alpha_min
     else:
         # Get an error function about energy spectrum function
-        dpath = os.path.join(os.path.join(moddirpath, 'reference_data'), 'error_functions_of_ek_args_iweta_keta.pkl')
+        dpath = os.path.join(os.path.join(mod_dir_path, 'velocity_ref'), 'error_functions_of_ek_args_iweta_keta.pkl')
         logErrFunction = read_pickle(dpath)
         logErr = logErrFunction(iw_wrt_eta, keta)
         alphas = 1 - slope * np.abs(logErr)
@@ -17641,7 +17764,7 @@ def get_confidence_levels_on_structure_function(iw_wrt_eta, reta, alpha_min=0.1,
     ... Returned array can be used as alpha values. To plot values with varying alpha, use plt.scatter or
     graph.plot_with_varying_alphas. The latter allows to draw lines with different alpha values.
 
-    ... path/to/module_dir/reference_data/error_functions_of_dll_args_iweta_keta.pkl
+    ... path/to/module_dir/velocity_ref/error_functions_of_dll_args_iweta_keta.pkl
     contains an function which gives a SIGNED RELATIVE ERROR of the spectrum (log10[Observed E(k) / True E(k)])
     with arguments (interrogation window size / eta, keta)
     ... You should non-dimensionalize the distance r and the two-pt  correlation function by the most plausible dissipation rate!
@@ -17670,7 +17793,7 @@ def get_confidence_levels_on_structure_function(iw_wrt_eta, reta, alpha_min=0.1,
         alphas[reta < keta_c] = alpha_min
     else:
         # Get an error function about the second-order longitudinal structure function
-        dpath = os.path.join(os.path.join(moddirpath, 'reference_data'), 'error_functions_of_dll_args_iweta_reta.pkl')
+        dpath = os.path.join(os.path.join(mod_dir_path, 'velocity_ref'), 'error_functions_of_dll_args_iweta_reta.pkl')
         signedRelErrFunction = read_pickle(dpath)
         signedRelErr = signedRelErrFunction(iw_wrt_eta, reta)
         alphas = 1 - slope * np.abs(signedRelErr)
@@ -17944,9 +18067,15 @@ def get_pressure(udata, xx, yy, zz, nu=1.004, notebook=useNotebook):
 
         # du_dxdx_hat = -1.0*nu*kx_mesh*kx_mesh*np.fft.fftn(u_vec)
 
-        R_v_x_hat = (-1.0 * nu * kx_mesh * kx_mesh - 1.0 * nu * ky_mesh * ky_mesh - 1.0 * nu * kz_mesh * kz_mesh) * np.fft.fftn(u_vec)
-        R_v_y_hat = (-1.0 * nu * kx_mesh * kx_mesh - 1.0 * nu * ky_mesh * ky_mesh - 1.0 * nu * kz_mesh * kz_mesh) * np.fft.fftn(v_vec)
-        R_v_z_hat = (-1.0 * nu * kx_mesh * kx_mesh - 1.0 * nu * ky_mesh * ky_mesh - 1.0 * nu * kz_mesh * kz_mesh) * np.fft.fftn(w_vec)
+        R_v_x_hat = (
+                                -1.0 * nu * kx_mesh * kx_mesh - 1.0 * nu * ky_mesh * ky_mesh - 1.0 * nu * kz_mesh * kz_mesh) * np.fft.fftn(
+            u_vec)
+        R_v_y_hat = (
+                                -1.0 * nu * kx_mesh * kx_mesh - 1.0 * nu * ky_mesh * ky_mesh - 1.0 * nu * kz_mesh * kz_mesh) * np.fft.fftn(
+            v_vec)
+        R_v_z_hat = (
+                                -1.0 * nu * kx_mesh * kx_mesh - 1.0 * nu * ky_mesh * ky_mesh - 1.0 * nu * kz_mesh * kz_mesh) * np.fft.fftn(
+            w_vec)
         RHS_hat = 1.0j * kx_mesh * (R_c_x_hat + R_v_x_hat) + 1.0j * ky_mesh * (
                 R_c_y_hat + R_v_y_hat) + 1.0j * kz_mesh * (R_c_z_hat + R_v_z_hat)
 
@@ -18113,7 +18242,7 @@ def get_impulse_density(udata, xx, yy, zz=None, rho=1e-3, crop=2):
     #                                "integrand": s6,
     #                                "dS": dx*dy,
     #                                "n": n6}
-    hi *= rho # multiply by density
+    hi *= rho  # multiply by density
     return hi
 
 
@@ -18182,6 +18311,8 @@ def get_impulse(udata, xx, yy, zz=None, rho=1e-3, crop=2,
         dx, dy, dz = get_grid_spacing(xx, yy, zz)
         hi = np.nanmean(hi_density, axis=(1, 2, 3)) * dx * dy * dz * num_valid
     return hi
+
+
 def get_angular_impulse_density(udata, xx, yy, zz=None, rho=1e-3, crop=2):
     """
     It returns the density of (hydrodynamic) angular impulse
@@ -18237,6 +18368,7 @@ def get_angular_impulse_density(udata, xx, yy, zz=None, rho=1e-3, crop=2):
         edges = ~bulk
         ai[edges] = np.nan
     return ai
+
 
 def get_angular_impulse(udata, xx, yy, zz=None, rho=1e-3, crop=2,
                         keep=None, R=None, xc=0, yc=0, zc=0):
@@ -18302,8 +18434,9 @@ def get_angular_impulse(udata, xx, yy, zz=None, rho=1e-3, crop=2,
         ai = np.nanmean(ai_density, axis=(1, 2, 3)) * dx * dy * dz * num_valid
     return ai
 
+
 def get_time_avg_helicity_from_udatapath(dpath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
-                                    t0=0, t1=None, inc=1,  crop=2, median_filter=False, notebook=useNotebook):
+                                         t0=0, t1=None, inc=1, crop=2, median_filter=False, notebook=useNotebook):
     """
     Returns time-averaged helicity (3+1=4D v-field only)
 
@@ -18337,13 +18470,14 @@ def get_time_avg_helicity_from_udatapath(dpath, x0=0, x1=None, y0=0, y1=None, z0
     h_ = np.zeros_like(udata[0, ..., 0])
     for t in tqdm(range(t0, t1, inc)):
         udata = get_udata(dpath, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1,
-                          t0=t, t1=t+1, verbose=False)
+                          t0=t, t1=t + 1, verbose=False)
         udata = clean_udata(udata, median_filter=median_filter, verbose=False, showtqdm=False)
         h_ += get_helicity_density(udata, xx=xx, yy=yy, zz=zz, crop=crop)[..., 0]
     if notebook:
         from tqdm import tqdm as tqdm
-    htavg = h_ / (t1-t0)
+    htavg = h_ / (t1 - t0)
     return htavg
+
 
 def get_helicity_density(udata, xx, yy, zz, crop=2):
     """
@@ -19174,10 +19308,10 @@ def estimate_ring_energy(sl, sv, dp=160., do=25.6, N=8, lowerGamma=2.2, setting=
                            'circulation approx- 4piRV in m2/s': 4 * np.pi * radius * vel * 1e-6,
                            'energy in mJ': energy * 1e-6,
                            'energy in mJ with Gamma=4piRV': 0.5 * rho * (4 * np.pi * radius * vel) ** 2 * radius * (
-                                       np.log(8. * radius / a) - alpha) * 1e-6,
+                                   np.log(8. * radius / a) - alpha) * 1e-6,
                            'Impulse in kg m /s': rho * circulation * np.pi * radius ** 2 * 1e-6,
                            'Impulse with Gamma=4piRV in kg m /s': rho * (
-                                       4 * np.pi * radius * vel) * np.pi * radius ** 2 * 1e-6
+                                   4 * np.pi * radius * vel) * np.pi * radius ** 2 * 1e-6
                            }
         for key in ring_properties.keys():
             print(key, ring_properties[key])
@@ -19247,7 +19381,7 @@ def estimate_ringVRratio(sl, sv, dp=160., do=25.6, norfices=8, lowerGamma=2.2, s
         # get module location
         mod_loc = os.path.abspath(__file__)
         pdir, filename = os.path.split(mod_loc)
-        ringDataDir = os.path.join(os.path.join(pdir, 'reference_data'), 'vortex_ring_data_setting_medium')
+        ringDataDir = os.path.join(os.path.join(pdir, 'velocity_ref'), 'vortex_ring_data_setting_medium')
 
         # load interpolating functions which takes arguments (L/D, veff)
         f_vrT = read_pickle(os.path.join(ringDataDir, 'f_vrT.pkl'))  # velocity of a top ring
@@ -19298,7 +19432,7 @@ def estimate_cirulation_vring_collider(sl, sv):
     # get module location
     mod_loc = os.path.abspath(__file__)
     pdir, filename = os.path.split(mod_loc)
-    ringDataDir = os.path.join(os.path.join(pdir, 'reference_data'), 'vortex_ring_data_setting_medium')
+    ringDataDir = os.path.join(os.path.join(pdir, 'velocity_ref'), 'vortex_ring_data_setting_medium')
     f_gammarT = read_pickle(os.path.join(ringDataDir, 'f_gammarT.pkl'))  # circulation of a bottom ring
     f_gammarB = read_pickle(os.path.join(ringDataDir, 'f_gammarB.pkl'))  # circulation of a bottom ring
     dp, do, norfices = 160, 25.6, 8.  # chamber parameters
@@ -19330,7 +19464,7 @@ def estimate_velocity_vring_collider(sl, sv):
     # get module location
     mod_loc = os.path.abspath(__file__)
     pdir, filename = os.path.split(mod_loc)
-    ringDataDir = os.path.join(os.path.join(pdir, 'reference_data'), 'vortex_ring_data_setting_medium')
+    ringDataDir = os.path.join(os.path.join(pdir, 'velocity_ref'), 'vortex_ring_data_setting_medium')
     f_vrT = read_pickle(os.path.join(ringDataDir, 'f_vrT.pkl'))  # velocity of a top ring
     f_vrB = read_pickle(os.path.join(ringDataDir, 'f_vrB.pkl'))  # velocity of a bottom ring
     dp, do, norfices = 160, 25.6, 8.  # chamber parameters
@@ -19361,7 +19495,7 @@ def estimate_radius_vring_collider(sl, sv):
     # get module location
     mod_loc = os.path.abspath(__file__)
     pdir, filename = os.path.split(mod_loc)
-    ringDataDir = os.path.join(os.path.join(pdir, 'reference_data'), 'vortex_ring_data_setting_medium')
+    ringDataDir = os.path.join(os.path.join(pdir, 'velocity_ref'), 'vortex_ring_data_setting_medium')
     f_drT = read_pickle(os.path.join(ringDataDir, 'f_drT.pkl'))  # diameter of a top ring
     f_drB = read_pickle(os.path.join(ringDataDir, 'f_drB.pkl'))  # diameter of a bottom ring
     dp, do, norfices = 160, 25.6, 8.  # chamber parameters
@@ -19512,7 +19646,7 @@ def resample(x, y, n=100, mode='linear'):
         flog = interpolate.interp1d(logx, np.log10(y[keep]))
         y_rs = 10 ** flog(logx_new)
         return x_new, y_rs
-    else: # linear sampling by default
+    else:  # linear sampling by default
         x_new = np.linspace(xmin, xmax, n, endpoint=True)
         # y_rs = scipy.signal.resample(y, n)
         f = interpolate.interp1d(x, y)
