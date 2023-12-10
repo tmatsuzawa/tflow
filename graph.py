@@ -62,7 +62,36 @@ mycolors3 = np.asarray([
                      [0.70567316, 0.01555616, 0.15023281, 1.        ], # Right-handed: maroon, #C80426
                     ])
 __my_ccycle__ = itertools.cycle(mycolors5)
-cmap = 'magma'
+# Custom colormaps (sequential)
+cmapnames = [
+    '1_Velvet_Dusk',        # Originally 'black_purple_pink'
+    '2_Twilight_Ember',     # Originally 'black_purple_orange'
+    '3_Midnight_Sunburst',  # Originally 'black_purple_yellow'
+    '4_Eclipse_Grove',      # Originally 'black_orange_green'
+    '5_Twilight_Meadow',    # Originally 'black_yellow_green'
+    '6_Aurora_Skyline',     # Originally 'black_green_sky'
+    '7_Ocean_Depths',       # Originally 'black_green_blue'
+    '8_Forest_Whisper',     # Originally 'black_green_wisteria'
+    '9_Midnight_Bloom',     # Originally 'black_blue_wisteria'
+    '10_Starry_Wisteria'    # Originally 'black_navy_wisteria'
+]
+cmaps = my_sequential_cmaps = []
+for i, start in enumerate(np.arange(0, 3, 0.3)):
+    pl_param = {
+        "n_colors": 10,
+        "start": (start+2.4)%3.,
+        "rot": 0.6,
+        "gamma": 1.0,
+        "hue": 1,
+        "light": 0.8,
+        "dark": 0.0,
+        "reverse": True,
+        "as_cmap": True
+    }
+    my_cmap = sns.cubehelix_palette(**pl_param)
+    my_cmap.name = cmapnames[i]
+    my_sequential_cmaps.append(my_cmap)
+cmap = 'magma' # Default color map
 
 # See all available arguments in matplotlibrc
 __fontsize__ = 14
@@ -2050,6 +2079,15 @@ def color_plot(x, y, z,
 
     if log10:
         z = np.log10(z)
+
+    # Parse and calculate percentiles for vmin and vmax if they are given in percentile format
+    if isinstance(vmin, str) and vmin.endswith('%'):
+        percentile_value = float(vmin[:-1])
+        vmin = np.nanpercentile(z, percentile_value)
+
+    if isinstance(vmax, str) and vmax.endswith('%'):
+        percentile_value = float(vmax[:-1])
+        vmax = np.nanpercentile(z, percentile_value)
 
     # For Diverging colormap, ALWAYS make the color thresholds symmetric
     symCmap1 = ['PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdGy', 'RdBu', 'RdYlBu', 'RdYlGn', 'Spectral', 'coolwarm', 'bwr', 'seismic']
@@ -5947,3 +5985,25 @@ def set_fontsize_scientific_text(ax, fontsize):
 
     """
     ax.yaxis.get_offset_text().set_fontsize(fontsize)
+
+def show_default_custom_cmaps():
+    """
+    Shows the default custom sequential colormaps
+
+    Returns
+    -------
+    my_cmaps_sequential: list of color map instances
+    """
+    gradient = np.linspace(0, 1, 256)
+    gradient = np.vstack((gradient, gradient))
+    # Visualizing each colormap
+    num_colormaps = len(my_sequential_cmaps)
+    fig, axes = plt.subplots(nrows=num_colormaps, figsize=(8, num_colormaps * 2), dpi=100)
+    for i, cmap in enumerate(my_sequential_cmaps):
+        axes[i].imshow(gradient, aspect='auto', cmap=cmap)
+        axes[i].set_title(cmap.name)
+        axes[i].axis('off')
+
+    plt.tight_layout()
+    plt.show()
+    return my_sequential_cmaps
