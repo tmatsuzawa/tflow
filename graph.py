@@ -40,6 +40,8 @@ import tflow.std_func as std_func
 import warnings
 warnings.filterwarnings("ignore")
 
+global useNotebook
+useNotebook = True
 
 #Global variables
 #Default color cycle: iterator which gets repeated if all elements were exhausted
@@ -1093,7 +1095,7 @@ def plot_saddoughi_struc_func(fignum=1, fig=None, ax=None, figsize=None,
     elif ax is None:
         ax = plt.gca()
 
-    datapath = tflow_dir + '/reference_data/sv_struc_func.h5'
+    datapath = tflow_dir + '/velocity_ref/sv_struc_func.h5'
     # datapath = tflow_dir + '/velocity_ref/sv_struc_func.txt'
     # data = np.loadtxt(datapath, skiprows=1, delimiter=',')
     # r_scaled, dll = data[:, 0], data[:, 1]
@@ -2360,7 +2362,7 @@ def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
 def quiver3d(udata, normalize=False, mag=1, inc=1, xinc=None, yinc=None, zinc=None,
              umin=0, umax=None, # data range to show quiver
              vmin=0, vmax=None, # colorbar range
-             add_bounding_box=True, notebook=True,
+             add_bounding_box=True, notebook=useNotebook,
              show=True,
              save=False, savepath='./vectorfield.png', verbose=True, **kwargs):
     """
