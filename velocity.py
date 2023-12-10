@@ -19743,3 +19743,59 @@ def computeImageDistanceUsingHuMoments(img1, img2, method=cv2.CONTOURS_MATCH_I2,
     """
     imgDist = cv2.matchShapes(img1, img2, method, 0)
     return imgDist
+
+
+def locate_file(rootdir, keyword, filetype=""):
+    """
+    Returns a list of files that contain a keyword under `rootdir`
+    e.g.
+        locate_file("/Users/___/Documents", "date02142020", filetype='txt'):
+        ... It may return
+            ["/Users/___/Documents/date02142020____.txt",
+             "/Users/___/Documents/.../_header_date02142020_footer_.txt"]
+    Parameters
+    ----------
+    rootdir: str, directory under which files are searched
+    keyword: str, keyword to search for
+    filetype, str, extension of a file (e.g. png, csv, txt, ...)
+    Returns
+    -------
+    file_locs: list, list of filenames that contain a keyword
+    """
+    file_locs = []
+    count_files = 0
+    for root, dirs, files in os.walk(rootdir, topdown=False):
+        for filename in files:
+            if keyword in filename and name.endswith(filetype.lower()):
+                print(count_files, os.path.join(root, filename))
+                file_locs.append(os.path.join(root, filename))
+                count_files += 1
+    print(f'... {count_files} files found')
+    return file_locs
+
+def locate_dir(rootdir, keyword):
+    """
+    Returns a list of files that contain a keyword under `rootdir`
+    e.g.
+        locate_file("/Users/___/Documents", "date02142020", filetype='txt'):
+        ... It may return
+            ["/Users/___/Documents/date02142020____.txt",
+             "/Users/___/Documents/.../_header_date02142020_footer_.txt"]
+    Parameters
+    ----------
+    rootdir: str, Directory under which files are searched
+    keyword: str, keyword to search for
+    Returns
+    -------
+    dir_locs: list, list of directories that contain a keyword
+    """
+    dir_locs = []
+    count_dirs = 0
+    for root, dirs, files in os.walk(rootdir, topdown=False):
+        for dirname in dirs:
+            if keyword in dirname:
+                print(count_dirs, os.path.join(root, dirname))
+                dir_locs.append(os.path.join(root, dirname))
+                count_dirs += 1
+    print(f'... {count_dirs} directories found')
+    return dir_locs
