@@ -872,7 +872,6 @@ def get_energy(udata):
     for d in range(dim):
         energy += udata[d, ...] ** 2
     energy /= 2.
-
     if type(udata) == np.ma.core.MaskedArray:
         mask = udata.mask
         energy = np.ma.masked_array(energy, mask=mask[1:])
@@ -880,7 +879,8 @@ def get_energy(udata):
     return energy
 
 
-def get_enstrophy(udata, dx=1., dy=1., dz=1., xx=None, yy=None, zz=None):
+def get_enstrophy(udata, dx=1., dy=1., dz=1., xx=None, yy=None, zz=None,
+                  gaussian_blur=False, sigma=2, mode='nearest'):
     """
     Returns enstrophy(\vec{x}, t) of udata
     ... enstropy = omega ** 2
@@ -902,6 +902,8 @@ def get_enstrophy(udata, dx=1., dy=1., dz=1., xx=None, yy=None, zz=None):
     """
     dim = udata.shape[0]
     omega = curl(udata, dx=dx, dy=dy, dz=dz, xx=xx, yy=yy, zz=zz)
+    if gaussian_blur:
+        omega = gaussian_blur_scalar_field(omega, sigma=sigma, mode=mode)
     shape = omega.shape  # shape=(dim, nrows, ncols, nstacks, duration) if nstacks=0, shape=(dim, nrows, ncols, duration)
     if dim == 2:
         enstrophy = omega ** 2
@@ -6247,7 +6249,7 @@ def get_sample_turb_field_3d(return_coord=True, return_2dslice=False):
     # get module location
     mod_loc = os.path.abspath(__file__)
     pdir, filename = os.path.split(mod_loc)
-    datapath = os.path.join(pdir, 'velocity_ref/isoturb_slice2.h5')
+    datapath = os.path.join(pdir, 'reference_data/isoturb_slice2.h5')
     data = h5py.File(datapath, 'r')
 
     keys = list(data.keys())
@@ -6470,10 +6472,10 @@ def get_energy_spectra_jhtd():
     Returns
     -------
     datadict: dict
-        data stored is stored in '/velocity_ref/jhtd_e_specs.h5'
+        data stored is stored in '/reference_data/jhtd_e_specs.h5'
     """
     faqm_dir = os.path.split(os.path.realpath(__file__))[0]
-    datapath = faqm_dir + '/velocity_ref/jhtd_e_specs.h5'
+    datapath = faqm_dir + '/reference_data/jhtd_e_specs.h5'
 
     datadict = {}
     with h5py.File(datapath, 'r') as data:
@@ -6496,7 +6498,7 @@ def get_rescaled_energy_spectra_jhtd():
         data stored in jhtd_e_specs.h5 is stored: Scaled k, Scaled ek
     """
     faqm_dir = os.path.split(os.path.realpath(__file__))[0]
-    datapath = faqm_dir + '/velocity_ref/jhtd_e_specs.h5'
+    datapath = faqm_dir + '/reference_data/jhtd_e_specs.h5'
 
     datadict = {}
     with h5py.File(datapath, 'r') as data:
@@ -6523,8 +6525,8 @@ def get_rescaled_structure_function_saddoughi(p=2):
     """
     tflow_dir = os.path.split(os.path.realpath(__file__))[0]
     if p == 2:
-        datapath = tflow_dir + '/velocity_ref/sv_struc_func.h5'
-        # datapath = tflow_dir + '/velocity_ref/sv_struc_func.txt'
+        datapath = tflow_dir + '/reference_data/sv_struc_func.h5'
+        # datapath = tflow_dir + '/reference_data/sv_struc_func.txt'
         # data = np.loadtxt(datapath, skiprows=1, delimiter=',')
         # r_scaled, dll = data[:, 0], data[:, 1]
         with h5py.File(datapath, 'r') as ff:
@@ -8739,10 +8741,15 @@ def zoom(qty, xxx, yyy, zzz, zf=2, bounds_error=False):
     return qty_, xxx_, yyy_, zzz_
 
 
-def gaussian_blur_scalar_field(field, sigma=7, mode='nearest', verbose=False, **kwargs):
+def gaussian_blur_scalar_field(field, sigma=5, mode='nearest', verbose=False, **kwargs):
     """
     Gaussian blur a scalar field with shape=(..., duration) such as udata
     using scipy.ndimage.filters.gaussian_filter
+    ... The Gaussian kernel will have size 2*radius + 1 along each axis.
+    ...... radius = round(truncate * sigma) will be used.
+    ...... truncate: Truncate the filter at this many standard deviations. Default is 4.0.
+
+
 
     Parameters
     ----------
@@ -17720,7 +17727,7 @@ def get_confidence_levels_on_energy_spectrum(iw_wrt_eta, keta, alpha_min=0.1, sl
     ... Returned array can be used as alpha values. To plot values with varying alpha, use plt.scatter or
     graph.plot_with_varying_alphas. The latter allows to draw lines with different alpha values.
 
-    ... path/to/module_dir/velocity_ref/error_functions_of_ek_args_iweta_keta.pkl
+    ... path/to/module_dir/reference_data/error_functions_of_ek_args_iweta_keta.pkl
     contains an function which gives LOGARITHMIC ERROR of the spectrum (log10[Observed E(k) / True E(k)])
     with arguments (interrogation window size / eta, keta)
 
@@ -17746,7 +17753,7 @@ def get_confidence_levels_on_energy_spectrum(iw_wrt_eta, keta, alpha_min=0.1, sl
         alphas[keta > keta_c] = alpha_min
     else:
         # Get an error function about energy spectrum function
-        dpath = os.path.join(os.path.join(mod_dir_path, 'velocity_ref'), 'error_functions_of_ek_args_iweta_keta.pkl')
+        dpath = os.path.join(os.path.join(mod_dir_path, 'reference_data'), 'error_functions_of_ek_args_iweta_keta.pkl')
         logErrFunction = read_pickle(dpath)
         logErr = logErrFunction(iw_wrt_eta, keta)
         alphas = 1 - slope * np.abs(logErr)
@@ -17764,7 +17771,7 @@ def get_confidence_levels_on_structure_function(iw_wrt_eta, reta, alpha_min=0.1,
     ... Returned array can be used as alpha values. To plot values with varying alpha, use plt.scatter or
     graph.plot_with_varying_alphas. The latter allows to draw lines with different alpha values.
 
-    ... path/to/module_dir/velocity_ref/error_functions_of_dll_args_iweta_keta.pkl
+    ... path/to/module_dir/reference_data/error_functions_of_dll_args_iweta_keta.pkl
     contains an function which gives a SIGNED RELATIVE ERROR of the spectrum (log10[Observed E(k) / True E(k)])
     with arguments (interrogation window size / eta, keta)
     ... You should non-dimensionalize the distance r and the two-pt  correlation function by the most plausible dissipation rate!
@@ -17793,7 +17800,7 @@ def get_confidence_levels_on_structure_function(iw_wrt_eta, reta, alpha_min=0.1,
         alphas[reta < keta_c] = alpha_min
     else:
         # Get an error function about the second-order longitudinal structure function
-        dpath = os.path.join(os.path.join(mod_dir_path, 'velocity_ref'), 'error_functions_of_dll_args_iweta_reta.pkl')
+        dpath = os.path.join(os.path.join(mod_dir_path, 'reference_data'), 'error_functions_of_dll_args_iweta_reta.pkl')
         signedRelErrFunction = read_pickle(dpath)
         signedRelErr = signedRelErrFunction(iw_wrt_eta, reta)
         alphas = 1 - slope * np.abs(signedRelErr)
@@ -19381,7 +19388,7 @@ def estimate_ringVRratio(sl, sv, dp=160., do=25.6, norfices=8, lowerGamma=2.2, s
         # get module location
         mod_loc = os.path.abspath(__file__)
         pdir, filename = os.path.split(mod_loc)
-        ringDataDir = os.path.join(os.path.join(pdir, 'velocity_ref'), 'vortex_ring_data_setting_medium')
+        ringDataDir = os.path.join(os.path.join(pdir, 'reference_data'), 'vortex_ring_data_setting_medium')
 
         # load interpolating functions which takes arguments (L/D, veff)
         f_vrT = read_pickle(os.path.join(ringDataDir, 'f_vrT.pkl'))  # velocity of a top ring
@@ -19432,7 +19439,7 @@ def estimate_cirulation_vring_collider(sl, sv):
     # get module location
     mod_loc = os.path.abspath(__file__)
     pdir, filename = os.path.split(mod_loc)
-    ringDataDir = os.path.join(os.path.join(pdir, 'velocity_ref'), 'vortex_ring_data_setting_medium')
+    ringDataDir = os.path.join(os.path.join(pdir, 'reference_data'), 'vortex_ring_data_setting_medium')
     f_gammarT = read_pickle(os.path.join(ringDataDir, 'f_gammarT.pkl'))  # circulation of a bottom ring
     f_gammarB = read_pickle(os.path.join(ringDataDir, 'f_gammarB.pkl'))  # circulation of a bottom ring
     dp, do, norfices = 160, 25.6, 8.  # chamber parameters
@@ -19464,7 +19471,7 @@ def estimate_velocity_vring_collider(sl, sv):
     # get module location
     mod_loc = os.path.abspath(__file__)
     pdir, filename = os.path.split(mod_loc)
-    ringDataDir = os.path.join(os.path.join(pdir, 'velocity_ref'), 'vortex_ring_data_setting_medium')
+    ringDataDir = os.path.join(os.path.join(pdir, 'reference_data'), 'vortex_ring_data_setting_medium')
     f_vrT = read_pickle(os.path.join(ringDataDir, 'f_vrT.pkl'))  # velocity of a top ring
     f_vrB = read_pickle(os.path.join(ringDataDir, 'f_vrB.pkl'))  # velocity of a bottom ring
     dp, do, norfices = 160, 25.6, 8.  # chamber parameters
@@ -19495,7 +19502,7 @@ def estimate_radius_vring_collider(sl, sv):
     # get module location
     mod_loc = os.path.abspath(__file__)
     pdir, filename = os.path.split(mod_loc)
-    ringDataDir = os.path.join(os.path.join(pdir, 'velocity_ref'), 'vortex_ring_data_setting_medium')
+    ringDataDir = os.path.join(os.path.join(pdir, 'reference_data'), 'vortex_ring_data_setting_medium')
     f_drT = read_pickle(os.path.join(ringDataDir, 'f_drT.pkl'))  # diameter of a top ring
     f_drB = read_pickle(os.path.join(ringDataDir, 'f_drB.pkl'))  # diameter of a bottom ring
     dp, do, norfices = 160, 25.6, 8.  # chamber parameters
