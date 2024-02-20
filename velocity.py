@@ -2177,7 +2177,7 @@ def get_1d_energy_spectrum(udata, k='kx', x0=0, x1=None, y0=0, y1=None,
     for t in range(duration):
         ux_k = np.fft.fftshift(np.fft.fft(ux[..., t], axis=ax_ind))
         e11_nd = np.abs(ux_k * np.conj(ux_k)) * 2 / (
-                    2 * np.pi * deltaf) / n_samples ** 2  # e11 is defined as twice as the square of the 1D FT of u1
+                2 * np.pi * deltaf) / n_samples ** 2  # e11 is defined as twice as the square of the 1D FT of u1
         e11[..., t] = np.nanmean(e11_nd, axis=ax_ind_for_avg)
         e11_err[..., t] = np.nanstd(e11_nd, axis=ax_ind_for_avg) / np.sqrt(
             np.product([l for i, l in enumerate(e11_nd.shape) if i in [ax_ind_for_avg]]))
@@ -11428,39 +11428,75 @@ def get_udata(udatapath, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
                 udata = mask_udata(udata, mask, fill_value=np.nan)
                 udata.data[udata.mask] = np.nan
 
-        if return_xy:
-            if dim == 2:
-                if reverse_x:
-                    udata[0, ...] = -udata[0, ...]
+        if dim == 2:
+            if reverse_x:
+                udata[0, ...] = -udata[0, ...]
+                if return_xy:
                     xx[...] = -xx[:, :] + np.nanmax(xx[0, :])
                     xx = xx[:, ::-1]  # update July 2023
-                    udata = udata[:, :, ::-1, :]  # update July 2023
-                if reverse_y:
-                    udata[1, ...] = -udata[1, ...]
+                udata = udata[:, :, ::-1, :]  # update July 2023
+            if reverse_y:
+                udata[1, ...] = -udata[1, ...]
+                if return_xy:
                     yy[...] = -yy[:, :] + np.nanmax(yy[:, 0])
                     yy = yy[::-1, :]  # update July 2023
-                    udata = udata[:, ::-1, :, :]  # update July 2023
+                udata = udata[:, ::-1, :, :]  # update July 2023
+            if return_xy:
                 return udata, xx, yy
-            elif dim == 3:
-                if reverse_x:
-                    udata[...] = -udata[:, :, ::-1, :, :]
+            else:
+                return udata
+        elif dim == 3:
+            if reverse_x:
+                udata[...] = -udata[:, :, ::-1, :, :]
+                if return_xy:
                     xx[...] = -xx[:, :, :] + np.nanmax(xx[0, :, 0])
                     xx = xx[:, ::-1]  # update July 2023
-                    udata = udata[:, :, ::-1, :]  # update July 2023
-                if reverse_y:
-                    udata[1, ...] = -udata[1, ...]
+                udata = udata[:, :, ::-1, :]  # update July 2023
+            if reverse_y:
+                udata[1, ...] = -udata[1, ...]
+                if return_xy:
                     yy[...] = -yy[:, :, :] + np.nanmax(yy[:, 0, 0])
                     yy = yy[::-1, :]  # update July 2023
-                    udata = udata[:, ::-1, :, :]  # update July 2023
-                if reverse_z:
-                    udata[2, ...] = -udata[2, :, :, :, :]
+                udata = udata[:, ::-1, :, :]  # update July 2023
+            if reverse_z:
+                udata[2, ...] = -udata[2, :, :, :, :]
+                if return_xy:
                     zz[...] = -zz[:, :, :]
                     zz = zz[:, :, :-1]  # update July 2023
-                    udata = udata[:, :, :, ::-1, :]  # update July 2023
-
+                udata = udata[:, :, :, ::-1, :]  # update July 2023
+            if return_xy:
                 return udata, xx, yy, zz
-        else:
-            return udata
+            else:
+                return udata
+
+
+def get_vorticity(udata, xx, yy, blur_udata=False, sigma=1., blur_vort=True):
+    """
+    Returns vorticity of a given velocity field (udata)
+
+    Parameters
+    ----------
+    udata: nd array, velocity field
+    xx: nd array, x-coordinates
+    yy: nd array, y-coordinates
+    blur_udata: bool, if true, gaussian-blur a given velocity field
+    sigma: float, size of a gaussian kernel
+    blur_vort, bool, if true, it returns a gaussian-blurred vorticity field =
+
+    Returns
+    -------
+    omega: nd array, vorticity field
+    """
+    dim = udata.shape[0]  # 2d or 3d v-field?
+
+    if blur_udata:
+        udata = gaussian_blur_vector_field(udata, sigma=sigma)
+    omega = curl(udata, xx=xx, yy=yy)
+    if (len(omega.shape) == 2 and dim == 2) or (len(omega.shape) == 4 and dim == 3):
+        omega = omega[..., np.newaxis]
+    if blur_vort:
+        omega = gaussian_blur_scalar_field(omega, sigma=sigma)
+    return omega
 
 
 def get_scalar_data_from_path(udatapath, name='pressure', x0=0, x1=None, y0=0, y1=None, z0=0, z1=None,
@@ -13479,7 +13515,7 @@ def write_hdf5_dict(filename, datadict, attrdict=None, overwrite=False, verbose=
         print('Data was successfully saved at ' + filename)
 
 
-def read_simple_hdf5(datapath, grpname=None):
+def read_simple_hdf5(datapath, grpname=None, verbose=True):
     """
     Returns a dictionary of data in a hdf5
     1. ASSUMED DATA ARCHITECTURE (DEFAULT)
@@ -13516,7 +13552,8 @@ def read_simple_hdf5(datapath, grpname=None):
         keys = list(data.keys())
         for key in keys:
             datadict[key] = data[key][...]
-        print('Keys of the returning dictionary: ', keys)
+        if verbose:
+            print('Keys of the returning dictionary: ', keys)
     return datadict
 
 
@@ -18075,13 +18112,13 @@ def get_pressure(udata, xx, yy, zz, nu=1.004, notebook=useNotebook):
         # du_dxdx_hat = -1.0*nu*kx_mesh*kx_mesh*np.fft.fftn(u_vec)
 
         R_v_x_hat = (
-                                -1.0 * nu * kx_mesh * kx_mesh - 1.0 * nu * ky_mesh * ky_mesh - 1.0 * nu * kz_mesh * kz_mesh) * np.fft.fftn(
+                            -1.0 * nu * kx_mesh * kx_mesh - 1.0 * nu * ky_mesh * ky_mesh - 1.0 * nu * kz_mesh * kz_mesh) * np.fft.fftn(
             u_vec)
         R_v_y_hat = (
-                                -1.0 * nu * kx_mesh * kx_mesh - 1.0 * nu * ky_mesh * ky_mesh - 1.0 * nu * kz_mesh * kz_mesh) * np.fft.fftn(
+                            -1.0 * nu * kx_mesh * kx_mesh - 1.0 * nu * ky_mesh * ky_mesh - 1.0 * nu * kz_mesh * kz_mesh) * np.fft.fftn(
             v_vec)
         R_v_z_hat = (
-                                -1.0 * nu * kx_mesh * kx_mesh - 1.0 * nu * ky_mesh * ky_mesh - 1.0 * nu * kz_mesh * kz_mesh) * np.fft.fftn(
+                            -1.0 * nu * kx_mesh * kx_mesh - 1.0 * nu * ky_mesh * ky_mesh - 1.0 * nu * kz_mesh * kz_mesh) * np.fft.fftn(
             w_vec)
         RHS_hat = 1.0j * kx_mesh * (R_c_x_hat + R_v_x_hat) + 1.0j * ky_mesh * (
                 R_c_y_hat + R_v_y_hat) + 1.0j * kz_mesh * (R_c_z_hat + R_v_z_hat)
@@ -19779,6 +19816,7 @@ def locate_file(rootdir, keyword, filetype=""):
                 count_files += 1
     print(f'... {count_files} files found')
     return file_locs
+
 
 def locate_dir(rootdir, keyword):
     """
