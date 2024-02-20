@@ -1052,7 +1052,7 @@ def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None,
                    # label='Re$_{\lambda} \\approx 600 $ \n Saddoughi and Veeravalli, 1994',
                    label='Re$_{\lambda} \\approx 600 $ \n SV, 1994',
                    color='k', alpha=0.6, subplot=None, cc=1, legend=False,
-                   plotEk=False,
+                   mode='E11',
                    **kwargs):
     """
     plot universal 1d energy spectrum (Saddoughi, 1992)
@@ -1073,19 +1073,32 @@ def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None,
     x = np.asarray([1.27151, 0.554731, 0.21884, 0.139643, 0.0648844, 0.0198547, 0.00558913, 0.00128828, 0.000676395, 0.000254346])
     y = np.asarray([0.00095661, 0.0581971, 2.84666, 11.283, 59.4552, 381.78, 2695.48, 30341.9, 122983, 728530])
     y *= cc
+    x, y = resample(x, y, n=100, mode='loglog')
 
-    if plotEk:
+    if mode in ['E22', 'Ek']:
         x, y_ = resample(x, y, n=100, mode='loglog')
-        y = 0.5 * x ** 3 * np.gradient(1 / x * np.gradient(y_, x), x)
+        k1, e11 = resample(x, y, n=100, mode='loglog')
+        e22 = (e11 - k1 * np.gradient(e11, k1)) * 0.5 # Pope, Eq. 6.218
+        e22 = smoothen(e22, 5, log=True)
+        y = e22
+        ylabel = '$E_{22}(\kappa_1) / (\epsilon\\nu^5)^{1/4}$'
+        if mode == 'Ek':
+            k0 = 5e-2
+            e22[k1 < k0] = e11[k1 < k0] * 4 / 3
+            ek = - k1 * np.gradient(0.5 * e11 + e22, k1)  # Pope, Eq. 6.217
+            ek = smoothen(ek, log=True, )
+            ek[k1 < k0] = e11[k1 < k0] * 55 / 18  # make up for the artifacts by smoothing
+            y = ek
+            ylabel = '$E (\kappa_1) / (\epsilon\\nu^5)^{1/4}$'
+    else:
+        ylabel = '$E_{11} (\kappa_1) / (\epsilon\\nu^5)^{1/4}$'
 
     ax.plot(x, y, color=color, label=label, alpha=alpha,**kwargs)
     if legend:
         ax.legend()
     tologlog(ax)
-    if plotEk:
-        labelaxes(ax, '$\kappa \eta$', '$E / (\epsilon\\nu^5)^{1/4}$')
-    else:
-        labelaxes(ax, '$\kappa_1 \eta$', '$E_{11} / (\epsilon\\nu^5)^{1/4}$')
+    if mode == 'Ek':
+        labelaxes(ax, '$\kappa \eta$', ylabel)
     return fig, ax
 
 def plot_saddoughi_struc_func(fignum=1, fig=None, ax=None, figsize=None,
