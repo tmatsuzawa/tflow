@@ -288,6 +288,79 @@ def add_subplot_custom(x0, y0 ,x1, y1):
     ax = pl.axes([x0, y0, x1, y1])
     return ax
 
+
+def set_size(fig, ax_width_inches, ax_height_inches):
+    """
+    Set the size of the figure based on the FIRST axis box size.
+
+    Parameters
+    ----------
+    width : float
+        Width in inches.
+    height : float
+        Height in inches.
+    fig : matplotlib.figure.Figure
+        The figure object to adjust the size for.
+
+    """
+    # Draw the figure to get the correct bounding box
+    fig.canvas.draw()
+
+    # Get the bounding box of the axis box (the area enclosed by the spines)
+    bbox = fig.axes[0].get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    axis_width, axis_height = bbox.width, bbox.height
+
+    # Calculate the scaling factor
+    scale_width = ax_width_inches / axis_width
+    scale_height = ax_height_inches / axis_height
+
+    # Calculate the new figure size
+    fig_width = fig.get_figwidth() * scale_width
+    fig_height = fig.get_figheight() * scale_height
+
+    # Set the new figure size
+    fig.set_size_inches(fig_width, fig_height)
+    return fig
+
+def match_size(ax1, ax2):
+    """
+    Match the figure size based on two Axes instances. The Axes objects must belong to separate figures.
+    Parameters
+    ----------
+    ax1: Matplotlib.axes.Axes
+    ax2: Matplotlib.axes.Axes
+    ... This parent figure's size gets adjusted.
+
+    Returns
+    -------
+    fig1, fig2: figure objects, the canvas size of fig2 gets rescaled to match the given ax sizes
+    """
+
+    fig1 = ax1.get_figure()
+    fig2 = ax2.get_figure()
+
+    # Draw the figure to get the correct bounding box
+    fig1.canvas.draw()
+    fig2.canvas.draw()
+
+    # Get the bounding box of the axis box (the area enclosed by the spines)
+    bbox1 = ax1.get_window_extent().transformed(fig1.dpi_scale_trans.inverted())
+    bbox2 = ax2.get_window_extent().transformed(fig2.dpi_scale_trans.inverted())
+    ax1_w, ax1_h = bbox1.width, bbox1.height
+    ax2_w, ax2_h = bbox2.width, bbox2.height
+
+    # Calculate the scaling factor
+    scale_width = ax1_w / ax2_w
+    scale_height = ax1_h / ax2_h
+
+    # Calculate the new figure size
+    fig2_width = fig2.get_figwidth() * scale_width
+    fig2_height = fig2.get_figheight() * scale_height
+
+    # Set the new figure size
+    fig2.set_size_inches(fig2_width, fig2_height)
+    return fig1, fig2
+
 def plotfunc(func, x, param, fignum=1, subplot=111, ax = None, label=None, color=None, linestyle='-', legend=False, figsize=None, **kwargs):
     """
     plot a graph using the function fun
@@ -626,34 +699,36 @@ def plot_with_varying_alphas(x, y=None, color=next(__color_cycle__), alphas=None
 
     return fig, ax
 
-def plot_with_arrows(x, y=None, fignum=1, figsize=None, label='', color=None, subplot=None, legend=False, fig=None, ax=None, maskon=False, thd=1, **kwargs):
+def plot_with_arrows(x, y, narrows=1,
+                     arrow_kwargs={'arrow_locs':None, 'head_width':15, 'transform':None,},
+                     **kwargs):
     """
-    Add doc later
+    Plot lines with arrows at every inc-th point
+
     Parameters
     ----------
-    x
-    y
-    fignum
-    figsize
-    label
-    color
-    subplot
-    legend
-    fig
-    ax
-    maskon
-    thd
-    kwargs
+    x: array, x-coordinates
+    y: array, y-coordinates
+    narrows: int, number of arrows
+    kwargs: keyword arguments to pass to graph.plot
+        ... e.g. fig, fignum, ax, color, label, linestyle, linewidth, etc.
 
     Returns
     -------
 
     """
-    fig, ax = plot(x, **kwargs)
+    if 'arrow_locs' not in arrow_kwargs:
+        arrow_kwargs['arrow_locs'] = None
+    if arrow_kwargs['arrow_locs'] is None:
+        arrow_kwargs['arrow_locs'] = np.linspace(0, 1, narrows+2)[1:-1]+0.1/narrows
+
+    fig, ax = plot(x, y, **kwargs)
     lines = ax.get_lines()
-    for i, line in enumerate(lines):
-        add_arrow_to_line(ax, line)
+    line = lines[-1] # the last line added
+    add_arrow_to_line(ax, line,
+                          **arrow_kwargs)
     return fig, ax
+
 
 
 def plot3d(x, y, z, fignum=1, figsize=None, label='', color=None, subplot=None, fig=None,
@@ -1832,7 +1907,7 @@ def bin_and_scatter(x_, y_, xerr=None,
 def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figsize=None, linestyle='--',
                    range2fit=(-np.inf, np.inf),
                    xmin=None, xmax=None, add_equation=True, eq_loc='bl', color=None, label='fit',
-                   show_r2=False, return_r2=False, p0=None, bounds=(-np.inf, np.inf), maskon=True, thd=1,**kwargs):
+                   show_r2=False, return_r2=False, p0=None, bounds=(-np.inf, np.inf), maskon=True, thd=1, textcolor='w', **kwargs):
     """
     Plots a fit curve given xdata and ydata
     Parameters
@@ -1914,7 +1989,7 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
         if add_equation:
             text = '$y=ax+b$: a=%.2f, b=%.2f' % (popt[0], popt[1])
             try:
-                addtext(ax, text, option=eq_loc)
+                addtext(ax, text, option=eq_loc, color=textcolor)
             except:
                 pass
         y_fit = std_func.linear_func(xdata, *popt)
@@ -1932,7 +2007,7 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
         if add_equation:
             text = '$y=ax^b$: a=%.2f, b=%.2f' % (popt[0], popt[1])
             try:
-                addtext(ax, text, option=eq_loc)
+                addtext(ax, text, option=eq_loc, color=textcolor)
             except:
                 pass
         y_fit = std_func.power_func(xdata, *popt)
@@ -1955,7 +2030,7 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
         if add_equation:
             text = '$y=ax^b$: a=%.2f, b=%.2f' % (np.exp(popt[1]) , popt[0])
             try:
-                addtext(ax, text, option=eq_loc)
+                addtext(ax, text, option=eq_loc, color=textcolor)
             except:
                 pass
     else:
@@ -1979,7 +2054,7 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
         # r-squared
         r2 = 1 - (ss_res / ss_tot)
         if show_r2:
-            addtext(ax, '$R^2: %.2f$' % r2, option='bl3')
+            addtext(ax, '$R^2: %.2f$' % r2, option='bl3', color=textcolor)
         if return_r2:
             return fig, ax, popt, pcov, r2
 
@@ -2976,10 +3051,10 @@ def add_arrow_to_line(axes, line, arrow_locs=[0.2, 0.4, 0.6, 0.8], head_width=15
 
 
 def add_arrow_to_line2D(
-    axes, line, arrow_locs=[0.2, 0.4, 0.6, 0.8], 
-    arrowstyle='-|>', head_width=15, transform=None):
+    axes, line, arrow_locs=[0.2, 0.4, 0.6, 0.8],
+    arrowstyle='-|>', head_width=15, transform=None, **kwargs):
     """
-    Add arrows to a matplotlib.lines.Line2D at selected locations.
+    Add arrows to a matplotlib.lines.Line2D at selected locations
 
     Parameters:
     -----------
@@ -3019,7 +3094,7 @@ def add_arrow_to_line2D(
 
     if transform is None:
         transform = axes.transData
-
+    arrow_kw = {**kwargs, **arrow_kw}
     arrows = []
     for loc in arrow_locs:
         s = np.cumsum(np.sqrt(np.diff(x) ** 2 + np.diff(y) ** 2))
@@ -3451,7 +3526,37 @@ def add_discrete_colorbar(ax, colors, vmin=0, vmax=None, label=None, fontsize=No
 
     return cb
 
+def get_discrete_cmap_norm(colors, vmin=0, vmax=None, label=None, fontsize=None, option='normal',
+                              tight_layout=True, ticklabelsize=None, ticklabel=None,
+                              aspect=None, useMiddle4Ticks=False, **kwargs):
+    """
+    Return a colormap and a norm for a discrete colorbar
 
+    Parameters
+    ----------
+    colors
+    vmin
+    vmax
+    label
+    fontsize
+    option
+    tight_layout
+    ticklabelsize
+    ticklabel
+    aspect
+    useMiddle4Ticks
+    kwargs
+
+    Returns
+    -------
+    cmap, norm
+    """
+    if vmax is None:
+        vmax = len(colors)
+
+    cmap = mpl.colors.ListedColormap(colors)
+    norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+    return cmap, norm
 
 def add_colorbar_alone(ax, values, cax=None, cmap=cmap, label=None, fontsize=None, option='normal', fformat=None,
                  tight_layout=True, ticklabelsize=None, ticklabel=None,
