@@ -136,7 +136,7 @@ def make_movie(imgname=None, imgdir=None, movname=None, indexsz='05', framerate=
     if invert:
         command.append('-vf')
         command.append('negate')
-    # check if image has dimensions divisibly by 2 (if not ffmpeg raises an error... why ffmpeg...)
+    # check if image has dimensions divisible by 2 (if not ffmpeg raises an error... why ffmpeg...)
     # ffmpeg raises an error if image has dimension indivisible by 2. Always make sure that this is not the case.
     # image_paths = glob.glob(imgname + '/*.' + ext)
     # img = mpimg.imread(image_paths[0])
