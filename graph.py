@@ -2,6 +2,7 @@
 Module for plotting figures
 '''
 import os, copy
+from pathlib import Path
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -20,7 +21,6 @@ import mpl_toolkits
 import seaborn as sns
 from cycler import cycler
 from skimage import measure
-import pylab as pl
 
 import itertools
 from scipy.optimize import curve_fit
@@ -63,11 +63,11 @@ __my_ccycle__ = itertools.cycle(mycolors5)
 cmap = 'magma'
 
 # See all available arguments in matplotlibrc
-__fontsize__ = 14
-__figsize__ = (7.54*0.667, 7.54*0.667)
+__fontsize__ = 12
+__figsize__ = (6, 6)
 params = {'figure.figsize': __figsize__,
           'font.size': __fontsize__,  #text
-        'legend.fontsize': 11
+        'legend.fontsize': 10
           , # legend
          'axes.labelsize': __fontsize__, # axes
          'axes.titlesize': __fontsize__,
@@ -79,7 +79,7 @@ params = {'figure.figsize': __figsize__,
          'xtick.minor.size': 2, # 2.
          'ytick.major.size': 3.5,
          'ytick.minor.size': 2,
-          'figure.dpi': 500,
+          'figure.dpi': 200,
          }
 default_custom_cycler = {'color': ['r', 'b', 'g', 'y'],
                           'linestyle': ['-', '-', '-', '-'],
@@ -89,44 +89,30 @@ default_custom_cycler = {'color': ['r', 'b', 'g', 'y'],
 
 
 ## Save a figure
-def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, overwrite=True, tight_layout=False,
+def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=150, overwrite=True, tight_layout=False,
          savedata=True, transparent=True, bkgcolor='w', **kwargs):
     """
-    Save a figure from pyplot
+    Save a figure
 
     Parameters
     ----------
-    path: string
-        The path (and filename, without the extension) to save the
-        figure to.
-    ext: string (default='png')
-        The file extension. This must be supported by the active
-        matplotlib backend (see matplotlib.backends module).  Most
-        backends support 'png', 'pdf', 'ps', 'eps', and 'svg'.
-    ext : string (default='png')
-        The file extension. This must be supported by the active
-        matplotlib backend (see matplotlib.backends module).  Most
-        backends support 'png', 'pdf', 'ps', 'eps', and 'svg'.
-    close : boolean (default=True)
-        Whether to close the figure after saving.  If you want to save
-        the figure multiple times (e.g., to multiple formats), you
-        should NOT close it in between saves or you will have to
-        re-plot it.
-    verbose : boolean (default=True)
-        Whether to print information about when and where the image
-        has been saved.
-    fignum
-    dpi
-    overwrite
-    tight_layout
-    savedata
-    transparent
-    bkgcolor
-    kwargs
+    path: str, path to save a figure
+    ext: str, extension of the figure, e.g. 'pdf', 'png', 'svg'
+    close: bool, close the figure (default: False)
+    verbose: bool, print out the path where the figure is saved
+    fignum: int, figure number of the figure to save
+    dpi: int, resolution of the figure, default: 150
+    overwrite: bool, overwrite if a figure already exists
+    tight_layout: bool, use tight_layout
+    savedata: bool, save a figure instance, default: True. To load the figure instance,
+              try pickle.load(open(path[:-len(ext)-1] + '.pkl', 'rb'))
+    transparent: bool, save a figure with a transparent background, default: True
+    bkgcolor: str, background color of the figure, default: 'w', `transparent` must be False to activate this option.
+    kwargs: keyword arguments to pass to plt.savefig()
 
     Returns
     -------
-
+    None
     """
     if fignum == None:
         fig = plt.gcf()
@@ -141,23 +127,23 @@ def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, over
     # Separate a directory and a filename from the given path
     directory = os.path.split(path)[0]
     filename = "%s.%s" % (os.path.split(path)[1], ext)
+
     if directory == '':
         directory = '.'
-    # If the directory does not exist, create it
+
+    # Make sure the directory exists
+    directory = Path(directory)
     if not os.path.exists(directory):
         os.makedirs(directory)
 
-    # path where the figure is saved
+    # The final path to save
     savepath = os.path.join(directory, filename)
-    # if a figure already exists AND you'd like to overwrite, name a figure differently
+    # If the file already exists, generate a new filename
     ver_no = 0
     while os.path.exists(savepath) and not overwrite:
         # this needs to be fixed. right now, it keeps saving to _000.png
-        savepath = directory + '/' + os.path.split(path)[1]+ '_%03d.' % ver_no + ext
+        savepath = directory / (os.path.split(path)[1] + '_%03d.' % ver_no + ext)
         ver_no += 1
-
-    if verbose:
-        print(("Saving figure to '%s'..." % savepath))
 
     # Save the figure
     if transparent:
@@ -165,19 +151,19 @@ def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, over
     else:
         plt.savefig(savepath, dpi=dpi, facecolor=bkgcolor, **kwargs)
 
-    # Save fig instance... This may fail for python2
+    # Save a fig instance... This may fail for python2
     if savedata:
         try:
-            pickle.dump(fig, open(savepath[:-len(ext)-1] + '_fig.pkl', 'wb'))
+            pickle.dump(fig, open(savepath[:-len(ext)-1] + '.pkl', 'wb'))
         except:
-            print('... Could not save a fig instance')
+            print('... Unable to pickle a figure instance.')
 
-    # Close it
+    # Close a figure
     if close:
         plt.close(fignum)
 
     if verbose:
-        print("... Done")
+        print("Figure saved to", savepath)
 
 ## Create a figure and axes
 def set_fig(fignum, subplot=111, dpi=100, figsize=None,
@@ -239,7 +225,7 @@ def set_fig(fignum, subplot=111, dpi=100, figsize=None,
 
     return fig, ax
 
-def add_subplot_custom(x0, y0 ,x1, y1):
+def add_subplot_custom(x0, y0 ,x1, y1, fignum=None):
     """
     Create an Axes object at a customized location
 
@@ -254,7 +240,8 @@ def add_subplot_custom(x0, y0 ,x1, y1):
     -------
     ax: Axes object
     """
-    ax = pl.axes([x0, y0, x1, y1])
+    fig = plt.figure(num=fignum)
+    ax = fig.add_axes([x0, y0, x1-x0, y1-y0])
     return ax
 
 def plotfunc(func, x, param, fignum=1, subplot=111, ax = None, label=None, color=None, linestyle='-', legend=False, figsize=None, **kwargs):
@@ -595,33 +582,34 @@ def plot_with_varying_alphas(x, y=None, color=next(__color_cycle__), alphas=None
 
     return fig, ax
 
-def plot_with_arrows(x, y=None, fignum=1, figsize=None, label='', color=None, subplot=None, legend=False, fig=None, ax=None, maskon=False, thd=1, **kwargs):
+def plot_with_arrows(x, y, narrows=1,
+                     arrow_kwargs={'arrow_locs':None, 'head_width':15, 'transform':None,},
+                     **kwargs):
     """
-    Add doc later
+    Plot lines with arrows at every inc-th point
+
     Parameters
     ----------
-    x
-    y
-    fignum
-    figsize
-    label
-    color
-    subplot
-    legend
-    fig
-    ax
-    maskon
-    thd
-    kwargs
+    x: array, x-coordinates
+    y: array, y-coordinates
+    narrows: int, number of arrows
+    kwargs: keyword arguments to pass to graph.plot
+        ... e.g. fig, fignum, ax, color, label, linestyle, linewidth, etc.
 
     Returns
     -------
 
     """
-    fig, ax = plot(x, **kwargs)
+    if 'arrow_locs' not in arrow_kwargs:
+        arrow_kwargs['arrow_locs'] = None
+    if arrow_kwargs['arrow_locs'] is None:
+        arrow_kwargs['arrow_locs'] = np.linspace(0, 1, narrows+2)[1:-1]+0.1/narrows
+
+    fig, ax = plot(x, y, **kwargs)
     lines = ax.get_lines()
-    for i, line in enumerate(lines):
-        add_arrow_to_line(ax, line)
+    line = lines[-1] # the last line added
+    add_arrow_to_line(ax, line,
+                          **arrow_kwargs)
     return fig, ax
 
 
@@ -657,7 +645,6 @@ def plot3d(x, y, z, fignum=1, figsize=None, label='', color=None, subplot=None, 
     if aspect=='equal':
         set_axes_equal(ax)
     return fig, ax
-
 
 
 def plot_surface(x, y, z, shade=True, fig=None, ax=None, fignum=1, subplot=None, figsize=None,
@@ -811,7 +798,9 @@ def plot_spline(x_, y_, order=3,
                 fignum=1, figsize=None, subplot=None,
                 fig=None, ax=None, log=False,
                 label='', color=None, legend=False,
-                maskon=False, thd=1., **kwargs):
+                maskon=False, thd=1., return_func=False,
+                **kwargs):
+
     """
     Plots a spline representation of a curve (x against y)
 
@@ -897,7 +886,11 @@ def plot_spline(x_, y_, order=3,
 
     if legend:
         ax.legend()
-    return fig, ax
+
+    if return_func:
+        return fig, ax, spl_func
+    else:
+        return fig, ax
 
 def plot_date(dates, y,
             fignum=1, figsize=None, label='', color=None, subplot=None, legend=False,
@@ -1112,7 +1105,7 @@ def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
             maskon=False, thd=1, inc=1,
             xmin=None, xmax=None, alpha=1.,
             set_bottom_zero=False, symmetric=False,
-            set_left_zero=False, edgecolor='k',
+            set_left_zero=False, edgecolors='k',
             **kwargs):
     """
     plot a graph using given x,y
@@ -1145,7 +1138,7 @@ def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
         keep *= x >= xmin
 
     if type(marker) == list:
-        marker_list = [m for i, m in enumerate(marker) if mask[i]]
+        marker_list = [m for i, m in enumerate(marker) if keep[i]]
         marker = None
     else:
         marker_list = None
@@ -1154,10 +1147,10 @@ def scatter(x, y, ax=None, fig=None,  fignum=1, figsize=None,
         facecolors = 'none'
         if isinstance(alpha, float) or isinstance(alpha, int):
             sc = ax.scatter(x[keep][::inc], y[keep][::inc], label=label, marker=marker, facecolors=facecolors, alpha=alpha,
-                            edgecolor=edgecolor, **kwargs)
+                            edgecolors=edgecolors, **kwargs)
         else:
             sc = ax.scatter(x[keep][::inc], y[keep][::inc], label=label, marker=marker, facecolors=facecolors, alpha=alpha[keep][::inc],
-                                edgecolor=edgecolor, **kwargs)
+                                edgecolors=edgecolors, **kwargs)
             # for i, alpha_ in enumerate(alpha[keep]):
             #     if i != 0:
             #         label=None
@@ -1424,8 +1417,9 @@ def cdf(data, nbins=100, return_data=False, vmax=None, vmin=None,
         return fig, ax, bins, cdf
 
 
-def errorbar(x, y, xerr=None, yerr=0., fignum=1, marker='o', fillstyle='full', linestyle='None', label=None, mfc='white',
-             subplot=None, legend=False, legend_remove_bars=False, figsize=None, maskon=False, thd=1, capsize=10,
+def errorbar(x, y, xerr=None, yerr=None, fignum=1, marker='o', fillstyle='full', linestyle='None', label=None, mfc='white',
+             subplot=None, legend=False, legend_remove_bars=False, figsize=None, maskon=False, thd=1,
+             linewidth=1, capsize=3,
              xmax=None, xmin=None, ax=None, **kwargs):
     """ errorbar plot
 
@@ -1784,9 +1778,117 @@ def bin_and_scatter(x_, y_, xerr=None,
     else:
         return fig, ax, x[mask], y[mask], xerr[mask], yerr[mask]
 
+
+def grouped_bar(categories, data_means, data_errors=None, width=None,
+                capsize=3, error_kw={'elinewidth': 1}, # errorbar settings
+                color_by='attribute', colors=None, edgecolor='k', # color settings
+                fignum=1, subplot=111, figsize=None, hatch_patterns=None, alphas=1,
+                showLegend=True, offset=None, **kwargs):
+    """
+    Plots a grouped bar chart
+
+    Parameters
+    ----------
+    categories: array-like, x-axis labels
+    data_means: dict, key: attribute, value: measurement
+    data_errors: dict, key: attribute, value: error
+    ylabel: str, y-axis label
+    title: str, title of the plot
+    width: float, width of the bars
+    capsize: int, size of the error bar caps
+    colors: list or str, colors of the bars
+    color_by: str, specify 'attribute' or 'category' to determine color assignment
+    fignum: int, figure number
+    subplot: int, three-digit number to specify a subplot location
+    figsize: tuple, figure size in inches
+    hatch_patterns: list, hatch patterns for different attributes
+
+    Returns
+    -------
+    fig: matplotlib.figure.Figure, the figure object
+    ax: matplotlib.axes.Axes, the axes object
+    rects: list of matplotlib.container.BarContainer, the bar containers
+    """
+    # Preparation
+    x = np.arange(len(categories))  # the label locations
+    n_attributes = len(data_means)
+    n_categories = len(categories)
+    multiplier = 0
+    width = 1/(n_attributes+0.5) if width is None else width
+    if isinstance(alphas, int):
+        alphas = [alphas] * n_attributes
+    if not isinstance(error_kw, list):
+        error_kw = [copy.deepcopy(error_kw) for i in range(n_attributes)]
+    for i in range(n_attributes):
+        error_kw[i]['alpha'] = alphas[i]
+
+    # Ensure colors list matches the required number based on color_by
+    if isinstance(colors, str):
+        if color_by == 'attribute':
+            colors = [colors] * n_attributes
+        elif color_by == 'category':
+            colors = [colors] * n_categories
+    if colors is None:
+        if color_by == 'attribute':
+            colors = [None] * n_attributes
+        elif color_by == 'category':
+            colors = [None] * n_categories
+    if color_by == 'attribute' and len(colors) != n_attributes:
+        raise ValueError(
+            'The number of colors must be the same as the number of attributes when color_by is "attribute"')
+    if color_by == 'category' and len(colors) != n_categories:
+        raise ValueError(
+            'The number of colors must be the same as the number of categories when color_by is "category"')
+
+    # Ensure hatch patterns list matches the number of attributes
+    if hatch_patterns is None:
+        hatch_patterns = [None] * n_attributes
+    if len(hatch_patterns) != n_attributes:
+        raise ValueError('The number of hatch patterns must be the same as the number of attributes')
+
+    # Initialize the figure and axis
+    fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    rects = []
+
+    for i, (attribute, measurement) in enumerate(data_means.items()):
+        if offset is None:
+            offset_ = width * multiplier
+        else:
+            offset_ = offset # User-input offset- controls the spacing between the bars
+        errors = data_errors.get(attribute) if data_errors else None
+
+        if color_by == 'attribute':
+            color = colors[i]
+            hatch = None
+        elif color_by == 'category':
+            color = colors
+            hatch = hatch_patterns[i]
+        rect = ax.bar(x + offset_, measurement, width, label=attribute, yerr=errors, capsize=capsize,
+                      color=color, edgecolor=edgecolor, hatch=hatch, error_kw=error_kw[i], alpha=alphas[i], **kwargs)
+        rects.append(rect)
+        multiplier += 1
+
+
+    # Add custom x-axis tick labels
+    ax.set_xticks(x + width * (n_attributes - 1) / 2, categories)
+    # Legend
+
+    if showLegend:
+        if color_by == 'attribute':
+            lgd = ax.legend(frameon=False)
+        else:
+            # If colored by categories, show hatch patterns in the legend
+            handles = [mpl.patches.Patch(facecolor='white', edgecolor='black', hatch=hatch_patterns[i]) for i in range(n_attributes)]
+            labels = list(data_means.keys())
+            lgd = ax.legend(handles, labels, ncols=3, fontsize=10, frameon=False, loc='upper left')
+        return fig, ax, rects, lgd
+    else:
+        return fig, ax, rects
+
+
 ## Plot a fit curve
 def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figsize=None, linestyle='--',
-                   range2fit=(-np.inf, np.inf),
+                   range2fit=(-np.inf, np.inf), textcolor=None,
                    xmin=None, xmax=None, add_equation=True, eq_loc='bl', color=None, label='fit',
                    show_r2=False, return_r2=False, p0=None, bounds=(-np.inf, np.inf), maskon=True, thd=1,**kwargs):
     """
@@ -1868,9 +1970,9 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
                            label=label, figsize=figsize, color=color, linestyle=linestyle, ax=ax, **kwargs)
 
         if add_equation:
-            text = '$y=ax+b$: a=%.2f, b=%.2f' % (popt[0], popt[1])
+            text = '$y=ax+b$: a=%.5f, b=%.5f' % (popt[0], popt[1])
             try:
-                addtext(ax, text, option=eq_loc)
+                addtext(ax, text, option=eq_loc, color=textcolor)
             except:
                 pass
         y_fit = std_func.linear_func(xdata, *popt)
@@ -1888,7 +1990,7 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
         if add_equation:
             text = '$y=ax^b$: a=%.2f, b=%.2f' % (popt[0], popt[1])
             try:
-                addtext(ax, text, option=eq_loc)
+                addtext(ax, text, option=eq_loc, color=textcolor)
             except:
                 pass
         y_fit = std_func.power_func(xdata, *popt)
@@ -1911,7 +2013,7 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
         if add_equation:
             text = '$y=ax^b$: a=%.2f, b=%.2f' % (np.exp(popt[1]) , popt[0])
             try:
-                addtext(ax, text, option=eq_loc)
+                addtext(ax, text, option=eq_loc, color=textcolor)
             except:
                 pass
     else:
@@ -1935,12 +2037,114 @@ def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figs
         # r-squared
         r2 = 1 - (ss_res / ss_tot)
         if show_r2:
-            addtext(ax, '$R^2: %.2f$' % r2, option='bl3')
+            addtext(ax, '$R^2: %.2f$' % r2, option='bl3', color=textcolor)
         if return_r2:
             return fig, ax, popt, pcov, r2
 
     return fig, ax, popt, pcov
 
+def fit_curve(xdata, ydata, func=None,
+            range2fit=(-np.inf, np.inf),
+              p0=None, bounds=(-np.inf, np.inf), maskon=True, thd=1, **kwargs):
+    """
+    Plots a fit curve given xdata and ydata
+    Parameters
+    ----------
+    xdata: 1d array
+    ydata: 1d array
+    func : a function to be fit- e.g. lambda x, a, b: a*x+b
+    fignum: int, figure number
+    subplot: int, three-digit number to specify a subplot location
+    ax: Axes instance- If given, it plots on the
+    figsize
+    linestyle
+    xmin
+    xmax
+    add_equation
+    eq_loc
+    color
+    label
+    show_r2
+    return_r2
+    p0
+    bounds
+    maskon
+    thd
+    kwargs
+
+    Returns
+    -------
+    fig, ax: A Figure object, an Axes object
+    popt, pcov : fit results, a covariance matrix
+
+    """
+
+    if len(xdata) != len(ydata):
+        print('x and y have different length! Data will be clipped... %d, %d' % (len(xdata), len(ydata)))
+        n = min(len(xdata), len(ydata))
+        xdata = xdata[:n]
+        ydata = ydata[:n]
+
+    if any(np.isnan(ydata)) or any(np.isnan(xdata)):
+        print('Original data contains np.nans! Delete them for curve fitting')
+        condx, condy = np.isnan(xdata), np.isnan(ydata)
+        cond = (~condx * ~condy)
+        print('No of deleted data points %d / %d' % (np.sum(~cond), len(xdata)))
+        if np.sum(~cond) == len(xdata):
+            print('No data points for fitting!')
+            raise RuntimeError
+        xdata, ydata = xdata[cond], ydata[cond]
+    cond_fitRange = np.logical_and(xdata >= range2fit[0], xdata <= range2fit[1])
+    xdata, ydata = xdata[cond_fitRange], ydata[cond_fitRange]
+
+    if maskon and func!= 'power2':
+        mask = get_mask4erroneous_pts(xdata, ydata, thd=thd)
+        if any(mask):
+            xdata = xdata[mask]
+            ydata = ydata[mask]
+
+    x_for_plot = xdata
+    if func is None or func == 'linear':
+        # print('Fitting to a linear function...')
+        popt, pcov = curve_fit(std_func.linear_func, xdata, ydata, p0=p0, bounds=bounds)
+        y_fit = std_func.linear_func(xdata, *popt)
+    elif func == 'power':
+        # print('Fitting to a power law...')
+        popt, pcov = curve_fit(std_func.power_func, xdata, ydata, p0=p0, bounds=bounds)
+        y_fit = std_func.power_func(xdata, *popt)
+    elif func == 'power2':
+        # print('Fitting to a linear function to the log-log plot')
+        xdata[xdata < 10 ** -16], ydata[xdata < 10 ** -16] = np.nan, np.nan
+        xdata_log, ydaya_log = np.log(xdata), np.log(ydata)
+
+        popt, pcov = curve_fit(std_func.linear_func, xdata_log, ydaya_log, p0=p0, bounds=bounds)
+
+        y_fit = np.exp(popt[1]) * x_for_plot ** popt[0]
+    else:
+        popt, pcov = curve_fit(func, xdata, ydata, p0=p0, bounds=bounds)
+    return popt, pcov
+
+def remove_nans(xdata, ydata):
+    """
+    Remove nans from xdata and ydata
+
+    Parameters
+    ----------
+    xdata: 1d array
+    ydata: 1d array
+
+    Returns
+    -------
+    xdata, ydata: 1d array, 1d array, xdata and ydata with nans removed
+    """
+    if any(np.isnan(ydata)) or any(np.isnan(xdata)):
+        condx, condy = np.isnan(xdata), np.isnan(ydata)
+        cond = (~condx * ~condy)
+        if np.sum(~cond) == len(xdata):
+            xdata, ydata = np.asarray([]), np.asarray([])
+        else:
+            xdata, ydata = xdata[cond], ydata[cond]
+    return xdata, ydata
 
 def plot_interpolated_curves(x, y, zoom=2, fignum=1, figsize=None, label='', color=None, subplot=None, legend=False,
          fig=None, ax=None, maskon=False, thd=1, return_interp_func=False, **kwargs):
@@ -2923,10 +3127,10 @@ def add_arrow_to_line(axes, line, arrow_locs=[0.2, 0.4, 0.6, 0.8], head_width=15
 
 
 def add_arrow_to_line2D(
-    axes, line, arrow_locs=[0.2, 0.4, 0.6, 0.8], 
-    arrowstyle='-|>', head_width=15, transform=None):
+        axes, line, arrow_locs=[0.2, 0.4, 0.6, 0.8],
+        arrowstyle='-|>', head_width=15, transform=None, **kwargs):
     """
-    Add arrows to a matplotlib.lines.Line2D at selected locations.
+    Add arrows to a matplotlib.lines.Line2D at selected locations
 
     Parameters:
     -----------
@@ -2966,7 +3170,7 @@ def add_arrow_to_line2D(
 
     if transform is None:
         transform = axes.transData
-
+    arrow_kw = {**kwargs, **arrow_kw}
     arrows = []
     for loc in arrow_locs:
         s = np.cumsum(np.sqrt(np.diff(x) ** 2 + np.diff(y) ** 2))
@@ -2979,6 +3183,7 @@ def add_arrow_to_line2D(
         axes.add_patch(p)
         arrows.append(p)
     return arrows
+
 
 def add_arrow_to_line3D(
         axes, line, arrow_locs=[0.2, 0.4, 0.6, 0.8], head_width=15, lw=1, transform=None, **kwargs):
@@ -3051,10 +3256,42 @@ def add_arrow_to_line3D(
             arrows.append(arrow)
         return arrows
 
+
 def arrow3D(x, y, z, dx, dy, dz, lw=3, arrowstyle='-|>', color='r', mutation_scale=20,
             ax=None, fig=None, fignum=1, subplot=111, figsize=None,
             xlabel='x (mm)', ylabel='y (mm)', zlabel='z (mm)',
             **kwargs):
+    """
+    Adds an arrow on a 3D canvas
+
+    Parameters
+    ----------
+    x: float, x-coordinate of the arrow
+    y: float, y-coordinate of the arrow
+    z: float, z-coordinate of the arrow
+    dx: float, x-component of the arrow
+    dy: float, y-component of the arrow
+    dz: float, z-component of the arrow
+    lw: float, linewidth of the arrow
+    arrowstyle: str, style of the arrow, default: '-|>'
+    color: str, color of the arrow
+    mutation_scale: float, scale of the arrow
+    ax: Axes3D instance
+    fig: Figure instance
+    fignum: int, figure number
+    subplot: int, matplotlib subplot notation
+    figsize: tuple, figure size
+    xlabel: str, x-axis label
+    ylabel: str, y-axis label
+    zlabel: str, z-axis label
+    kwargs: dict, additional keyword arguments passed to Arrow3D
+
+    Returns
+    -------
+    fig: Figure instance
+    ax: Axes3D instance
+    arrow_obj: Arrow3D instance
+    """
 
     if fig is None and ax is None:
         fig, ax = set_fig(fignum, subplot, figsize=figsize, projection='3d')
@@ -3063,10 +3300,9 @@ def arrow3D(x, y, z, dx, dy, dz, lw=3, arrowstyle='-|>', color='r', mutation_sca
     elif ax is None:
         ax = plt.gca()
 
-
     if isinstance(x, (int, float)):
-        arrow_obj = Arrow3D([x, x+dx], [y, y+dy],
-                            [z, z+dz], mutation_scale=mutation_scale,
+        arrow_obj = Arrow3D([x, x + dx], [y, y + dy],
+                            [z, z + dz], mutation_scale=mutation_scale,
                             lw=lw, arrowstyle=arrowstyle, color=color, **kwargs)
         ax.add_artist(arrow_obj)
     elif isinstance(x, (np.ndarray, list)):
@@ -3082,6 +3318,7 @@ def arrow3D(x, y, z, dx, dy, dz, lw=3, arrowstyle='-|>', color='r', mutation_sca
     ax.set_zlabel(zlabel)
     return fig, ax, arrow_obj
 
+
 def arrow(x, y, dx, dy,
           ax=None, fig=None, fignum=1, subplot=111, figsize=None, **kwargs):
     """
@@ -3090,20 +3327,21 @@ def arrow(x, y, dx, dy,
 
     Parameters
     ----------
-    x
-    y
-    dx
-    dy
-    ax
-    fig
-    fignum
-    subplot
-    figsize
-    kwargs
+    x: float, x-coordinate of the arrow
+    y: float, y-coordinate of the arrow
+    dx: float, x-component of the arrow
+    dy: float, y-component of the arrow
+    ax: Axes instance
+    fig: Figure instance
+    fignum: int, figure number
+    subplot: int, matplotlib subplot notation
+    figsize: tuple, figure size
+    kwargs: dict, additional keyword arguments passed to ax.arrow
 
     Returns
     -------
-
+    fig: Figure instance
+    ax: Axes instance
     """
     if fig is None and ax is None:
         fig, ax = set_fig(fignum, subplot, figsize=figsize)
@@ -3117,10 +3355,116 @@ def arrow(x, y, dx, dy,
         n = len(x)
         for i in range(n):
             ax.arrow(x[i], y[i], dx[i], dy[i], **kwargs)
-    return fig, ax
+    return fig, axa
+def create_random_curved_line(start, end, rad, n=100, narrows=1,push=0.8):
+    """
+    Create a curved line with arrows
+
+    Parameters
+    ----------
+    start: tuple, (x,y) of the start
+    end: tuple, (x,y) of the end
+    rad: float,radius of curvature
+    t: int, number of points to interpolate
+    narrows: int, number of arrows
+    push: float, push the arrows along the line
+
+    Returns
+    -------
+
+    """
+    #Compute midpoint
+    # rad = rad/100.
+    x1, y1 = start
+    x2, y2 = end
+    y12 = (y1 + y2) / 2
+    dy = (y2 - y1)
+    cy = y12 + (rad) * dy
+    #Prepare line
+    tau = np.linspace(0,1, n)
+    xsupport = np.linspace(x1,x2, n)
+    ysupport = [(1-i)**2 * y1 + 2*(1-i)*i*cy + (i**2)*y2 for i in tau]
+    #Create arrow data
+    arset = list(np.linspace(0,1, narrows+2))
+    c = zip([xsupport[min(int(n*a*push), n-2)] for a in arset[1:-1]],
+                      [ysupport[min(int(n*a*push), n-2)] for a in arset[1:-1]])
+    dt = zip([xsupport[min(int(n*a*push)+1, n-1)]-xsupport[min(int(n*a*push), n-2)] for a in arset[1:-1]],
+                      [ysupport[min(int(n*a*push)+1, n-1)]-ysupport[min(int(n*a*push), n-2)] for a in arset[1:-1]])
+    arrowpath = zip(c,dt)
+    return xsupport, ysupport, arrowpath
+
+def plot_random_curved_line(start, end, r_curv, n=100, narrows=1, arrow_width=None, push=0.8,
+                   color=None, arrow_color=None, zorder=None,
+                   fig=None, ax=None, fignum=1, subplot=111, figsize=None, **kwargs):
+    if ax is None:
+        fig, ax = set_fig(fignum, subplot, figsize=figsize)
+    else:
+        fig = ax.get_figure()
+    if color is not None and arrow_color is None:
+        arrow_color = color # default arrow color is the same as the line color
+
+    x, y, arrows = curvline(start, end, r_curv, n, narrows, push=push)
+    ax.plot(x,y, color=color, zorder=zorder, **kwargs)
+
+    x0, x1 = ax.get_xlim()
+    arrow_width = arrow_width or (x1-x0) * 0.05
+
+    for pos, direction in arrows:
+        plt.arrow(pos[0],pos[1],direction[0],direction[1], shape='full', lw=0,
+                  length_includes_head=False, head_width=arrow_width, color=arrow_color, zorder=zorder)
+    return fig, ax, x, y
+
 
 ## Legend
-# Legend
+def legend_fig(fig, **kwargs):
+    """
+    Add a single legend to a figure with multiple axes
+
+    Parameters
+    ----------
+    fig: matplotlib.figure.Figure instance
+    kwargs: dict
+
+    Returns
+    -------
+    handles, labels: list, list
+    """
+
+    # Generate a sequence of tuples, each contains
+    #  - a list of handles (lohand) and
+    #  - a list of labels (lolbl)
+    tuples_lohand_lolbl = (ax.get_legend_handles_labels() for ax in fig.axes)
+    # E.g., a figure with two axes, ax0 with two curves, ax1 with one curve
+    # yields:   ([ax0h0, ax0h1], [ax0l0, ax0l1]) and ([ax1h0], [ax1l0])
+
+    # The legend needs a list of handles and a list of labels,
+    # so our first step is to transpose our data,
+    # generating two tuples of lists of homogeneous stuff(tolohs), i.e.,
+    # we yield ([ax0h0, ax0h1], [ax1h0]) and ([ax0l0, ax0l1], [ax1l0])
+    tolohs = zip(*tuples_lohand_lolbl)
+
+    # Finally, we need to concatenate the individual lists in the two
+    # lists of lists: [ax0h0, ax0h1, ax1h0] and [ax0l0, ax0l1, ax1l0]
+    # a possible solution is to sum the sublists - we use unpacking
+    handles, labels = (sum(list_of_lists, []) for list_of_lists in tolohs)
+
+    # Call fig.legend with the keyword arguments, return the legend object
+    return fig.legend(handles, labels, **kwargs)
+
+def get_legend_handles_labels(ax):
+    """
+    Get handles and labels of a legend in an axes instance
+    Parameters
+    ----------
+    ax: axes.Axes instance
+
+    Returns
+    -------
+    handles, labels: list of objects such as matplotlib.collections.PathCollection, list of strings
+    """
+    handles, labels = ax.get_legend_handles_labels()
+    return handles, labels
+
 def legend(ax, remove=False, **kwargs):
     """
     loc:
@@ -3135,6 +3479,7 @@ def legend(ax, remove=False, **kwargs):
     -------
 
     """
+
     leg = ax.legend(**kwargs)
     if remove:
         leg.get_frame().set_facecolor('none')
@@ -3186,47 +3531,26 @@ def get_sfmt(fformat="%03.1f"):
     reset_sfmt(fformat=fformat)
     return sfmt
 
-def add_colorbar_old(mappable, fig=None, ax=None, fignum=None, label=None, fontsize=__fontsize__,
-                 vmin=None, vmax=None, cmap='jet', option='normal', **kwargs):
+def get_discrete_cmap_norm(colors, vmin=0, vmax=None,  **kwargs):
     """
-    Adds a color bar (Depricated. replaced by add_colorbar)
+    Return a colormap and a norm for a discrete colorbar
+
     Parameters
     ----------
-    mappable : image like QuadMesh object to which the color bar applies (NOT a plt.figure instance)
-    ax : Parent axes from which space for a new colorbar axes will be stolen
-    label :
+    colors
+    vmin
+    vmax
 
     Returns
     -------
+    cmap, norm
     """
-    # Get a Figure instance
-    if fig is None:
-        fig = plt.gcf()
-        if fignum is not None:
-            fig = plt.figure(num=fignum)
-    if ax is None:
-        ax = plt.gca()
+    if vmax is None:
+        vmax = len(colors)
 
-    # if vmin is not None and vmax is not None:
-    #     norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
-    # elif vmin is None and vmax is not None:
-    #     print 'vmin was not provided!'
-    # elif vmin is not None and vmax is None:
-    #     print 'vmax was not provided!'
-
-    # fig.colorbar makes a another ax object which colives with ax in the fig instance.
-    # Therefore, cb has all attributes that ax object has!
-
-    if option == 'scientific':
-        cb = fig.colorbar(mappable, ax=ax, cmap=cmap, format=sfmt, **kwargs)
-    else:
-        cb = fig.colorbar(mappable, ax=ax, cmap=cmap, **kwargs)
-
-    if not label == None:
-        cb.set_label(label, fontsize=fontsize)
-
-    return cb
-
+    cmap = mpl.colors.ListedColormap(colors)
+    norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+    return cmap, norm
 
 def add_colorbar(mappable, fig=None, ax=None, cax=None, fignum=None, location='right', label=None, fontsize=None, option='normal',
                  tight_layout=True, ticklabelsize=None, aspect='equal', ntick=5, tickinc=None,
@@ -3373,9 +3697,9 @@ def add_discrete_colorbar(ax, colors, vmin=0, vmax=None, label=None, fontsize=No
     sm.set_array([])  # dummy mappable
 
     if option == 'scientific':
-        cb = fig.colorbar(sm, ticks=ticks, format=sfmt, **kwargs)
+        cb = fig.colorbar(sm, ticks=ticks, format=sfmt, ax=ax, **kwargs)
     else:
-        cb = fig.colorbar(sm, ticks=ticks, **kwargs)
+        cb = fig.colorbar(sm, ticks=ticks, ax=ax, **kwargs)
 
     if ticklabel is not None:
         cb.ax.set_yticklabels(ticklabel)
@@ -3496,6 +3820,7 @@ def colorbar(fignum=None, label=None, fontsize=__fontsize__):
     """
     Use is DEPRICATED. This method is replaced by add_colorbar(mappable)
     I keep this method for old codes which might have used this method
+
     Parameters
     ----------
     fignum :
@@ -3538,16 +3863,18 @@ def create_colorbar(values, cmap='viridis', figsize=None, orientation='vertical'
         figsize = (7.54 * 0.5, 1)
     elif orientation == 'vertical' and figsize is None:
         figsize = (1, 7.54 * 0.5)
-    fig = pl.figure(figsize=figsize)
-    img = pl.imshow(values, cmap=cmap)
-    ax = pl.gca()
+    fig = plt.figure(figsize=figsize)
+    img = plt.imshow(values, cmap=cmap)
+    ax = plt.gca()
     ax.set_visible(False)
 
     if orientation == 'horizontal':
-        cax = pl.axes([0.1, 0.8, 0.8, 0.1])
+        fig = plt.figure()
+        cax = fig.add_subplot([0.1, 0.8, 0.8, 0.1])
     else:
-        cax = pl.axes([0.8, 0.1, 0.1, 0.8])
-    cb = pl.colorbar(orientation=orientation, cax=cax, **kwargs)
+        fig = plt.figure()
+        cax = fig.add_subplot([0.8, 0.1, 0.1, 0.8])
+    cb = plt.colorbar(orientation=orientation, cax=cax, **kwargs)
     cb.set_label(label=label, fontsize=fontsize, labelpad=labelpad)
     if ticks is not None:
         cb.set_ticks(np.arange(-1.5, 1.5, 0.5))
@@ -3608,8 +3935,6 @@ def labelaxes_multicolor(ax, list_of_strings, list_of_colors, axis='x', anchorpa
         anchored_ybox = AnchoredOffsetbox(loc=3, child=ybox, pad=anchorpad, frameon=False, bbox_to_anchor=(-0.2, 0.4),
                                           bbox_transform=ax.transAxes, borderpad=0.)
         ax.add_artist(anchored_ybox)
-
-
 
 # Limits
 def setaxes(ax, xmin, xmax, ymin, ymax, **kwargs):
@@ -3712,6 +4037,41 @@ def force2showLogMajorTicks(ax, subs=[1.], numticks=9, axis='both'):
     if axis in ['y', 'both']:
         ax.yaxis.set_major_locator(ticker.LogLocator(subs=subs, numticks=numticks))  # set the ticks position
 
+def hide_xticks(ax):
+    """
+    Hides x-ticks and their labels
+
+    Parameters
+    ----------
+    ax
+
+    Returns
+    -------
+
+    """
+    for tick in ax.xaxis.get_major_ticks():
+        tick.tick1line.set_visible(False)
+        tick.tick2line.set_visible(False)
+        tick.label1.set_visible(False)
+        tick.label2.set_visible(False)
+
+def hide_yticks(ax):
+    """
+    Hides y-ticks and their labels
+
+    Parameters
+    ----------
+    ax
+
+    Returns
+    -------
+
+    """
+    for tick in ax.yaxis.get_major_ticks():
+        tick.tick1line.set_visible(False)
+        tick.tick2line.set_visible(False)
+        tick.label1.set_visible(False)
+        tick.label2.set_visible(False)
 
 ##Title
 def title(ax, title, **kwargs):
@@ -3758,9 +4118,6 @@ def suptitle(title, fignum=None,
     plt.suptitle(title, **kwargs)
     if tight_layout:
         fig.tight_layout(rect=rect)
-
-
-
 
 ##Text
 def set_standard_pos(ax):
@@ -4117,6 +4474,7 @@ def create_cmap_from_colors(colors_list, name='newmap'):
     from matplotlib.colors import LinearSegmentedColormap
     return LinearSegmentedColormap.from_list(name, colors_list)
 
+
 def get_colors_and_cmap_using_values(values, cmap=None, color1='greenyellow', color2='darkgreen', color3=None,
                                      vmin=None, vmax=None, n=100):
     """
@@ -4127,16 +4485,17 @@ def get_colors_and_cmap_using_values(values, cmap=None, color1='greenyellow', co
     ----------
     values: 1d array-like,
     cmap: str or  matplotlib.colors.Colormap instance
-    color1:
-    color2
-    vmin
-    vmax
-    n
+    color1: str, color name or hex code
+    color2: str, color name or hex code
+    vmin: float, default: None
+    vmax: float, default: None
+    n: int, default: 100
 
     Returns
     -------
-    colors, cmap, norm
-
+    colors: list, list of colors
+    cmap: matplotlib.colors.Colormap instance
+    norm: matplotlib.colors.Normalize instance
     """
     values = np.asarray(values)
     if vmin is None:
@@ -4154,10 +4513,39 @@ def get_colors_and_cmap_using_values(values, cmap=None, color1='greenyellow', co
     return colors, cmap, norm
 
 def get_norm(cmapRange):
+    """
+    Returns a Normalize instance for the given range
+
+    Parameters
+    ----------
+    cmapRange: 1d array-like, range of the colormap
+
+    Returns
+    -------
+    norm: matplotlib.colors.Normalize instance
+    """
     vmin, vmax = np.nanmin(cmapRange), np.nanmax(cmapRange)
     norm = plt.Normalize(vmin, vmax)
     return norm
 
+
+def get_linear_cmap(color1='greenyellow', color2='darkgreen', color3=None, n=100):
+    """
+    Returns a linear colormap instance
+    ... color1---color2---color3
+    Parameters
+    ----------
+    color1: str, color name or hex code
+    color2: str, color name or hex code
+    color3: str, color name or hex code
+    n: int, number of colors
+
+    Returns
+    -------
+    cmap: matplotlib.colors.Colormap instance
+    """
+    colors, cmap = get_color_list_gradient(color1=color1, color2=color2, color3=color3, n=n, return_cmap=True)
+    return cmap
 
 def get_color_list_gradient(color1='greenyellow', color2='darkgreen', color3=None, n=100, return_cmap=False):
     """
@@ -4181,8 +4569,8 @@ def get_color_list_gradient(color1='greenyellow', color2='darkgreen', color3=Non
             color1 = cname2hex(color1)
         if not color2[0] == '#':
             color2 = cname2hex(color2)
-        color1_rgb = hex2rgb(color1) / 255.  # np array
-        color2_rgb = hex2rgb(color2) / 255.  # np array
+        color1_rgb = hex2rgb(color1)  # np array
+        color2_rgb = hex2rgb(color2)  # np array
 
         r = np.linspace(color1_rgb[0], color2_rgb[0], n)
         g = np.linspace(color1_rgb[1], color2_rgb[1], n)
@@ -4196,9 +4584,9 @@ def get_color_list_gradient(color1='greenyellow', color2='darkgreen', color3=Non
             color2 = cname2hex(color2)
         if not color3[0] == '#':
             color3 = cname2hex(color3)
-        color1_rgb = hex2rgb(color1) / 255.  # np array
-        color2_rgb = hex2rgb(color2) / 255.  # np array
-        color3_rgb = hex2rgb(color3) / 255.  # np array
+        color1_rgb = hex2rgb(color1)   # np array
+        color2_rgb = hex2rgb(color2) # np array
+        color3_rgb = hex2rgb(color3)   # np array
 
         n_middle = int((n-1)/2)
 
@@ -4248,16 +4636,16 @@ def create_weight_shifted_cmap(cmapname, ratio=0.75, vmin=None, vmax=None, vcent
 
     Parameters
     ----------
-    cmapname: str
-    ratio
-    vmin
-    vmax
-    vcenter
-    n
+    cmapname: str, standard cmap name
+    ratio: float, [0, 1], ratio of the color distribution
+    vmin: float, default: None
+    vmax: float, default: None
+    vcenter: float, default: None
+    n: int, default: 500
 
     Returns
     -------
-
+    newcmap: matplotlib.colors.Colormap instance
     """
     if vmin is not None and vmax is not None and vcenter is not None:
         if vmax <= vmin:
@@ -4273,6 +4661,16 @@ def create_weight_shifted_cmap(cmapname, ratio=0.75, vmin=None, vmax=None, vcent
     newcolors = np.concatenate((colorNeg, colorPos), axis=0)
     newcmap = mpl.colors.ListedColormap(newcolors, name='shifted_' + cmapname)  # custom cmap
     return newcmap
+
+
+def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
+    if isinstance(cmap, str):
+        cmap = plt.get_cmap(cmap)
+
+    new_cmap = mpl.colors.LinearSegmentedColormap.from_list(
+        'trunc({n},{a:.2f},{b:.2f})'.format(n=cmap.name, a=minval, b=maxval),
+        cmap(np.linspace(minval, maxval, n)))
+    return new_cmap
 
 # Scale bar
 class AnchoredScaleBar(AnchoredOffsetbox):
@@ -4425,7 +4823,7 @@ def choose_colors(**kwargs):
     return colors
 
 
-def hex2rgb(hex, normalize=False):
+def hex2rgb(hex, normalize=True):
     """
     Converts a HEX code to RGB in a numpy array
     Parameters
@@ -4439,6 +4837,10 @@ def hex2rgb(hex, normalize=False):
     """
     h = hex.strip('#')
     rgb = np.asarray(list(int(h[i:i + 2], 16) for i in (0, 2, 4)))
+
+    if normalize:
+        rgb = rgb / 255.
+
     return rgb
 
 def cname2hex(cname):
@@ -4544,8 +4946,6 @@ def set_color_cycle_gradient(ax, color1='greenyellow', color2='navy', n=10):
     ax.set_prop_cycle(color=colors)
 
 
-
-
 # Figure settings
 def update_figure_params(params):
     """
@@ -4565,16 +4965,17 @@ def update_figure_params(params):
     -------
     None
     """
-    pylab.rcParams.update(params)
+
+    plt.rcParams.update(params)
 
 def reset_figure_params():
-    pylab.rcParams.update(params)
+    plt.rcParams.update(plt.rcParamsDefault)
 
-def default_figure_params():
-    mpl.rcParams.update(mpl.rcParamsDefault)
 
-# Use the settings above as a default
-reset_figure_params()
+# Use the deafult plotting settings
+# reset_figure_params()
+# Use my custom settings
+update_figure_params(params)
 
 ## 3D plotting
 def set_axes_equal(ax):
@@ -5821,11 +6222,11 @@ def plot_colorbar(values, cmap='viridis', colors=None, ncolors=100,
     if colors is not None:
         cmap = mpl.colors.LinearSegmentedColormap.from_list('cutom_cmap', colors, N=ncolors)
 
-    fig = pl.figure(fignum, figsize=figsize)
-    img = pl.imshow(np.array([values]), cmap=cmap)
-    pl.gca().set_visible(False)
+    fig = plt.figure(fignum, figsize=figsize)
+    img = plt.imshow(np.array([values]), cmap=cmap)
+    plt.gca().set_visible(False)
 
-    cax = pl.axes(cax_spec)
+    cax = fig.add_axes(cax_spec)
 
     if option == 'scientific':
         if fformat is not None:
@@ -5836,7 +6237,7 @@ def plot_colorbar(values, cmap='viridis', colors=None, ncolors=100,
             fmt = fformat
         else:
             fmt = None
-    cb = pl.colorbar(orientation=orientation, cax=cax, format=fmt, **kwargs)
+    cb = plt.colorbar(orientation=orientation, cax=cax, format=fmt, **kwargs)
     cb.set_label(label=label,
                  fontsize=fontsize, labelpad=labelpad)
     if ticks is not None:
