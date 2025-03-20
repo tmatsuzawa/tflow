@@ -5932,80 +5932,85 @@ def adjust_colorbar(cb,
 
 
 def plot_colorbar(values, cmap='viridis', colors=None, ncolors=100,
-                  fignum=1, figsize=None, fig=None, ax=None, cax_spec=None,
+                  fig=None, cax=None, cax_spec=None,
                   orientation='vertical', label=None, labelpad=5,
-                  fontsize=__fontsize__, option='normal', fformat=None,
+                  fontsize=12, option='normal', fformat=None,
                   ticks=None, tick_params=None, **kwargs):
     """
-    Plots a stand-alone colorbar
+    Plots a standalone colorbar at an arbitrary cax position.
 
     Parameters
     ----------
-    values: 1d array-like, these values are used to create a colormap
-    cmap: str, cmap object
-    colors: list of colors, if given, it overwrites 'cmap'.
-        ... For custom colors/colormaps, the functions below could be handy.
-        ...... colors = graph.choose_colors() # sns.choose_cubehelix_palette()
-        ...... colors = graph.get_color_list_gradient(color1='red', color2='blue') # linearly segmented colors
-    ncolors
-    fignum
-    figsize
-    orientation
-    label
-    labelpad
-    fontsize
-    option: str, if 'scientific', it uses a scientific format for the ticks
-    fformat
-    ticks
-    tick_params
-    kwargs
+    values : array-like
+        Data values to map colors.
+    cmap : str or matplotlib.colors.Colormap
+        Colormap name or object.
+    colors : list, optional
+        Custom colors, overrides cmap if provided.
+    ncolors : int, optional
+        Number of discrete colors if using custom colors.
+    fig : matplotlib.figure.Figure, optional
+        Figure to plot on. If None, a new figure is created.
+    cax : matplotlib.axes.Axes, optional
+        Axes object for the colorbar. Overrides cax_spec if provided.
+    cax_spec : list, optional
+        [left, bottom, width, height] specification for cax.
+    orientation : str
+        'vertical' or 'horizontal'.
+    label : str, optional
+        Label for colorbar.
+    labelpad : int
+        Padding for label.
+    fontsize : int
+        Font size for label and ticks.
+    option : str
+        'normal' or 'scientific' for tick formatting.
+    fformat : str or Formatter, optional
+        Custom formatter for ticks.
+    ticks : array-like, optional
+        Specific tick locations.
+    tick_params : dict, optional
+        Parameters for tick customization.
+    **kwargs : dict
+        Additional arguments to colorbar.
 
     Returns
     -------
-    fig, cax, cb: Figure instance, axes.Axes instance, Colorbar instance
+    fig, cax, cb : matplotlib.figure.Figure, matplotlib.axes.Axes, Colorbar
     """
-    global sfmt
-    if figsize is None:
-        if orientation == 'horizontal':
-            figsize = (7.54 * 0.5, 2)
-        else:
-            figsize = (2, 7.54 * 0.5)
-    if cax_spec is None:
-        if orientation == 'horizontal':
-            cax_spec = [0.1, 0.8, 0.8, 0.1]
-        else:
-            cax_spec = [0.1, 0.1, 0.1, 0.8]
-
     if colors is not None:
-        cmap = mpl.colors.LinearSegmentedColormap.from_list('cutom_cmap', colors, N=ncolors)
+        cmap = mpl.colors.LinearSegmentedColormap.from_list('custom_cmap', colors, N=ncolors)
 
-    fig = pl.figure(fignum, figsize=figsize)
-    img = pl.imshow(np.array([values]), cmap=cmap)
-    pl.gca().set_visible(False)
+    norm = mpl.colors.Normalize(vmin=np.min(values), vmax=np.max(values))
 
-    cax = pl.axes(cax_spec)
+    if fig is None:
+        fig = plt.figure(figsize=(2, 6) if orientation == 'vertical' else (6, 2))
+
+    if cax is None:
+        if cax_spec is None:
+            cax_spec = [0.25, 0.05, 0.5, 0.9] if orientation == 'vertical' else [0.05, 0.25, 0.9, 0.5]
+        cax = fig.add_axes(cax_spec)
+
+    cb = mpl.colorbar.ColorbarBase(cax, cmap=cmap, norm=norm, orientation=orientation, **kwargs)
 
     if option == 'scientific':
-        if fformat is not None:
-            sfmt.fformat = fformat
-        fmt = sfmt
-    else:
-        if fformat is not None:
-            fmt = fformat
-        else:
-            fmt = None
-    cb = pl.colorbar(orientation=orientation, cax=cax, format=fmt, **kwargs)
-    cb.set_label(label=label,
-                 fontsize=fontsize, labelpad=labelpad)
+        cb.formatter.set_powerlimits((-2, 2))
+        cb.formatter.set_scientific(True)
+    if fformat is not None:
+        cb.formatter = mpl.ticker.FormatStrFormatter(fformat)
+
+    cb.update_ticks()
+
     if ticks is not None:
         cb.set_ticks(ticks)
+
+    cb.set_label(label, fontsize=fontsize, labelpad=labelpad)
 
     if tick_params is None:
         tick_params = {'labelsize': fontsize}
     cb.ax.tick_params(**tick_params)
-    # fig.tight_layout()
-    return fig, cax, cb
 
+    return fig, cax, cb
 
 
 def resample(x, y, n=100, mode='linear'):
