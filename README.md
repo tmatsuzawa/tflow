@@ -20,7 +20,7 @@ This package is perhaps more attractive to experimentally obtained velocity fiel
 - davis2hdf5.py: LaVision Inc. offers a cutting-edge PIV/PTV software called DaVis. This converts their txt output to a single hdf5 to store a velocity field data.
 
 ## A typical workflow
-A. Exeperiments
+A. Experiments
 1. Conduct PIV/PTV experiement using DaVis
 2. Convert the velocity field data into a hdf5 (One may use davis2hdf5 for DaVis txt output)
 3. Import tflow.velocity
