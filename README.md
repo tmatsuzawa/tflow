@@ -1,7 +1,7 @@
 # tflow- a Python package to analyze 2D/3D (laminar/turbulent) velocity fields
 [Project website](https://tmatsuzawa.github.io/tflow)
 
-Research article which used tflow:
+Research articles which used tflow:
 - [Matsuzawa, et al, "Creation of an isolated turbulent blob fed by vortex rings", Nature Physics, 2023](https://www.nature.com/articles/s41567-023-02052-0); see Supplementary Information for details.
 - [Matsuzawa, Zhu, et al, "Nonlinear Diffusion and Decay of a Blob of Turbulence Spreading Into a Quiescent Fluid", PNAS in press, 2026](https://arxiv.org/abs/2505.22737)
   
