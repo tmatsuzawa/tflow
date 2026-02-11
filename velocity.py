@@ -24,9 +24,9 @@ import matplotlib.cbook
 import matplotlib.pyplot as plt
 import matplotlib.path as mpltPath
 
-warnings.filterwarnings("ignore", category=matplotlib.cbook.mplDeprecation)
-warnings.simplefilter('ignore', RuntimeWarning)
-warnings.simplefilter('ignore', FutureWarning)
+# warnings.filterwarnings("ignore", category=matplotlib.cbook.mplDeprecation)
+# warnings.simplefilter('ignore', RuntimeWarning)
+# warnings.simplefilter('ignore', FutureWarning)
 
 import tflow.vector as vec
 import tflow.graph as graph
@@ -45,6 +45,8 @@ useNotebook = True
 
 path_mod = os.path.abspath(__file__)
 moddirpath = os.path.dirname(path_mod)
+
+
 
 """
 Module designed to process a planar/volumetric velocity field
@@ -13376,65 +13378,115 @@ def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT=None,
 
 
 def write_hdf5_dict(filename, datadict, attrdict=None, overwrite=False, verbose=True):
-    """
-    Writes data in data_dict = {'varname0': var0, 'varname1': var1, ...} to a h5 file
-    - A quick function to write multiple data to a h5 file
+        """
+        Writes possibly nested datadict to an HDF5 file, creating groups for nested dicts.
+        Supports strings, lists of strings, lists of lists, and lists of arrays safely.
 
-    Parameters
-    ----------
-    filepath: str
-        ... file path where data will be stored. (Do not include extension- .h5)
-    datadict: dict, a collection of data to be stored in the h5 file
-        ... data_dict = {'varname0': var0, 'varname1': var1, ...}
-        ... data will be stored in the h5 file under the group /varname0, /varname1, ...
-            and can be accessed by
-            ... with h5py.File(filepath, mode='r'):
-                    data = hf[key][:]
-    attrdict: dict, default: None, metadata of the data
-        ... Attributes of data to be stored in the h5 file
-        ... Organize the attributes of a variable like this:
-            attrdict = {'varname0': {'attr0': value0, 'attr1': value1, ...}, ...}
-            ... attrdict = {'piv000': {'int_win': 32, 'date': 01012020, 'software': 'DaVis'},
-                            'piv001': {'int_win': 16, 'date': 01012020, 'software': 'PIVLab'},
-                            ...}
-    bool: overwrite, default: False
-    verbose: bool, default: True
-        ... print where the data is stored
+        Parameters
+        ----------
+        filepath: str
+            ... file path where data will be stored. (Do not include extension- .h5)
+        datadict: dict, a collection of data to be stored in the h5 file
+            ... data_dict = {'varname0': var0, 'varname1': var1, ...}
+            ... data will be stored in the h5 file under the group /varname0, /varname1, ...
+                and can be accessed by
+                ... with h5py.File(filepath, mode='r'):
+                        data = hf[key][:]
+        attrdict: dict, default: None, metadata of the data
+            ... Attributes of data to be stored in the h5 file
+            ... Organize the attributes of a variable like this:
+                attrdict = {'varname0': {'attr0': value0, 'attr1': value1, ...}, ...}
+                ... attrdict = {'piv000': {'int_win': 32, 'date': 01012020, 'software': 'DaVis'},
+                                'piv001': {'int_win': 16, 'date': 01012020, 'software': 'PIVLab'},
+                                ...}
+        bool: overwrite, default: False
+        verbose: bool, default: True
+            ... print where the data is stored
 
-    Returns
-    -------
-    None
-    """
-    filedir = os.path.split(filename)[0]
-    if not os.path.exists(filedir):
-        os.makedirs(filedir)
+        Returns
+        -------
+        None
+        """
 
-    ext = '.h5'
-    if not filename[-3:] == ext:
-        filename = filename + ext
+        # Helpers
+        def isListOfStrings(x):
+            return isinstance(x, (list, tuple)) and all(isinstance(i, str) for i in x)
 
-    with h5py.File(filename, mode='a') as hf:
-        for key in datadict:
+        def isListOfLists(x):
+            return isinstance(x, (list, tuple)) and all(
+                isinstance(i, (list, np.ndarray)) and not isinstance(i, str) for i in x)
 
-            if key in hf.keys() and overwrite:
-                del hf[key]
-            try:
-                hf.create_dataset(key, data=datadict[key])
-            except RuntimeError:
-                if overwrite:
-                    del hf[key]
-                    hf.create_dataset(key, data=datadict[key])
-                else:
+        def isListOfArrays(x):
+            return isinstance(x, (list, tuple)) and all(isinstance(i, np.ndarray) for i in x)
+
+        os.makedirs(os.path.dirname(filename) or '.', exist_ok=True)
+        if not filename.endswith('.h5'):
+            filename += '.h5'
+
+        def _write_group(h5obj, data_dict, attr_dict=None):
+            # Group-level attributes or nested metadata groups
+            if attr_dict:
+                # Split keys into metadata for children vs group-only
+                keys_in_data = set(data_dict.keys())
+                for a, v in attr_dict.items():
+                    if a in keys_in_data:
+                        # Per-dataset (handled later)
+                        continue
+                    # Nested dict metadata => subgroup
+                    if isinstance(v, dict):
+                        subgrp = h5obj.require_group(a)
+                        if verbose:
+                            print(f"Using subgroup '{subgrp.name}' for nested metadata")
+                        _write_group(subgrp, {}, v)
+                    else:
+                        # Primitive metadata => group attribute
+                        h5obj.attrs[a] = v
+                        if verbose:
+                            print(f"Attached group attr '{a}' to '{h5obj.name}'")
+            # Now handle child datasets/groups
+            for key, value in data_dict.items():
+                child_attr = attr_dict.get(key) if attr_dict else None
+                if isinstance(value, dict):
+                    grp = h5obj.require_group(key)
                     if verbose:
-                        print(key, ' already exists in the h5 file! It will NOT be overwriting the existing data')
+                        print(f"Using group '{grp.name}'")
+                    _write_group(grp, value, child_attr)
+                else:
+                    # Prepare data
+                    if isinstance(value, str):
+                        data = np.string_(value)
+                    elif isListOfStrings(value):
+                        maxlen = max(len(item) for item in value)
+                        data = np.array(value, dtype=f'S{maxlen}')
+                    elif isListOfLists(value) or isListOfArrays(value):
+                        arrays = [np.asarray(arr, float) for arr in value]
+                        ml = max(arr.shape[-1] for arr in arrays)
+                        padded = [np.pad(arr, (0, ml - arr.shape[-1]), constant_values=np.nan) for arr in arrays]
+                        data = np.stack(padded, axis=0)
+                    else:
+                        data = value
+                    # Overwrite
+                    if key in h5obj and overwrite:
+                        del h5obj[key]
+                    if key in h5obj:
+                        if verbose:
+                            print(f"Dataset '{h5obj[key].name}' exists; skipping")
+                    else:
+                        ds = h5obj.create_dataset(key, data=data)
+                        if verbose:
+                            print(f"Created dataset '{ds.name}' shape {ds.shape}")
+                        # Attach per-dataset attrs
+                        if child_attr:
+                            for an, av in child_attr.items():
+                                ds.attrs[an] = av
+                                if verbose:
+                                    print(f"  - Attached attr '{an}' to '{ds.name}'")
 
-        if attrdict is not None:
-            for key in attrdict:
-                for attrname, item in attrdict[key].items():
-                    hf[key][attrname] = item
+        with h5py.File(filename, 'a') as hf:
+            _write_group(hf, datadict, attrdict or {})
 
-    if verbose:
-        print('Data was successfully saved at ' + filename)
+        if verbose:
+            print(f"Data saved to {filename}")
 
 
 def read_simple_hdf5(datapath, grpname=None):
@@ -19609,3 +19661,67 @@ def computeImageDistanceUsingHuMoments(img1, img2, method=cv2.CONTOURS_MATCH_I2,
     """
     imgDist = cv2.matchShapes(img1, img2, method, 0)
     return imgDist
+
+
+def nearest_k_sort(array, k, axis=1):
+    """
+    Sort a 2D array based on the minimal Euclidean distance from a given point.
+
+    Parameters
+    ----------
+    array: 2D array to sort
+    k: 1D array representing the point to sort the array based on
+    axis: int, axis along which to calculate the distance
+
+    Returns
+    -------
+    sorted_array: 2D array, sorted array
+    """
+    # Calculate the absolute difference from k for each element in the array
+    dist = np.nansum((array - k) ** 2, axis=1)
+
+    # Sort the array based on the sum of absolute differences
+    idx = dist.argsort()
+    sorted_array = array[idx]
+
+    return sorted_array, idx
+
+
+def sort_by_connecting_nearest_pts(array, start_point):
+    """
+    Sort a 2D array by connecting the nearest points to the last point in the sorted array.
+
+    Parameters
+    ----------
+    array: 2D array to sort
+    start_point: 1D array representing the starting point
+
+    Returns
+    -------
+    sorted_array: 2D array, sorted array
+    """
+    original_indices = np.arange(len(array))
+    # Find the index of the point closest to the starting point
+    distances_to_start = np.linalg.norm(array - start_point, axis=1)
+    start_index = distances_to_start.argmin()
+    sorted_array = [array[start_index]]
+    sorted_indices = [original_indices[start_index]]
+    # Remove the starting point from the original array and the indices
+    array = np.delete(array, start_index, axis=0)
+    original_indices = np.delete(original_indices, start_index, axis=0)
+
+    # Repeat the process until all points are sorted
+    while len(array) > 0:
+        last_point = sorted_array[-1]
+        # Calculate the Euclidean distance from the last point in the sorted array
+        distances = np.linalg.norm(array - last_point, axis=1)
+        # Find the index of the nearest point
+        nearest_index = distances.argmin()
+        # Add the nearest point to the sorted array and keep track of the index
+        sorted_array.append(array[nearest_index])
+        sorted_indices.append(original_indices[nearest_index])
+        # Remove the nearest point from the original array and the indices
+        array = np.delete(array, nearest_index, axis=0)
+        original_indices = np.delete(original_indices, nearest_index, axis=0)
+
+    return np.array(sorted_array), np.array(sorted_indices)
