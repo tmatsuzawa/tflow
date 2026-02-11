@@ -1,9 +1,10 @@
 # tflow- a Python package to analyze 2D/3D (laminar/turbulent) velocity fields
-[Update on 5/12/2023]: The current version is not ready for public sharing. For anyone interested in using this package, I ask for your patience as I clean up the repo. The expected release date will be between July and August. You are welcome to check the current version of repo but the current version include some preliminary functions that needs debugging. 
-[History] This Python analysis package started as my personal repo to handle experimental fluid mechanics data. (The setup file for example was customized for my needs.) Over the years, it expanded its functionalities for my own research, then my colleagues'. 
 [Project website](https://tmatsuzawa.github.io/tflow)
-[Research article which used tflow](https://www.nature.com/articles/s41567-023-02052-0) (Supplementary Information showcases quantities derived by this module. Some of them might be of your interest. For example, it computes inviscid invariants from a 4D velocity field with a single line of code.)
 
+Research articles which used tflow:
+- [Matsuzawa, et al, "Creation of an isolated turbulent blob fed by vortex rings", Nature Physics, 2023](https://www.nature.com/articles/s41567-023-02052-0); see Supplementary Information for details.
+- [Matsuzawa, Zhu, et al, "Nonlinear Diffusion and Decay of a Blob of Turbulence Spreading Into a Quiescent Fluid", PNAS in press, 2026](https://arxiv.org/abs/2505.22737)
+  
 This package includes useful modules to analyze turbulent velocity fields.
 
 The only key assumption is the incompressibility of the medium; however, one should feel free to fork this repo to develop the package for the compressible fluids.
@@ -14,10 +15,12 @@ This package is perhaps more attractive to experimentally obtained velocity fiel
 ## Key modules
 - velocity.py: a core analysis module
 - graph.py: a wrapper of matplotlib to efficiently plot the output of velocity.py
+
+## Key scripts
 - davis2hdf5.py: LaVision Inc. offers a cutting-edge PIV/PTV software called DaVis. This converts their txt output to a single hdf5 to store a velocity field data.
 
 ## A typical workflow
-A. Exeperiments
+A. Experiments
 1. Conduct PIV/PTV experiement using DaVis
 2. Convert the velocity field data into a hdf5 (One may use davis2hdf5 for DaVis txt output)
 3. Import tflow.velocity

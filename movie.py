@@ -15,8 +15,8 @@ Module with functions for making movies
 '''
 # Abs path to ffmpeg
 path_mod = os.path.abspath(__file__)
-moddirpath = os.path.dirname(path_mod)
-ffmpeg_path = os.path.join(moddirpath, 'ffmpeg')
+mod_dir_path = os.path.dirname(path_mod)
+ffmpeg_path = os.path.join(mod_dir_path, 'ffmpeg')
 
 def make_movie(imgname=None, imgdir=None, movname=None, indexsz='05', framerate=10, rm_images=False,
                save_into_subdir=False, start_number=0, framestep=1, ext='png', option='normal', overwrite=False,
@@ -92,7 +92,7 @@ def make_movie(imgname=None, imgdir=None, movname=None, indexsz='05', framerate=
     if invert:
         command.append('-vf')
         command.append('negate')
-    # check if image has dimensions divisibly by 2 (if not ffmpeg raises an error... why ffmpeg...)
+    # check if image has dimensions divisible by 2 (if not ffmpeg raises an error... why ffmpeg...)
     # ffmpeg raises an error if image has dimension indivisible by 2. Always make sure that this is not the case.
     # image_paths = glob.glob(imgname + '/*.' + ext)
     # img = mpimg.imread(image_paths[0])

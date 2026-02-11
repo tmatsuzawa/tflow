@@ -21,6 +21,7 @@ import mpl_toolkits
 import seaborn as sns
 from cycler import cycler
 from skimage import measure
+import pylab as pl
 
 import itertools
 from scipy.optimize import curve_fit
@@ -60,7 +61,36 @@ mycolors3 = np.asarray([
                      [0.70567316, 0.01555616, 0.15023281, 1.        ], # Right-handed: maroon, #C80426
                     ])
 __my_ccycle__ = itertools.cycle(mycolors5)
-cmap = 'magma'
+# Custom colormaps (sequential)
+cmapnames = [
+    '1_Velvet_Dusk',        # Originally 'black_purple_pink'
+    '2_Twilight_Ember',     # Originally 'black_purple_orange'
+    '3_Midnight_Sunburst',  # Originally 'black_purple_yellow'
+    '4_Eclipse_Grove',      # Originally 'black_orange_green'
+    '5_Twilight_Meadow',    # Originally 'black_yellow_green'
+    '6_Aurora_Skyline',     # Originally 'black_green_sky'
+    '7_Ocean_Depths',       # Originally 'black_green_blue'
+    '8_Forest_Whisper',     # Originally 'black_green_wisteria'
+    '9_Midnight_Bloom',     # Originally 'black_blue_wisteria'
+    '10_Starry_Wisteria'    # Originally 'black_navy_wisteria'
+]
+cmaps = my_sequential_cmaps = []
+for i, start in enumerate(np.arange(0, 3, 0.3)):
+    pl_param = {
+        "n_colors": 10,
+        "start": (start+2.4)%3.,
+        "rot": 0.6,
+        "gamma": 1.0,
+        "hue": 1,
+        "light": 0.8,
+        "dark": 0.0,
+        "reverse": True,
+        "as_cmap": True
+    }
+    my_cmap = sns.cubehelix_palette(**pl_param)
+    my_cmap.name = cmapnames[i]
+    my_sequential_cmaps.append(my_cmap)
+cmap = 'magma' # Default color map
 
 # See all available arguments in matplotlibrc
 __fontsize__ = 12
@@ -89,30 +119,44 @@ default_custom_cycler = {'color': ['r', 'b', 'g', 'y'],
 
 
 ## Save a figure
-def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=150, overwrite=True, tight_layout=False,
+def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, overwrite=True, tight_layout=False,
          savedata=True, transparent=True, bkgcolor='w', **kwargs):
     """
-    Save a figure
+    Save a figure from pyplot
 
     Parameters
     ----------
-    path: str, path to save a figure
-    ext: str, extension of the figure, e.g. 'pdf', 'png', 'svg'
-    close: bool, close the figure (default: False)
-    verbose: bool, print out the path where the figure is saved
-    fignum: int, figure number of the figure to save
-    dpi: int, resolution of the figure, default: 150
-    overwrite: bool, overwrite if a figure already exists
-    tight_layout: bool, use tight_layout
-    savedata: bool, save a figure instance, default: True. To load the figure instance,
-              try pickle.load(open(path[:-len(ext)-1] + '.pkl', 'rb'))
-    transparent: bool, save a figure with a transparent background, default: True
-    bkgcolor: str, background color of the figure, default: 'w', `transparent` must be False to activate this option.
-    kwargs: keyword arguments to pass to plt.savefig()
+    path: string
+        The path (and filename, without the extension) to save the
+        figure to.
+    ext: string (default='png')
+        The file extension. This must be supported by the active
+        matplotlib backend (see matplotlib.backends module).  Most
+        backends support 'png', 'pdf', 'ps', 'eps', and 'svg'.
+    ext : string (default='png')
+        The file extension. This must be supported by the active
+        matplotlib backend (see matplotlib.backends module).  Most
+        backends support 'png', 'pdf', 'ps', 'eps', and 'svg'.
+    close : boolean (default=True)
+        Whether to close the figure after saving.  If you want to save
+        the figure multiple times (e.g., to multiple formats), you
+        should NOT close it in between saves or you will have to
+        re-plot it.
+    verbose : boolean (default=True)
+        Whether to print information about when and where the image
+        has been saved.
+    fignum
+    dpi
+    overwrite
+    tight_layout
+    savedata
+    transparent
+    bkgcolor
+    kwargs
 
     Returns
     -------
-    None
+
     """
     if fignum == None:
         fig = plt.gcf()
@@ -127,23 +171,23 @@ def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=150, overw
     # Separate a directory and a filename from the given path
     directory = os.path.split(path)[0]
     filename = "%s.%s" % (os.path.split(path)[1], ext)
-
     if directory == '':
         directory = '.'
-
-    # Make sure the directory exists
-    directory = Path(directory)
+    # If the directory does not exist, create it
     if not os.path.exists(directory):
         os.makedirs(directory)
 
-    # The final path to save
+    # path where the figure is saved
     savepath = os.path.join(directory, filename)
-    # If the file already exists, generate a new filename
+    # if a figure already exists AND you'd like to overwrite, name a figure differently
     ver_no = 0
     while os.path.exists(savepath) and not overwrite:
         # this needs to be fixed. right now, it keeps saving to _000.png
-        savepath = directory / (os.path.split(path)[1] + '_%03d.' % ver_no + ext)
+        savepath = directory + '/' + os.path.split(path)[1]+ '_%03d.' % ver_no + ext
         ver_no += 1
+
+    if verbose:
+        print(("Saving figure to '%s'..." % savepath))
 
     # Save the figure
     if transparent:
@@ -151,7 +195,7 @@ def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=150, overw
     else:
         plt.savefig(savepath, dpi=dpi, facecolor=bkgcolor, **kwargs)
 
-    # Save a fig instance... This may fail for python2
+    # Save fig instance... This may fail for python2
     if savedata:
         try:
             pickle.dump(fig, open(savepath[:-len(ext)-1] + '.pkl', 'wb'))
@@ -243,6 +287,79 @@ def add_subplot_custom(x0, y0 ,x1, y1, fignum=None):
     fig = plt.figure(num=fignum)
     ax = fig.add_axes([x0, y0, x1-x0, y1-y0])
     return ax
+
+
+def set_size(fig, ax_width_inches, ax_height_inches):
+    """
+    Set the size of the figure based on the FIRST axis box size.
+
+    Parameters
+    ----------
+    width : float
+        Width in inches.
+    height : float
+        Height in inches.
+    fig : matplotlib.figure.Figure
+        The figure object to adjust the size for.
+
+    """
+    # Draw the figure to get the correct bounding box
+    fig.canvas.draw()
+
+    # Get the bounding box of the axis box (the area enclosed by the spines)
+    bbox = fig.axes[0].get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    axis_width, axis_height = bbox.width, bbox.height
+
+    # Calculate the scaling factor
+    scale_width = ax_width_inches / axis_width
+    scale_height = ax_height_inches / axis_height
+
+    # Calculate the new figure size
+    fig_width = fig.get_figwidth() * scale_width
+    fig_height = fig.get_figheight() * scale_height
+
+    # Set the new figure size
+    fig.set_size_inches(fig_width, fig_height)
+    return fig
+
+def match_size(ax1, ax2):
+    """
+    Match the figure size based on two Axes instances. The Axes objects must belong to separate figures.
+    Parameters
+    ----------
+    ax1: Matplotlib.axes.Axes
+    ax2: Matplotlib.axes.Axes
+    ... This parent figure's size gets adjusted.
+
+    Returns
+    -------
+    fig1, fig2: figure objects, the canvas size of fig2 gets rescaled to match the given ax sizes
+    """
+
+    fig1 = ax1.get_figure()
+    fig2 = ax2.get_figure()
+
+    # Draw the figure to get the correct bounding box
+    fig1.canvas.draw()
+    fig2.canvas.draw()
+
+    # Get the bounding box of the axis box (the area enclosed by the spines)
+    bbox1 = ax1.get_window_extent().transformed(fig1.dpi_scale_trans.inverted())
+    bbox2 = ax2.get_window_extent().transformed(fig2.dpi_scale_trans.inverted())
+    ax1_w, ax1_h = bbox1.width, bbox1.height
+    ax2_w, ax2_h = bbox2.width, bbox2.height
+
+    # Calculate the scaling factor
+    scale_width = ax1_w / ax2_w
+    scale_height = ax1_h / ax2_h
+
+    # Calculate the new figure size
+    fig2_width = fig2.get_figwidth() * scale_width
+    fig2_height = fig2.get_figheight() * scale_height
+
+    # Set the new figure size
+    fig2.set_size_inches(fig2_width, fig2_height)
+    return fig1, fig2
 
 def plotfunc(func, x, param, fignum=1, subplot=111, ax = None, label=None, color=None, linestyle='-', legend=False, figsize=None, **kwargs):
     """
@@ -611,6 +728,7 @@ def plot_with_arrows(x, y, narrows=1,
     add_arrow_to_line(ax, line,
                           **arrow_kwargs)
     return fig, ax
+
 
 
 def plot3d(x, y, z, fignum=1, figsize=None, label='', color=None, subplot=None, fig=None,
@@ -1014,7 +1132,7 @@ def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None,
                    # label='Re$_{\lambda} \\approx 600 $ \n Saddoughi and Veeravalli, 1994',
                    label='Re$_{\lambda} \\approx 600 $ \n SV, 1994',
                    color='k', alpha=0.6, subplot=None, cc=1, legend=False,
-                   plotEk=False,
+                   mode='E11',
                    **kwargs):
     """
     plot universal 1d energy spectrum (Saddoughi, 1992)
@@ -1035,19 +1153,32 @@ def plot_saddoughi(fignum=1, fig=None, ax=None, figsize=None,
     x = np.asarray([1.27151, 0.554731, 0.21884, 0.139643, 0.0648844, 0.0198547, 0.00558913, 0.00128828, 0.000676395, 0.000254346])
     y = np.asarray([0.00095661, 0.0581971, 2.84666, 11.283, 59.4552, 381.78, 2695.48, 30341.9, 122983, 728530])
     y *= cc
+    x, y = resample(x, y, n=100, mode='loglog')
 
-    if plotEk:
+    if mode in ['E22', 'Ek']:
         x, y_ = resample(x, y, n=100, mode='loglog')
-        y = 0.5 * x ** 3 * np.gradient(1 / x * np.gradient(y_, x), x)
+        k1, e11 = resample(x, y, n=100, mode='loglog')
+        e22 = (e11 - k1 * np.gradient(e11, k1)) * 0.5 # Pope, Eq. 6.218
+        e22 = smoothen(e22, 5, log=True)
+        y = e22
+        ylabel = '$E_{22}(\kappa_1) / (\epsilon\\nu^5)^{1/4}$'
+        if mode == 'Ek':
+            k0 = 5e-2
+            e22[k1 < k0] = e11[k1 < k0] * 4 / 3
+            ek = - k1 * np.gradient(0.5 * e11 + e22, k1)  # Pope, Eq. 6.217
+            ek = smoothen(ek, log=True, )
+            ek[k1 < k0] = e11[k1 < k0] * 55 / 18  # make up for the artifacts by smoothing
+            y = ek
+            ylabel = '$E (\kappa_1) / (\epsilon\\nu^5)^{1/4}$'
+    else:
+        ylabel = '$E_{11} (\kappa_1) / (\epsilon\\nu^5)^{1/4}$'
 
     ax.plot(x, y, color=color, label=label, alpha=alpha,**kwargs)
     if legend:
         ax.legend()
     tologlog(ax)
-    if plotEk:
-        labelaxes(ax, '$\kappa \eta$', '$E / (\epsilon\\nu^5)^{1/4}$')
-    else:
-        labelaxes(ax, '$\kappa_1 \eta$', '$E_{11} / (\epsilon\\nu^5)^{1/4}$')
+    if mode == 'Ek':
+        labelaxes(ax, '$\kappa \eta$', ylabel)
     return fig, ax
 
 def plot_saddoughi_struc_func(fignum=1, fig=None, ax=None, figsize=None,
@@ -1086,7 +1217,7 @@ def plot_saddoughi_struc_func(fignum=1, fig=None, ax=None, figsize=None,
     elif ax is None:
         ax = plt.gca()
 
-    datapath = tflow_dir + '/reference_data/sv_struc_func.h5'
+    datapath = tflow_dir + '/velocity_ref/sv_struc_func.h5'
     # datapath = tflow_dir + '/velocity_ref/sv_struc_func.txt'
     # data = np.loadtxt(datapath, skiprows=1, delimiter=',')
     # r_scaled, dll = data[:, 0], data[:, 1]
@@ -1893,7 +2024,7 @@ def grouped_bar(categories, data_means, data_errors=None, width=None,
 def plot_fit_curve(xdata, ydata, func=None, fignum=1, subplot=111, ax=None, figsize=None, linestyle='--',
                    range2fit=(-np.inf, np.inf), textcolor=None,
                    xmin=None, xmax=None, add_equation=True, eq_loc='bl', color=None, label='fit',
-                   show_r2=False, return_r2=False, p0=None, bounds=(-np.inf, np.inf), maskon=True, thd=1,**kwargs):
+                   show_r2=False, return_r2=False, p0=None, bounds=(-np.inf, np.inf), maskon=True, thd=1, **kwargs):
     """
     Plots a fit curve given xdata and ydata
     Parameters
@@ -2256,6 +2387,15 @@ def color_plot(x, y, z,
     if log10:
         z = np.log10(z)
 
+    # Parse and calculate percentiles for vmin and vmax if they are given in percentile format
+    if isinstance(vmin, str) and vmin.endswith('%'):
+        percentile_value = float(vmin[:-1])
+        vmin = np.nanpercentile(z, percentile_value)
+
+    if isinstance(vmax, str) and vmax.endswith('%'):
+        percentile_value = float(vmax[:-1])
+        vmax = np.nanpercentile(z, percentile_value)
+
     # For Diverging colormap, ALWAYS make the color thresholds symmetric
     symCmap1 = ['PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdGy', 'RdBu', 'RdYlBu', 'RdYlGn', 'Spectral', 'coolwarm', 'bwr', 'seismic']
     symCmap2 = [c + '_r' for c in symCmap1]
@@ -2567,7 +2707,7 @@ def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
 def quiver3d(udata, normalize=False, mag=1, inc=1, xinc=None, yinc=None, zinc=None,
              umin=0, umax=None, # data range to show quiver
              vmin=0, vmax=None, # colorbar range
-             add_bounding_box=True, notebook=True,
+             add_bounding_box=True, notebook=useNotebook,
              show=True,
              save=False, savepath='./vectorfield.png', verbose=True, **kwargs):
     """
@@ -3559,26 +3699,47 @@ def get_sfmt(fformat="%03.1f"):
     reset_sfmt(fformat=fformat)
     return sfmt
 
-def get_discrete_cmap_norm(colors, vmin=0, vmax=None,  **kwargs):
+def add_colorbar_old(mappable, fig=None, ax=None, fignum=None, label=None, fontsize=__fontsize__,
+                 vmin=None, vmax=None, cmap='jet', option='normal', **kwargs):
     """
-    Return a colormap and a norm for a discrete colorbar
-
+    Adds a color bar (Depricated. replaced by add_colorbar)
     Parameters
     ----------
-    colors
-    vmin
-    vmax
+    mappable : image like QuadMesh object to which the color bar applies (NOT a plt.figure instance)
+    ax : Parent axes from which space for a new colorbar axes will be stolen
+    label :
 
     Returns
     -------
-    cmap, norm
     """
-    if vmax is None:
-        vmax = len(colors)
+    # Get a Figure instance
+    if fig is None:
+        fig = plt.gcf()
+        if fignum is not None:
+            fig = plt.figure(num=fignum)
+    if ax is None:
+        ax = plt.gca()
 
-    cmap = mpl.colors.ListedColormap(colors)
-    norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
-    return cmap, norm
+    # if vmin is not None and vmax is not None:
+    #     norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+    # elif vmin is None and vmax is not None:
+    #     print 'vmin was not provided!'
+    # elif vmin is not None and vmax is None:
+    #     print 'vmax was not provided!'
+
+    # fig.colorbar makes a another ax object which colives with ax in the fig instance.
+    # Therefore, cb has all attributes that ax object has!
+
+    if option == 'scientific':
+        cb = fig.colorbar(mappable, ax=ax, cmap=cmap, format=sfmt, **kwargs)
+    else:
+        cb = fig.colorbar(mappable, ax=ax, cmap=cmap, **kwargs)
+
+    if not label == None:
+        cb.set_label(label, fontsize=fontsize)
+
+    return cb
+
 
 def add_colorbar(mappable, fig=None, ax=None, cax=None, fignum=None, location='right', label=None, fontsize=None, option='normal',
                  tight_layout=True, ticklabelsize=None, aspect='equal', ntick=5, tickinc=None,
@@ -3750,7 +3911,37 @@ def add_discrete_colorbar(ax, colors, vmin=0, vmax=None, label=None, fontsize=No
 
     return cb
 
+def get_discrete_cmap_norm(colors, vmin=0, vmax=None, label=None, fontsize=None, option='normal',
+                              tight_layout=True, ticklabelsize=None, ticklabel=None,
+                              aspect=None, useMiddle4Ticks=False, **kwargs):
+    """
+    Return a colormap and a norm for a discrete colorbar
 
+    Parameters
+    ----------
+    colors
+    vmin
+    vmax
+    label
+    fontsize
+    option
+    tight_layout
+    ticklabelsize
+    ticklabel
+    aspect
+    useMiddle4Ticks
+    kwargs
+
+    Returns
+    -------
+    cmap, norm
+    """
+    if vmax is None:
+        vmax = len(colors)
+
+    cmap = mpl.colors.ListedColormap(colors)
+    norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+    return cmap, norm
 
 def add_colorbar_alone(ax, values, cax=None, cmap=cmap, label=None, fontsize=None, option='normal', fformat=None,
                  tight_layout=True, ticklabelsize=None, ticklabel=None,
@@ -6358,80 +6549,85 @@ def adjust_colorbar(cb,
 
 
 def plot_colorbar(values, cmap='viridis', colors=None, ncolors=100,
-                  fignum=1, figsize=None, fig=None, ax=None, cax_spec=None,
+                  fig=None, cax=None, cax_spec=None,
                   orientation='vertical', label=None, labelpad=5,
-                  fontsize=__fontsize__, option='normal', fformat=None,
+                  fontsize=12, option='normal', fformat=None,
                   ticks=None, tick_params=None, **kwargs):
     """
-    Plots a stand-alone colorbar
+    Plots a standalone colorbar at an arbitrary cax position.
 
     Parameters
     ----------
-    values: 1d array-like, these values are used to create a colormap
-    cmap: str, cmap object
-    colors: list of colors, if given, it overwrites 'cmap'.
-        ... For custom colors/colormaps, the functions below could be handy.
-        ...... colors = graph.choose_colors() # sns.choose_cubehelix_palette()
-        ...... colors = graph.get_color_list_gradient(color1='red', color2='blue') # linearly segmented colors
-    ncolors
-    fignum
-    figsize
-    orientation
-    label
-    labelpad
-    fontsize
-    option: str, if 'scientific', it uses a scientific format for the ticks
-    fformat
-    ticks
-    tick_params
-    kwargs
+    values : array-like
+        Data values to map colors.
+    cmap : str or matplotlib.colors.Colormap
+        Colormap name or object.
+    colors : list, optional
+        Custom colors, overrides cmap if provided.
+    ncolors : int, optional
+        Number of discrete colors if using custom colors.
+    fig : matplotlib.figure.Figure, optional
+        Figure to plot on. If None, a new figure is created.
+    cax : matplotlib.axes.Axes, optional
+        Axes object for the colorbar. Overrides cax_spec if provided.
+    cax_spec : list, optional
+        [left, bottom, width, height] specification for cax.
+    orientation : str
+        'vertical' or 'horizontal'.
+    label : str, optional
+        Label for colorbar.
+    labelpad : int
+        Padding for label.
+    fontsize : int
+        Font size for label and ticks.
+    option : str
+        'normal' or 'scientific' for tick formatting.
+    fformat : str or Formatter, optional
+        Custom formatter for ticks.
+    ticks : array-like, optional
+        Specific tick locations.
+    tick_params : dict, optional
+        Parameters for tick customization.
+    **kwargs : dict
+        Additional arguments to colorbar.
 
     Returns
     -------
-    fig, cax, cb: Figure instance, axes.Axes instance, Colorbar instance
+    fig, cax, cb : matplotlib.figure.Figure, matplotlib.axes.Axes, Colorbar
     """
-    global sfmt
-    if figsize is None:
-        if orientation == 'horizontal':
-            figsize = (7.54 * 0.5, 2)
-        else:
-            figsize = (2, 7.54 * 0.5)
-    if cax_spec is None:
-        if orientation == 'horizontal':
-            cax_spec = [0.1, 0.8, 0.8, 0.1]
-        else:
-            cax_spec = [0.1, 0.1, 0.1, 0.8]
-
     if colors is not None:
-        cmap = mpl.colors.LinearSegmentedColormap.from_list('cutom_cmap', colors, N=ncolors)
+        cmap = mpl.colors.LinearSegmentedColormap.from_list('custom_cmap', colors, N=ncolors)
 
-    fig = plt.figure(fignum, figsize=figsize)
-    img = plt.imshow(np.array([values]), cmap=cmap)
-    plt.gca().set_visible(False)
+    norm = mpl.colors.Normalize(vmin=np.min(values), vmax=np.max(values))
 
-    cax = fig.add_axes(cax_spec)
+    if fig is None:
+        fig = plt.figure(figsize=(2, 6) if orientation == 'vertical' else (6, 2))
+
+    if cax is None:
+        if cax_spec is None:
+            cax_spec = [0.25, 0.05, 0.5, 0.9] if orientation == 'vertical' else [0.05, 0.25, 0.9, 0.5]
+        cax = fig.add_axes(cax_spec)
+
+    cb = mpl.colorbar.ColorbarBase(cax, cmap=cmap, norm=norm, orientation=orientation, **kwargs)
 
     if option == 'scientific':
-        if fformat is not None:
-            sfmt.fformat = fformat
-        fmt = sfmt
-    else:
-        if fformat is not None:
-            fmt = fformat
-        else:
-            fmt = None
-    cb = plt.colorbar(orientation=orientation, cax=cax, format=fmt, **kwargs)
-    cb.set_label(label=label,
-                 fontsize=fontsize, labelpad=labelpad)
+        cb.formatter.set_powerlimits((-2, 2))
+        cb.formatter.set_scientific(True)
+    if fformat is not None:
+        cb.formatter = mpl.ticker.FormatStrFormatter(fformat)
+
+    cb.update_ticks()
+
     if ticks is not None:
         cb.set_ticks(ticks)
+
+    cb.set_label(label, fontsize=fontsize, labelpad=labelpad)
 
     if tick_params is None:
         tick_params = {'labelsize': fontsize}
     cb.ax.tick_params(**tick_params)
-    # fig.tight_layout()
-    return fig, cax, cb
 
+    return fig, cax, cb
 
 
 def resample(x, y, n=100, mode='linear'):
@@ -6529,3 +6725,25 @@ def set_fontsize_scientific_text(ax, fontsize):
 
     """
     ax.yaxis.get_offset_text().set_fontsize(fontsize)
+
+def show_default_custom_cmaps():
+    """
+    Shows the default custom sequential colormaps
+
+    Returns
+    -------
+    my_cmaps_sequential: list of color map instances
+    """
+    gradient = np.linspace(0, 1, 256)
+    gradient = np.vstack((gradient, gradient))
+    # Visualizing each colormap
+    num_colormaps = len(my_sequential_cmaps)
+    fig, axes = plt.subplots(nrows=num_colormaps, figsize=(8, num_colormaps * 2), dpi=100)
+    for i, cmap in enumerate(my_sequential_cmaps):
+        axes[i].imshow(gradient, aspect='auto', cmap=cmap)
+        axes[i].set_title(cmap.name)
+        axes[i].axis('off')
+
+    plt.tight_layout()
+    plt.show()
+    return my_sequential_cmaps
