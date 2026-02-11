@@ -1419,9 +1419,12 @@ def cdf(data, nbins=100, return_data=False, vmax=None, vmin=None,
 
 def errorbar(x, y, xerr=None, yerr=None, fignum=1, marker='o', fillstyle='full', linestyle='None', label=None, mfc='white',
              subplot=None, legend=False, legend_remove_bars=False, figsize=None, maskon=False, thd=1,
-             linewidth=1, capsize=3,
+             capsize=3,
              xmax=None, xmin=None, ax=None, **kwargs):
     """ errorbar plot
+
+    MARKER EDGE COLOR: "markeredgecolor='none'
+    MARKER EDGE WIDTH: "markeredgewidth=0.25" or "mew=0.25"
 
     Parameters
     ----------
@@ -1657,7 +1660,7 @@ def bin_and_errorbar(x_, y_, xerr=None,
                     label=label, capsize=capsize, linewidth=linewidth, **kwargs)
     else:
         ax.errorbar(x[mask], y[mask], xerr=xerr[mask], yerr=yerr[mask], marker=marker, fillstyle=fillstyle,
-                    linestyle=linestyle, label=label, capsize=capsize, linewidth=linewidth,   **kwargs)
+                    linestyle=linestyle, label=label, capsize=capsize, linewidth=linewidth, **kwargs)
     if legend:
         ax.legend()
 
@@ -2997,7 +3000,7 @@ def show():
     plt.show()
 
 ## Lines
-def axhline(ax, y, x0=None, x1=None, color='black', linestyle='--', linewidth=1, zorder=0, **kwargs):
+def axhline(ax, y, x0=None, x1=None, color='black', linestyle='-', linewidth=1, zorder=0, **kwargs):
     """
     Draw a horizontal line at y=y from xmin to xmax
     Parameters
@@ -3026,7 +3029,7 @@ def axhline(ax, y, x0=None, x1=None, color='black', linestyle='--', linewidth=1,
     handle = ax.axhline(y, xmin_frac, xmax_frac, color=color, linestyle=linestyle, linewidth=linewidth, zorder=zorder, **kwargs)
     return handle
 
-def axvline(ax, x, y0=None, y1=None,  color='black', linestyle='--', linewidth=1, zorder=0, **kwargs):
+def axvline(ax, x, y0=None, y1=None,  color='black', linestyle='-', linewidth=1, zorder=0, **kwargs):
     """
     Draw a vertical line at x=x from ymin to ymax
     Parameters
@@ -3355,7 +3358,8 @@ def arrow(x, y, dx, dy,
         n = len(x)
         for i in range(n):
             ax.arrow(x[i], y[i], dx[i], dy[i], **kwargs)
-    return fig, axa
+    return fig, ax
+
 def create_random_curved_line(start, end, rad, n=100, narrows=1,push=0.8):
     """
     Create a curved line with arrows
@@ -3403,7 +3407,7 @@ def plot_random_curved_line(start, end, r_curv, n=100, narrows=1, arrow_width=No
     if color is not None and arrow_color is None:
         arrow_color = color # default arrow color is the same as the line color
 
-    x, y, arrows = curvline(start, end, r_curv, n, narrows, push=push)
+    x, y, arrows = create_random_curved_line(start, end, r_curv, n, narrows, push=push)
     ax.plot(x,y, color=color, zorder=zorder, **kwargs)
 
     x0, x1 = ax.get_xlim()
@@ -3413,7 +3417,6 @@ def plot_random_curved_line(start, end, r_curv, n=100, narrows=1, arrow_width=No
         plt.arrow(pos[0],pos[1],direction[0],direction[1], shape='full', lw=0,
                   length_includes_head=False, head_width=arrow_width, color=arrow_color, zorder=zorder)
     return fig, ax, x, y
-
 
 ## Legend
 def legend_fig(fig, **kwargs):
@@ -3484,6 +3487,31 @@ def legend(ax, remove=False, **kwargs):
     if remove:
         leg.get_frame().set_facecolor('none')
 
+
+def reorder_legend(ax, order, **kwargs):
+    """
+    Reorder the legend labels in a Matplotlib axis.
+
+    Parameters:
+    ax (matplotlib.axes.Axes): The axis containing the legend.
+    order (list of int): A list specifying the new order of the legend items.
+
+    Returns:
+    None
+    """
+    handles, labels = ax.get_legend_handles_labels()
+
+    # Ensure the provided order is valid
+    if sorted(order) != list(range(len(labels))):
+        raise ValueError("The 'order' list must be a permutation of the legend indices.")
+
+    new_handles = [handles[i] for i in order]
+    new_labels = [labels[i] for i in order]
+
+    # Preserve existing legend properties
+    legend_kwargs = {k: v for k, v in legend.properties().items() if k != "handles" and k != "labels"}
+
+    ax.legend(new_handles, new_labels, **legend_kwargs)
 
 # Colorbar
 class FormatScalarFormatter(mpl.ticker.ScalarFormatter):
@@ -6155,6 +6183,161 @@ def simple_legend(ax, facecolor='white', **kwargs):
     lg = ax.legend(handles, labels, **kwargs)
     frame = lg.get_frame()
     frame.set_color(facecolor)
+
+
+# Legend wranglers
+def removeErrorbarsInLegend(ax, facecolor='white', **kwargs):
+    "Removes the errorbars from the legend"
+    from matplotlib import container
+    handles, labels = ax.get_legend_handles_labels()
+    handles = [h[0] if isinstance(h, container.ErrorbarContainer) else h for h in handles]
+    lg = ax.legend(handles, labels, **kwargs)
+    frame = lg.get_frame()
+    frame.set_color(facecolor)
+
+
+def reorder_legend(ax, order, **kwargs):
+    """
+    Reorder the legend labels in a Matplotlib axis while preserving existing legend properties,
+    and allowing additional keyword arguments to override them.
+
+    Parameters:
+    ax (matplotlib.axes.Axes): The axis containing the legend.
+    order (list of int): A list specifying the new order of the legend items.
+    **kwargs: Additional arguments to customize the legend.
+
+    Returns:
+    None
+    """
+    legend = ax.get_legend()
+    if legend is None:
+        raise ValueError("No legend found. Make sure to call ax.legend() before using reorder_legend.")
+
+    handles, labels = ax.get_legend_handles_labels()
+
+    # Ensure the provided order is valid
+    if sorted(order) != list(range(len(labels))):
+        raise ValueError("The 'order' list must be a permutation of the legend indices.")
+
+    new_handles = [handles[i] for i in order]
+    new_labels = [labels[i] for i in order]
+    #
+    # # Preserve existing legend properties, filtering out invalid ones
+    # valid_legend_keys = {
+    #     "loc", "fontsize", "frame_on", "facecolor", "edgecolor", "title", "title_fontsize",
+    #     "labelspacing", "handlelength", "handletextpad", "borderaxespad", "ncol", "columnspacing",
+    #     "shadow", "framealpha", "mode", "bbox_to_anchor", "borderpad", "markerscale", "fancybox",
+    # }
+    #
+    # legend_kwargs = {k: v for k, v in legend.properties().items() if k in valid_legend_keys}
+    # legend_kwargs.update(kwargs)  # Override with user-specified kwargs
+
+    ax.legend(new_handles, new_labels, **kwargs)
+
+
+
+def add_custom_legend(ax,
+                  recipe = {'type':  ['line', 'line', 'scatter', 'scatter', 'patch'],
+                            'label': ['Line', 'Dashed line', 'Point','Scatter', 'Patch'],
+                            'color': ['C0', 'C1','gray', 'C3', 'C4', ],
+                            'marker': [None, None, 'X', 'o', None],
+                            'linestyle': ['-', '-.', '', None, None],
+                            'linewidth': [2, 2, 1, None, None],
+                            'markerfacecolor': [None, None, 'r', None, 'orange'],
+                            'markeredgecolor': [None, None, 'k', None, 'k'],
+                            'markersize': [None, None, 5, 5, None],
+                            'facecolor': [None, None, None, None, 'orange'],
+                            'edgecolor': [None, None, None, None, 'r']
+                            },
+                  **kwargs):
+    """
+    Make a custom legend
+
+    Parameters
+    ----------
+    ax: axes.Axes instance
+    recipe: dict, See the default recipe above.
+        ... 'type': ['line', 'scatter', 'patch']
+        ... 'label': list of strings
+        ... 'color': list of colors
+        ... 'marker': list of markers
+        ... 'linestyle': list of linestyles
+        ... 'linewidth': list of linewidths
+        ... 'markerfacecolor': list of markerfacecolors
+        ... 'markeredgecolor': list of markeredgecolors
+        ... 'markersize': list of markersizes
+        ... 'facecolor': list of facecolors
+        ... 'edgecolor': list of edgecolors
+    kwargs: keyword arguments for ax.legend()
+        ... e.g. loc, fontsize, bbox_to_anchor, etc.
+    Returns
+    -------
+    lg: legend instance
+    """
+    def initialize_recipe():
+        # Create empty recipes with all the keys
+        recipe = {}
+        keys = ['type', 'label', 'color', 'marker', 'linestyle', 'linewidth', 'markerfacecolor',
+                'markeredgecolor', 'markersize', 'facecolor', 'edgecolor']
+        for key in keys:
+            recipe[key] = []
+        return recipe
+
+    def fix_recipe(recipe):
+        """
+        Fix the recipe.
+        If parameters were not given, they will be filled with the default values.
+
+        Parameters
+        ----------
+        recipe: dict
+
+        Returns
+        -------
+        recipe: dict
+        """
+        default_keys = ['type', 'label', 'color', 'marker', 'linestyle', 'linewidth', 'markerfacecolor',
+                        'markeredgecolor', 'markersize', 'facecolor', 'edgecolor']
+        default_values_line = {'label': 'Line', 'color': 'C0', 'linestyle': '-', 'linewidth': 2,
+                               'facecolor': None, 'edgecolor': None, 'marker': None, 'markerfacecolor': None, 'markeredgecolor': None, 'markersize': None,}
+        default_values_scatter = {'label': 'Scatter', 'color': 'C1', 'linestyle': '', 'linewidth': 0,
+                               'marker': 'o', 'markerfacecolor': 'r', 'markeredgecolor': 'k', 'markersize': 15,}
+        default_values_patch = {'label': 'Patch', 'color': 'gray', 'linestyle': '', 'linewidth': 0,
+                                 'marker': None, 'markerfacecolor': None, 'markeredgecolor': None, 'markersize': None,
+                                 'facecolor': 'orange', 'edgecolor': 'r'}
+        recipe_fixed = initialize_recipe()
+        types = recipe['type']
+
+        for i, type in enumerate(types):
+            for key in default_keys:
+                if key in recipe.keys():
+                    recipe_fixed[key].append(recipe[key][i])
+                else:
+                    if type == 'line':
+                        recipe_fixed[key].append(default_values_line[key])
+                    elif type == 'scatter':
+                        recipe_fixed[key].append(default_values_scatter[key])
+                    elif type == 'patch':
+                        recipe_fixed[key].append(default_values_patch[key])
+        return recipe_fixed
+
+    recipe = fix_recipe(recipe)
+    # Make a custom legend
+    handles, labels = ax.get_legend_handles_labels()
+    for i in range(len(recipe['type'])):
+        if recipe['type'][i] in ['line', 'scatter']:
+            handle = Line2D([0], [0],
+                            linestyle=recipe['linestyle'][i], linewidth=recipe['linewidth'][i], color=recipe['color'][i],
+                            marker=recipe['marker'][i],
+                            markersize=recipe['markersize'][i], markerfacecolor=recipe['markerfacecolor'][i],
+                            markeredgecolor=recipe['markeredgecolor'][i])
+        elif recipe['type'][i] == 'patch':
+            handle = mpatches.Patch(facecolor=recipe['facecolor'][i], edgecolor=recipe['edgecolor'][i])
+        handles.append(handle)
+        labels.append(recipe['label'][i])
+    lg = ax.legend(handles, labels, **kwargs)
+    return lg
+
 
 # adjuster/reminders
 ## colorbar stuff

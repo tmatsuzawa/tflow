@@ -7,13 +7,6 @@ Dependencies:
 - cine module
 """
 
-
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-import numpy as np
-from scipy import misc
-import h5py
-import subprocess
 import argparse
 import os
 import sys
@@ -32,7 +25,7 @@ import tflow.cine_local.cine.tiff as tiff  # use local cine package
 
 
 faqm_dir = os.path.split(os.path.realpath(__file__))[0]
-matlabdir = os.path.join(faqm_dir, 'matlab_codes')
+matlabdir = os.path.join(faqm_dir, '../matlab_codes')
 
 def cine2tiff(cinepath, start=0, end=None, step=1, header='im', overwrite=False):
     """

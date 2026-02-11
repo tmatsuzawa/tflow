@@ -2,7 +2,7 @@ import numpy as np
 from scipy import ndimage
 import copy
 import re
-import library.tools.process_data as process
+from scipy.interpolate import interp1d
 
 # Basics
 def find_nearest(array, value, option='normal'):
@@ -295,8 +295,8 @@ def get_average_data_from_periodic_data(time, periodic_data, freq=1., interpolat
             continue
         else:
             time_chunks[i] = time_chunks[i] - np.min(time_chunks[i])
-            time_chunk_int, data_chunk_int = process.interpolate_1Darrays(time_chunks[i], data_chunks[i],
-                                                                          xnum=max(chunk_length)*interpolate_no, xmin=0, xmax=period, mode='linear')
+            time_chunk_int, data_chunk_int = interpolate_1Darrays(time_chunks[i], data_chunks[i],
+                                            xnum=max(chunk_length)*interpolate_no, xmin=0, xmax=period, mode='linear')
             time_chunks_int.append(time_chunk_int)
             data_chunks_int.append(data_chunk_int)
     # delete chunks which did not have more than a half of the longest chunk
@@ -579,7 +579,7 @@ def coarse_grain_2darr(arr, nrows_sub, ncolumns_sub):
     arr_coarse: coarse-grained 2d arr
 
     """
-    arr = np.asrray(arr)
+    arr = np.asarray(arr)
     nrows, ncols = arr.shape
 
     # If the 2d array cannot be separated into blocks, then extend/pad the 2d array
@@ -753,3 +753,51 @@ def sph2cart(r, theta, phi):
     z = r * np.cos(theta)
     return x, y, z
 
+# Interpolation
+def interpolate_1Darrays(x, data, xint=None, xnum=None, xmax=None, xmin=None, mode='cubic'):
+    """
+    Conduct interpolation on a 1d array (N elements) to generate a 1d array (xnum elements)
+    One can also specify x-spacing (xint) instead of the number of elements of the interpolated array
+    Parameters
+    ----------
+    x: 1d array of x coordinates of the data points
+    data: 1d array of data points corresponding to x
+    xint: float, x interval of the interpolated data points. If None, it will be calculated from xnum.
+    xnum: int, number of data points of the interpolated data. If None, it will be calculated from xint.
+    mode: str, interpolation mode. 'linear', 'nearest', 'zero', 'slinear', 'quadratic', 'cubic' are available. Default is 'cubic'.
+
+    Returns
+    -------
+    xnew: 1d array of x coordinates of the interpolated data points
+    datanew: 1d array of interpolated data points corresponding to xnew
+    """
+    if xmax is None:
+        xmax = np.max(x)
+    if xmin is None:
+        xmin = np.min(x)
+    if xmax > np.max(x):
+        x = np.concatenate([x, [xmax]])
+        data = np.concatenate([data, [data[-1]]])
+    if xmin < np.min(x):
+        x = np.concatenate([[xmin], x])
+        data = np.concatenate([ [data[0]], data])
+
+    if xint is None and xnum is None:
+        # Default is generate 10 times more data points
+        xnum = len(x)*10
+        xint = np.abs(xmax-xmin)/float(xnum)
+    elif xint is None and xnum is not None:
+        xint = np.abs(xmax - xmin) / float(xnum)
+    elif xint is not None and xnum is not None:
+        print('WARNING: Both x interval and xnum were provided! Ignoring provided x interval...')
+        xint = np.abs(xmax - xmin) / float(xnum)
+
+    xnew = np.arange(xmin, xmax, xint)
+    # check xnew has a length xnum
+    if xnum is not None:
+        if len(xnew) > xnum:
+            excess = len(xnew) - xnum
+            xnew = xnew[:-excess]
+    f = interp1d(x, data, kind=mode)
+    datanew = f(xnew)
+    return xnew, datanew

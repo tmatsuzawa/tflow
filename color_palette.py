@@ -43,8 +43,6 @@ blind9_tol_light = ['AAAA00', 'BBCC33', 'DDDDDD', '44BB99', '99DDFF',
 blind10_tol_muted = ['117733', '44AA99', '88CCEE', 'DDDDDD', 'AA4499',
                      '882255', 'CC6677', '999933', 'DDCC77', '332288']
 
-
-
 ## SEQUENTIAL
 skypiea= ['001219', '005f73', '0a9396', '94d2bd', 'e9d8a6', 'ee9b00', 'ca6702', 'bb3e03', 'ae2012', '9b2226']
 sunset = ['03071e', '370617', '6a040f', '9d0208', 'd00000', 'dc2f02', 'e85d04', 'f48c06', 'faa307', 'ffba08']

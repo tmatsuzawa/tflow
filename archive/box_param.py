@@ -1,6 +1,5 @@
 """
 This records basic experimental parameters
-
 """
 
 veo_105mm_scale_limit = 0.058 #mm/px
