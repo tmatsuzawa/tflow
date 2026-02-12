@@ -17,6 +17,8 @@ from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.collections import LineCollection
 from matplotlib.patches import FancyArrowPatch
 from mpl_toolkits.mplot3d import proj3d
+from matplotlib.widgets import PolygonSelector # Used to define a mask
+from matplotlib.path import Path #
 import mpl_toolkits
 import seaborn as sns
 from cycler import cycler
@@ -34,9 +36,12 @@ from scipy.stats import binned_statistic
 from numpy import ma
 import scipy, seaborn, h5py
 
+
+
 # import ilpm.vector as vec
 # comment this and plot_fit_curve if it breaks
 import tflow.std_func as std_func
+from tflow.velocity import useNotebook
 # Suppress warnings
 import warnings
 warnings.filterwarnings("ignore")
@@ -2607,44 +2612,74 @@ def quiver(x, y, u, v, subplot=None, fignum=1, figsize=None, ax=None,
     ......... e.g. Plot two quiver plots with the same scale
             fig1, ax1, Q1 = quiver(x1, y1, u1, v1, scale=4, fignum=1, key_length=50)
             quiver(x2, y2, u2, v2, scale=4, fignum=2, key_length=50) # scale could be Q1.scale
-    ............ This ensures to plot the arrows with the same scale with the same quiver key.
+    ............ This ensures to plot the arrows with the same scale and the same quiver key.
                 This is essential to create an animation of quiver plots to avoid distraction.
 
     Parameters
     ----------
-    x
-    y
-    u
-    v
-    subplot
-    fignum
-    figsize
-    ax
-    inc_x
-    inc_y
-    inc
-    color
-    vmin
-    vmax
-    absolute
-    u_ref
-    key
-    key_loc
-    key_length
-    key_label
-    key_units
-    key_labelpos
-    key_pad
-    key_fmt
-    key_kwargs: dict, passed to Axes.quiverkey()
-        ... A dictionary with keyword arguments accepted by the FontProperties initializer: family, style, variant, size, weight.
-        ... e.g. Change fontsize of a key- colorkey_kwargs={'fontproperties': {'size': 12}}
-    aspect
-    kwargs
+    x : 2D array-like
+        X-coordinates of the vector field.
+    y : 2D array-like
+        Y-coordinates of the vector field.
+    u : 2D array-like
+        X-components of the vectors.
+    v : 2D array-like
+        Y-components of the vectors.
+    subplot : int, optional
+        Subplot specification in matplotlib notation (e.g., 111 for a single plot).
+    fignum : int, optional
+        Figure number for the plot.
+    figsize : tuple, optional
+        Size of the figure in inches (width, height).
+    ax : matplotlib.axes.Axes, optional
+        Axes object to plot on. If None, a new figure and axes are created.
+    inc_x : int, optional
+        Step size for downsampling the x-dimension of the vector field. Default is 1.
+    inc_y : int, optional
+        Step size for downsampling the y-dimension of the vector field. Default is 1.
+    inc : int, optional
+        Step size for downsampling both dimensions. Overrides `inc_x` and `inc_y` if provided.
+    color : str or array-like, optional
+        Color of the vectors. Can be a single color or an array of colors.
+    vmin : float, optional
+        Minimum magnitude of vectors to display. Vectors below this value are hidden.
+    vmax : float, optional
+        Maximum magnitude of vectors to display. Vectors above this value are hidden.
+    units : str, optional
+        Units for the vector scale. Default is 'inches'.
+    scale : float, optional
+        Scaling factor for the vectors. If None, it is determined automatically.
+    key : bool, optional
+        Whether to display a quiver key. Default is True.
+    key_loc : list, optional
+        Location of the quiver key in axes coordinates [x, y]. Default is [0.08, 1.06].
+    key_length : float, optional
+        Length of the quiver key in data units. If None, it is determined automatically.
+    key_label : str, optional
+        Label for the quiver key. If None, it is generated automatically.
+    key_units : str, optional
+        Units for the quiver key label. Default is 'mm/s'.
+    key_labelpos : str, optional
+        Position of the quiver key label. Default is 'E' (east).
+    key_pad : float, optional
+        Padding for the quiver key label. Default is 25.
+    key_fmt : str, optional
+        Format string for the quiver key label. Default is '.1f'.
+    key_kwargs : dict, optional
+        Additional keyword arguments for the quiver key.
+    aspect : str, optional
+        Aspect ratio of the plot. Default is 'equal'.
+    **kwargs : dict
+        Additional keyword arguments passed to `plt.quiver()`.
 
     Returns
     -------
-
+    fig : matplotlib.figure.Figure
+        The figure object containing the plot.
+    ax : matplotlib.axes.Axes
+        The axes object containing the plot.
+    Q : matplotlib.quiver.Quiver
+        The quiver object representing the vector field.
     """
     if ax is None:
         fig, ax = set_fig(fignum, subplot, figsize=figsize)
@@ -5977,9 +6012,10 @@ def smooth1d(x, window_len=11, window='hanning', log=False):
 
     y = np.convolve(w / w.sum(), s, mode='valid')
     if not log:
-        return y[(window_len//2-1):(window_len//2-1)+len(x)]
+        return y[(window_len // 2 - 1):(window_len // 2 - 1) + len(x)]
     else:
         return np.exp(y[(window_len // 2 - 1):(window_len // 2 - 1) + len(x)])
+
 
 def add_secondary_xaxis(ax, functions=None, loc='top', label='', log=False, **kwargs):
     """
@@ -6747,3 +6783,186 @@ def show_default_custom_cmaps():
     plt.tight_layout()
     plt.show()
     return my_sequential_cmaps
+
+# Interactive Masking using Matplotlib
+
+class PolygonMaskSession:
+    """
+    Draw a polygon ROI on an existing Axes and convert to a boolean mask on (xx,yy).
+    Designed for %matplotlib widget (ipympl) + JupyterLab.
+
+    Controls:
+      Enter  -> finish (keeps polygon unless you reset/close)
+      Esc    -> cancel (removes polygon)
+      r      -> reset (remove polygon and start drawing again)
+      q      -> close (remove polygon and disconnect)
+    """
+
+    GID = "__mask_roi_polygon__"  # tag to identify our polygon artists
+
+    def __init__(self, ax, xx, yy, *, props=None, handle_props=None, useblit=False):
+        if xx.shape != yy.shape:
+            raise ValueError(f"xx and yy must have same shape, got {xx.shape} vs {yy.shape}")
+
+        self.ax = ax
+        self.xx = xx
+        self.yy = yy
+        self.verts = None
+        self.finished = False
+
+        self.props = props or dict(color="r", linewidth=2, alpha=0.8)
+        self.handle_props = handle_props or dict(marker="o", markersize=4, mec="r", mfc="r", alpha=0.8)
+        self.useblit = useblit  # for ipympl: False is usually more reliable
+
+        self.selector = None
+        self.cid_key = None
+
+        self._disable_toolbar_modes()
+        # Remove any older ROI polygons on this axes before starting
+        self._remove_existing_roi_polygons()
+
+        self._start()
+
+    def _disable_toolbar_modes(self):
+        tb = getattr(self.ax.figure.canvas, "toolbar", None)
+        if tb is not None:
+            try:
+                tb.mode = ""  # disable pan/zoom
+            except Exception:
+                pass
+
+    def _remove_existing_roi_polygons(self):
+        # remove any polygon patches we previously tagged
+        for p in list(self.ax.patches):
+            if getattr(p, "get_gid", lambda: None)() == self.GID:
+                try:
+                    p.remove()
+                except Exception:
+                    pass
+
+    def _start(self):
+        self.finished = False
+        self.verts = None
+
+        self.selector = PolygonSelector(
+            self.ax,
+            self._on_select,
+            useblit=self.useblit,
+            props=self.props,
+            handle_props=self.handle_props,
+        )
+
+        # tag the polygon artist so we can always find/remove it later
+        poly = getattr(self.selector, "polygon", None)
+        if poly is not None:
+            try:
+                poly.set_gid(self.GID)
+            except Exception:
+                pass
+
+        self.cid_key = self.ax.figure.canvas.mpl_connect("key_press_event", self._on_key)
+
+        self.ax.set_title("Draw ROI. Enter=finish, Esc=cancel, r=reset, q=close")
+        self.ax.figure.canvas.draw_idle()
+
+    def _on_select(self, verts):
+        self.verts = verts
+
+    def _on_key(self, event):
+        if event.key in ("enter", "return"):
+            self.finished = True
+            self._disconnect_only(keep_polygon=True)
+        elif event.key == "escape":
+            self.verts = None
+            self.finished = True
+            self.close()
+        elif event.key == "r":
+            self.reset()
+        elif event.key == "q":
+            self.close()
+        elif event.key == "m":
+            self.arm()
+
+    def _disconnect_only(self, keep_polygon=True):
+        if self.selector is not None:
+            try:
+                self.selector.disconnect_events()
+            except Exception:
+                pass
+            if not keep_polygon:
+                self._remove_existing_roi_polygons()
+
+        if self.cid_key is not None:
+            try:
+                self.ax.figure.canvas.mpl_disconnect(self.cid_key)
+            except Exception:
+                pass
+            self.cid_key = None
+
+        self.ax.set_title("ROI captured. Call sess.get_mask(). (r=redraw)")
+        self.ax.figure.canvas.draw_idle()
+
+    def get_mask(self):
+        if self.verts is None or len(self.verts) < 3:
+            return np.zeros_like(self.xx, dtype=bool)
+        pts = np.column_stack([self.xx.ravel(), self.yy.ravel()])
+        print(pts)
+        return Path(self.verts).contains_points(pts).reshape(self.xx.shape)
+
+    def reset(self):
+        # remove polygon + restart drawing
+        self.close()
+        self._disable_toolbar_modes()
+        self._remove_existing_roi_polygons()
+        self._start()
+
+    def close(self):
+        # fully disconnect and remove ROI polygon(s)
+        if self.selector is not None:
+            try:
+                self.selector.disconnect_events()
+            except Exception:
+                pass
+            try:
+                self.selector.set_visible(False)
+            except Exception:
+                pass
+            self.selector = None
+
+        if self.cid_key is not None:
+            try:
+                self.ax.figure.canvas.mpl_disconnect(self.cid_key)
+            except Exception:
+                pass
+            self.cid_key = None
+
+        self._remove_existing_roi_polygons()
+        self.ax.set_title("")
+        self.ax.figure.canvas.draw_idle()
+
+    def _toolbar_mode(self):
+        tb = getattr(self.ax.figure.canvas, "toolbar", None)
+        return getattr(tb, "mode", "") if tb is not None else ""
+
+    def _set_toolbar_mode(self, mode=""):
+        tb = getattr(self.ax.figure.canvas, "toolbar", None)
+        if tb is None:
+            return
+        # ipympl uses a string mode; empty means no pan/zoom
+        try:
+            tb.mode = mode
+        except Exception:
+            pass
+
+    def arm(self):
+        """Force-disable pan/zoom and (re)start selector so clicks register."""
+        self._set_toolbar_mode("")
+        # If a selector exists, restart it to be safe
+        if self.selector is not None:
+            try:
+                self.selector.disconnect_events()
+            except Exception:
+                pass
+            self._remove_existing_roi_polygons()
+            self._start()
+
