@@ -167,6 +167,7 @@ def make_movie_with_time_stamp(imgname, movname, indexsz='05', framerate=10, img
     def atoi(text):
         'human sorting'
         return int(text) if text.isdigit() else text
+
     def natural_keys(text):
         '''
         human sorting

@@ -20,17 +20,18 @@ import math
 import copy
 
 import warnings
-import matplotlib.cbook
 import matplotlib.pyplot as plt
 import matplotlib.path as mpltPath
 
-warnings.filterwarnings("ignore", category=matplotlib.cbook.mplDeprecation)
+# Suppress specific warnings
 warnings.simplefilter('ignore', RuntimeWarning)
 warnings.simplefilter('ignore', FutureWarning)
 
+global useNotebook
+useNotebook = True
+
 import tflow.vector as vec
 import tflow.graph as graph
-
 
 global bezier_installed
 try:
@@ -39,9 +40,6 @@ try:
 except:
     bezier_installed = False
     print('velocity module: bezier is missing in a current environment. pip install bezier')
-
-global useNotebook
-useNotebook = True
 
 path_mod = os.path.abspath(__file__)
 moddirpath = os.path.dirname(path_mod)
