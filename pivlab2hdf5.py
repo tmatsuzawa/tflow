@@ -1,243 +1,193 @@
-"""
-Make an organized hdf5 file out of PIVLab txt outputs and other measurements
-
-
-
-Nomenclature:
-cinedir: directory where cine is stored.
-   |    e.g.- /Volumes/labshared4/takumi/old_data/sample_piv_cine/
-   |
-basedir: directory where parentdirs are housed. All PIVLab outputs are sorted by (Inter. Area, Dt, step)
-   |    e.g.- /Volumes/labshared4/takumi/old_data/sample_piv_cine/pivlab_outputs
-   |
-parentdir: directory where PIVLab outputs of many cines (but with the same PIV parameters) are stored
-   |    e.g.- .../PIV_W16_step1_data
-   |
-datadir: directory where PIV outputs are stored.
-   |    e.g.- .../cinename_no_extension
-   |    ... In datadir, one finds D000000.txt, D000001.txt, etc. as well as piv_settings
-   |
-piv_settings and piv_settings_2: directories where piv-related parameters are stored.
-        ... The information in both dirs are identical but format is different. Choose your preferred format to use.
-
-"""
-
+#!/usr/bin/env python3
+from __future__ import annotations
 
 import argparse
-import glob
-import os
+from pathlib import Path
 import numpy as np
 import h5py
-from tqdm import tqdm
-from pathlib import Path
-
-############ USEFUL FUNCTIONS ############
-def pivlab2hdf5_basedir(basedir, header='PIV', overwrite=False, dx=1, dt=1):
-    cinedir, basedirname = os.path.split(basedir)
-    savedir = cinedir + '/hdf5data'
-    parentdirs = glob.glob(basedir + '/' + header + '*')
-    for parentdir in parentdirs:
-        pivlab2hdf5_parentdir(parentdir, overwrite=overwrite)
-    print('......... Done')
-    return savedir
-
-def pivlab2hdf5_parentdir(parentdir, header='PIVlab', overwrite=False, dx=1, dt=1):
-    basedir, pdirname = os.path.split(parentdir)
-    cinedir, basedirname = os.path.split(basedir)
-    savedir = cinedir + '/hdf5data'
-    datadirs = glob.glob(parentdir + '/' + header + '*')
-    for datadir in datadirs:
-        # print '... processing ' + os.path.split(datadir)[1]
-        pivlab2hdf5(datadir, savedir=savedir, overwrite=overwrite)
-    print('...... Done')
-    return savedir
-
-def pivlab2hdf5(dir, savedir=None, header='PIV_', overwrite=False, dx=1, dt=1):
-    """
-    For each cine, this stores all related informaton (ux, uy), piston tracking records,
-    piv/experimental settings into a master hdf5 file
-
-    Parameters
-    ----------
-    dir: str, name of the directory where pivlab outputs lie
-    savedir: str, location where the master hdf5 file will be created
-    header: str, header of dir. This is used for naming stuff, and to find the corresponding cine file.
-    overwrite: bool, If True, it overwrite all data in hdf5 file. Default: False
-
-    Returns
-    -------
-    savedir: str, location where the master hdf5 file will be created
-    """
-    # FILE ARCHITECTURE
-    dir = Path(dir) # convert to Path object for easier path manipulation
-    parentdir = dir.parent
-
-    # parentdir = os.path.dirname(dir)
-    # basedir = os.path.dirname(parentdir)
-    # parentdirname = os.path.split(dir)[1]
-
-    if savedir is None:
-        savedir = parentdir
-    #
-    print('Processing: %s' % os.path.split(dir)[1])
-
-    # MAKE HDF5
-    # hdf5path
-    # hdf5path = savedir + '/' + cinename_no_ext + '.h5'
-    if not os.path.exists(savedir):
-        print('... mkdir ', savedir)
-        os.makedirs(savedir)
-    hdf5path_perhaps = savedir + '/' + cinename_no_ext[:-3] + '.h5'
-    if os.path.exists(hdf5path_perhaps):
-        cinename_no_ext = cinename_no_ext[:-3]
-        cinepath = os.path.join(cinedir, cinename_no_ext) + '.cine'
-        hdf5path = hdf5path_perhaps
 
 
-    with h5py.File(hdf5path, 'a') as fyle:
-        ################ /exp #############################
-        # /exp.attrs: experimental parameters such as commanded velocity, commanded frequency etc.
+def _read_pivlab_txt(fp: Path) -> tuple[list[str], np.ndarray]:
+    # PIVlab ASCII chart output:
+    # line 1: text
+    # line 2: text (FRAME: ...)
+    # line 3: CSV column names
+    # line 4+: numeric CSV rows
+    with fp.open("r", encoding="utf-8", errors="replace") as f:
+        _ = f.readline()
+        _ = f.readline()
+        col_line = f.readline().strip()
 
-        if not fyle.__contains__('exp'):
-            exp = fyle.create_group('exp')
+    cols = [c.strip() for c in col_line.split(",")]
+    data = np.loadtxt(fp, delimiter=",", skiprows=3)
+
+    if data.ndim != 2:
+        raise ValueError(f"{fp.name}: expected 2D table, got {data.shape}")
+    if data.shape[1] != len(cols):
+        raise ValueError(f"{fp.name}: header has {len(cols)} cols but data has {data.shape[1]}")
+    return cols, data
+
+
+def _find_col(cols: list[str], needle: str) -> int | None:
+    needle_l = needle.lower()
+    for i, c in enumerate(cols):
+        if needle_l in c.lower():
+            return i
+    return None
+
+
+def _build_grid_mapping(
+    x: np.ndarray, y: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    x_unique = np.unique(x)
+    y_unique = np.unique(y)
+
+    N = x_unique.size
+    M = y_unique.size
+    if M * N != x.size:
+        raise ValueError(f"Not a rectangular grid: {x.size} points vs {M}*{N}")
+
+    x2d, y2d = np.meshgrid(x_unique, y_unique)  # (M, N)
+
+    x_index = {val: j for j, val in enumerate(x_unique)}
+    y_index = {val: i for i, val in enumerate(y_unique)}
+    cols = np.fromiter((x_index[val] for val in x), dtype=np.int64, count=x.size)
+    rows = np.fromiter((y_index[val] for val in y), dtype=np.int64, count=y.size)
+    return x2d, y2d, rows, cols
+
+
+def pivlab2hdf5(
+    input_dir: Path,
+    *,
+    scale: float = 1.0,          # um/px
+    dt: float | None = None,     # s/frame
+    fps: float | None = None,    # frames/s (used only if dt is None)
+    overwrite: bool = False,
+    compression: str | None = "gzip",
+) -> Path:
+    input_dir = Path(input_dir).resolve()
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"{input_dir} is not a directory")
+
+    output_h5 = input_dir.parent / f"{input_dir.name}.h5"
+
+    files = sorted(input_dir.glob("*.txt"))
+    if not files:
+        raise FileNotFoundError(f"No .txt files in {input_dir}")
+
+    if output_h5.exists():
+        if overwrite:
+            output_h5.unlink()
         else:
-            exp = fyle['exp']
+            raise FileExistsError(f"{output_h5} exists (use --overwrite)")
 
-        ################ /piv #############################
-        # /piv.attrs: piv-related parameters such as Dt, step, Int. area_1, Number of passes, etc.
-        # /piv/piv???: subgroups store pivlab outputs (ux, uy, omega) and spatial grids (x, y).
-        # /piv/piv???: each subgroup corresponds to pivlab outputs with a given set of piv-related parameters
-        ###################################################
-        if not fyle.__contains__('piv'):
-            piv = fyle.create_group('piv')
-            # /piv has attributes: no_piv_data and software
-            piv.attrs['no_piv_data'] = 0
-            piv.attrs['software'] = 'MATLAB_PIVLab'
-            piv.attrs['units'] = 'mm, s'
+    if scale <= 0:
+        raise ValueError("scale must be > 0 (um/px)")
+
+    # Resolve dt using dt/fps rules
+    dt_source = "dt"
+    if dt is None:
+        if fps is not None:
+            if fps <= 0:
+                raise ValueError("fps must be > 0")
+            dt = 1.0 / fps
+            dt_source = "fps"
         else:
-            piv = fyle['piv']
+            dt = 1.0
+            dt_source = "default(1.0)"
+
+    if dt <= 0:
+        raise ValueError("dt must be > 0 (s/frame)")
+
+    # First file defines columns + grid mapping
+    cols0, d0 = _read_pivlab_txt(files[0])
+
+    ix = _find_col(cols0, "x [")
+    iy = _find_col(cols0, "y [")
+    iu = _find_col(cols0, "u [")
+    iv = _find_col(cols0, "v [")
+    iomega = _find_col(cols0, "vorticity")
+
+    if None in (ix, iy, iu, iv):
+        raise KeyError(f"Missing required columns x,y,u,v in header: {cols0}")
+
+    x_px = d0[:, ix]
+    y_px = d0[:, iy]
+    x2d_px, y2d_px, rows, cols = _build_grid_mapping(x_px, y_px)
+
+    # Convert x,y to um
+    x2d = x2d_px.astype(np.float32) * float(scale)
+    y2d = y2d_px.astype(np.float32) * float(scale)
+
+    M, N = x2d.shape
+    T = len(files)
+
+    # Time array (seconds)
+    t_arr = (np.arange(T, dtype=np.float32) * float(dt))
+
+    # Convert velocities px/frame -> um/s
+    vel_factor = float(scale) / float(dt)
+
+    ux = np.empty((M, N, T), dtype=np.float32)
+    uy = np.empty((M, N, T), dtype=np.float32)
+
+    omega = np.empty((M, N, T), dtype=np.float32) if iomega is not None else None
+    omega_factor = 1.0 / float(dt)  # assumes omega is in 1/frame
+
+    # Fill all frames
+    for ti, fp in enumerate(files):
+        cols_t, d = _read_pivlab_txt(fp)
+        if cols_t != cols0:
+            raise ValueError(f"{fp.name}: column header differs from first file")
+        if d.shape[0] != d0.shape[0]:
+            raise ValueError(f"{fp.name}: point count differs from first file")
+
+        ux[rows, cols, ti] = d[:, iu].astype(np.float32, copy=False) * vel_factor
+        uy[rows, cols, ti] = d[:, iv].astype(np.float32, copy=False) * vel_factor
+        if omega is not None:
+            omega[rows, cols, ti] = d[:, iomega].astype(np.float32, copy=False) * omega_factor
+
+    # Chunking: one time-slice per chunk
+    chunks = (M, N, 1)
+
+    with h5py.File(output_h5, "w") as f:
+        # Attributes (always present)
+        f.attrs["scale"] = float(scale)   # um/px
+        f.attrs["dt"] = float(dt)         # s/frame (resolved)
+        f.attrs["fps"] = float(fps) if fps is not None else np.nan
+        f.attrs["dt_source"] = dt_source
+
+        # Required datasets
+        f.create_dataset("x", data=x2d, compression=compression)
+        f.create_dataset("y", data=y2d, compression=compression)
+        f.create_dataset("t", data=t_arr, compression=compression)
+
+        f.create_dataset("ux", data=ux, compression=compression, chunks=chunks)
+        f.create_dataset("uy", data=uy, compression=compression, chunks=chunks)
+        if omega is not None:
+            f.create_dataset("omega", data=omega, compression=compression, chunks=chunks)
+
+    return output_h5
 
 
-        # Check if the hdf5 file already stores this PIVLab output
-        redundant_pivlab_outputs = False
-        for subgroup_name in list(piv.keys()):
-            piv_paramnames_0 = list(piv[subgroup_name].attrs.keys())
-            piv_paramvalues_0 = list(piv[subgroup_name].attrs.values())
-            piv_params_0 = dict(list(zip(piv_paramnames_0, piv_paramvalues_0)))
+def main() -> None:
+    p = argparse.ArgumentParser(description="Convert folder of PIVlab txt files into one HDF5.")
+    p.add_argument("input_dir", type=Path, help="Folder containing *.txt")
+    p.add_argument("-scale", type=float, default=1.0, help="Spatial scale (um/px)")
+    p.add_argument("-dt", type=float, default=None, help="Time step (s/frame). Overrides fps if both given.")
+    p.add_argument("-fps", type=float, default=None, help="Frames per second. Used only if dt is not given.")
+    p.add_argument("-overwrite", action="store_true", help="Overwrite existing output .h5")
+    args = p.parse_args()
 
-        if redundant_pivlab_outputs and not overwrite:
-            print('... skipping')
-            fyle.close()
-        else:
-            if not overwrite:
-                # This piv outputs are not saved in the master hdf5 file! Save it to the master hdf5.
-                # Naming convention: /piv/piv000, /piv/piv0001
-                piv_working = piv.create_group('piv%03d' % piv.attrs['no_piv_data'])
-            else:
-                print('... Probably, datasets such as u and v exist under %s but overwrite data anyway' % piv[subgroup_name].name)
-                piv_working = piv[subgroup_name]
-
-            # Also add data spacing (interrogation size / 2)
-            W = piv_working.attrs['Int._area_%d' % piv_working.attrs['Nr._of_passes']]
-            piv_working.attrs['W'] = W # smallest interrogation area size
-
-            # Insert pivlab outputs
-            datafiles = glob.glob(dir + '/*.txt')
-            datafiles = sorted(datafiles)
-
-            for i, datafile in enumerate(tqdm(datafiles, desc='... making nd arrays from PIVLab output')):
-                data = np.loadtxt(datafile, delimiter=',', skiprows=3)
-
-                xx, yy = data[:, 0], data[:, 1]
-                ux, uy = data[:, 2], data[:, 3]
-                omega = data[:, 4]
-
-                if i == 0:
-                    delta_y = np.diff(yy)[0]
-                    delta_x = delta_y
-
-                    ncols = int((np.max(xx) - np.min(xx)) / delta_x) + 1
-                    nrows = int((np.max(yy) - np.min(yy)) / delta_y) + 1
-                    shape_temp = (ncols, nrows)
-
-                    xgrid, ygrid = xx.reshape(shape_temp).T, yy.reshape(shape_temp).T
-
-                ux_grid, uy_grid, omega_grid = ux.reshape(shape_temp).T, uy.reshape(shape_temp).T, omega.reshape(
-                    shape_temp).T
-
-                if i == 0:
-                    uxdata = np.zeros((nrows, ncols, len(datafiles)))
-                    uydata = np.zeros((nrows, ncols, len(datafiles)))
-                    omegadata = np.zeros((nrows, ncols, len(datafiles)))
-                uxdata[..., i] = ux_grid
-                uydata[..., i] = uy_grid
-                omegadata[..., i] = omega_grid
-
-            # Insert data into hdf5
-            if not overwrite:
-                for i, piv_working_datasetname in enumerate(piv_working_datasetnames):
-                    if not piv_working_datasetname in list(piv_working.keys()):
-                        piv_working.create_dataset(piv_working_datasetname, data=piv_working_datasets[i])
-                # Keep track how many piv data exists for a giveb cine
-                piv.attrs['no_piv_data'] += 1
-            else:
-                for i, piv_working_datasetname in enumerate(piv_working_datasetnames):
-                    try:
-                        piv_working[piv_working_datasetname][...] = piv_working_datasets[i]
-                    except KeyError:
-                        piv_working.create_dataset(piv_working_datasetname, data=piv_working_datasets[i])
-            fyle.close()
-
-    print('... Done')
-    return savedir
-
-
-def main(args):
-    if args.basedir is not None:
-        print('Use all available PIVLab outputs to create master hdf5 files')
-        savedir = pivlab2hdf5_basedir(args.basedir, overwrite=args.overwrite, dx=args.scale, dt=args.dt)
-        hdf5datapaths = glob.glob(savedir + '/*.h5')
-    if args.parentdir is not None:
-        print('Make hdf5 files for directories under ' + args.parentdir)
-        savedir = pivlab2hdf5_parentdir(args.parentdir, overwrite=args.overwrite, dx=args.scale, dt=args.dt)
-        hdf5datapaths = glob.glob(savedir + '/*.h5')
-    elif args.dir is not None:
-        print('Make a hdf5 file for the following directory: ' + args.dir)
-        savedir = pivlab2hdf5(args.dir, overwrite=args.overwrite, dx=args.scale, dt=args.dt)
-        hdf5datapaths = glob.glob(savedir + '/*.h5')
-    elif args.cine is not None:
-        print('Make a hdf5 file for the following cine. Process all existing PIVLab outputs: ' + args.cine)
-        savedir = pivlab2hdf5_cine(args.cine, overwrite=args.overwrite, dx=args.scale, dt=args.dt)
-        cinedir, cinename = os.path.split(args.cine)
-        cinename_no_ext = cinename[:-5]
-        hdf5datapaths = glob.glob(savedir + '/%s*.h5' % cinename_no_ext)
-    return hdf5datapaths
-
+    out = pivlab2hdf5(
+        args.input_dir,
+        scale=args.scale,
+        dt=args.dt,
+        fps=args.fps,
+        overwrite=args.overwrite,
+    )
+    print(f"Wrote {out}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Make a hdf5 file out of PIVLab txt outputs')
-    parser.add_argument('-basedir', '--basedir', help='Use all available data to make a master hdf5. i.e. PROCESS ALL', type=str,
-                        default=None)
-    parser.add_argument('-parentdir', '--parentdir',
-                        help='Use all available data inside a single PARENTDIR to make a master hdf5', type=str,
-                        default=None)
-    parser.add_argument('-dir', '--dir', help='Use a single DATADIR to make a master hdf5', type=str,
-                        default=None)
-    parser.add_argument('-cine', '--cine', help='Find all available PIVLab outputs about a PARTICULAR CINE.', type=str,
-                        default=None)
-    parser.add_argument('-overwrite', '--overwrite',
-                        help='overwrite pivlab outputs. This is handy if code fails and force code to insert pivlab outputs to hdf5. Default: False',
-                        type=bool,
-                        default=False)
-    parser.add_argument('-verbose', '--verbose',
-                        help='If False, do not print trivial inputs',
-                        type=bool,
-                        default=False)
-    parser.add_argument('-scale', '--scale', help='um per pixel. Default: 1', type=float, default=1.)
-    parser.add_argument('-dt', '--dt', help='Time interval between frames in seconds. Default: 1', type=float, default=1.)
-    
-    args = parser.parse_args()
-    main(args)
-
-
+    main()
