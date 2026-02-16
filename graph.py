@@ -24,6 +24,8 @@ import seaborn as sns
 from cycler import cycler
 from skimage import measure
 import pylab as pl
+from PIL import Image
+import numpy as np
 
 import itertools
 from scipy.optimize import curve_fit
@@ -123,46 +125,36 @@ default_custom_cycler = {'color': ['r', 'b', 'g', 'y'],
                           's': [0,0,0,0]}
 
 
-## Save a figure
-def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, overwrite=True, tight_layout=False,
-         savedata=True, transparent=True, bkgcolor='w', **kwargs):
+
+
+########### SAVE, PLOT, FIGURE HELPERS ###################################
+# Save a figure
+def save(path, ext=['png', 'pdf', 'svg'], close=False, verbose=True, fignum=None, dpi=150, overwrite=True, tight_layout=False,
+         savedata=False, transparent=True, bkgcolor='w', **kwargs):
     """
-    Save a figure from pyplot
+    Save a figure
 
     Parameters
     ----------
-    path: string
-        The path (and filename, without the extension) to save the
-        figure to.
-    ext: string (default='png')
-        The file extension. This must be supported by the active
-        matplotlib backend (see matplotlib.backends module).  Most
-        backends support 'png', 'pdf', 'ps', 'eps', and 'svg'.
-    ext : string (default='png')
-        The file extension. This must be supported by the active
-        matplotlib backend (see matplotlib.backends module).  Most
-        backends support 'png', 'pdf', 'ps', 'eps', and 'svg'.
-    close : boolean (default=True)
-        Whether to close the figure after saving.  If you want to save
-        the figure multiple times (e.g., to multiple formats), you
-        should NOT close it in between saves or you will have to
-        re-plot it.
-    verbose : boolean (default=True)
-        Whether to print information about when and where the image
-        has been saved.
-    fignum
-    dpi
-    overwrite
-    tight_layout
-    savedata
-    transparent
-    bkgcolor
-    kwargs
+    path: str, path to save a figure
+    ext: str or list, extension of the figure, e.g. 'pdf', 'png', 'svg'
+    close: bool, close the figure (default: False)
+    verbose: bool, print out the path where the figure is saved
+    fignum: int, figure number of the figure to save
+    dpi: int, resolution of the figure, default: 150
+    overwrite: bool, overwrite if a figure already exists
+    tight_layout: bool, use tight_layout
+    savedata: bool, save a figure instance, default: True. To load the figure instance,
+              try pickle.load(open(path[:-len(ext)-1] + '.pkl', 'rb'))
+    transparent: bool, save a figure with a transparent background, default: True
+    bkgcolor: str, background color of the figure, default: 'w', `transparent` must be False to activate this option.
+    kwargs: keyword arguments to pass to plt.savefig()
 
     Returns
     -------
-
+    None
     """
+
     if fignum == None:
         fig = plt.gcf()
     else:
@@ -172,47 +164,51 @@ def save(path, ext='pdf', close=False, verbose=True, fignum=None, dpi=None, over
 
     if tight_layout:
         fig.tight_layout()
+    if isinstance(ext, str):
+        ext = [ext]
 
-    # Separate a directory and a filename from the given path
-    directory = os.path.split(path)[0]
-    filename = "%s.%s" % (os.path.split(path)[1], ext)
-    if directory == '':
-        directory = '.'
-    # If the directory does not exist, create it
-    if not os.path.exists(directory):
-        os.makedirs(directory)
+    for ext_ in ext:
+        # Separate a directory and a filename from the given path
+        directory = os.path.split(path)[0]
+        filename = "%s.%s" % (os.path.split(path)[1], ext_)
 
-    # path where the figure is saved
-    savepath = os.path.join(directory, filename)
-    # if a figure already exists AND you'd like to overwrite, name a figure differently
-    ver_no = 0
-    while os.path.exists(savepath) and not overwrite:
-        # this needs to be fixed. right now, it keeps saving to _000.png
-        savepath = directory + '/' + os.path.split(path)[1]+ '_%03d.' % ver_no + ext
-        ver_no += 1
+        if directory == '':
+            directory = '.'
 
-    if verbose:
-        print(("Saving figure to '%s'..." % savepath))
+        # Make sure the directory exists
+        directory = Path(directory)
+        if not os.path.exists(directory):
+            os.makedirs(directory)
 
-    # Save the figure
-    if transparent:
-        plt.savefig(savepath, dpi=dpi, transparent=transparent, **kwargs)
-    else:
-        plt.savefig(savepath, dpi=dpi, facecolor=bkgcolor, **kwargs)
+        # The final path to save
+        savepath = os.path.join(directory, filename)
+        # If the file already exists, generate a new filename
+        ver_no = 0
 
-    # Save fig instance... This may fail for python2
-    if savedata:
-        try:
-            pickle.dump(fig, open(savepath[:-len(ext)-1] + '.pkl', 'wb'))
-        except:
-            print('... Unable to pickle a figure instance.')
+        while os.path.exists(savepath) and not overwrite:
+            # this needs to be fixed. right now, it keeps saving to _000.png
+            savepath = directory / (os.path.split(path)[1] + '_%03d.' % ver_no + ext)
+            ver_no += 1
 
-    # Close a figure
-    if close:
-        plt.close(fignum)
+        # Save the figure
+        if transparent:
+            plt.savefig(savepath, dpi=dpi, transparent=transparent, **kwargs)
+        else:
+            plt.savefig(savepath, dpi=dpi, facecolor=bkgcolor, **kwargs)
 
-    if verbose:
-        print("Figure saved to", savepath)
+        # Save a fig instance. This could fail for python2.
+        if savedata:
+            try:
+                pickle.dump(fig, open(savepath[:-len(ext)-1] + '.pkl', 'wb'))
+            except:
+                print('... Unable to pickle a figure instance.')
+
+        # Close a figure
+        if close:
+            plt.close(fignum)
+
+        if verbose:
+            print("Figure saved to", savepath)
 
 ## Create a figure and axes
 def set_fig(fignum, subplot=111, dpi=100, figsize=None,
@@ -2338,7 +2334,7 @@ def color_plot(x, y, z,
                subplot=None, fignum=1, figsize=None, ax=None,
                vmin=None, vmax=None, log10=False, label=None,
                cbar=True, cmap='magma', symmetric=False, enforceSymmetric=True,
-               aspect='equal', option='scientific', ntick=5, tickinc=None,
+               aspect='equal', option='scientific', ntick=5, tickinc=None, edgecolors="none",
                crop=None, fontsize=None, ticklabelsize=None, cb_kwargs={}, return_cb=False,
                **kwargs):
     """
@@ -2425,15 +2421,13 @@ def color_plot(x, y, z,
             vmin = -vmax
 
 
-
-
     # Note that the cc returned is a matplotlib.collections.QuadMesh
     # print('np.shape(z) = ' + str(np.shape(z)))
     if vmin is None and vmax is None:
         # plt.pcolormesh returns a QuadMesh class object.
-        cc = ax.pcolormesh(x, y, z, cmap=cmap, **kwargs)
+        cc = ax.pcolormesh(x, y, z, cmap=cmap, shading='nearest', edgecolors=edgecolors, **kwargs)
     else:
-        cc = ax.pcolormesh(x, y, z, cmap=cmap, vmin=vmin, vmax=vmax, **kwargs)
+        cc = ax.pcolormesh(x, y, z, cmap=cmap, vmin=vmin, vmax=vmax, shading='nearest', edgecolors=edgecolors, **kwargs)
 
     if cbar:
         if vmin is None and vmax is None:
@@ -2446,8 +2440,9 @@ def color_plot(x, y, z,
             cb = add_colorbar(cc, ax=ax, label=label, option=option, vmin=vmin, vmax=vmax, ntick=ntick, tickinc=tickinc, fontsize=fontsize, ticklabelsize=ticklabelsize, **cb_kwargs)
 
     ax.set_aspect(aspect)
-    # set edge color to face color
-    cc.set_edgecolor('face')
+    if edgecolors is not "none":
+        # set edge color to face color
+        cc.set_edgecolor('face')
 
     if return_cb and cbar:
         return fig, ax, cc, cb
@@ -6784,9 +6779,30 @@ def show_default_custom_cmaps():
     plt.show()
     return my_sequential_cmaps
 
-# Interactive Masking using Matplotlib
+# Image loading
+def read_img(imgpath, reverse_y=False):
+    """
+    Load a TIFF image using PIL.
 
-class PolygonMaskSession:
+    Parameters
+    ----------
+    path : str
+        Path to image file.
+
+    Returns
+    -------
+    img : numpy.ndarray
+        Image array.
+    """
+    with Image.open(imgpath) as img:
+        imgarr = np.array(img)
+        if reverse_y:
+            return imgarr[:, ::-1]
+        else:
+            return imgarr
+
+# Interactive Masking using Matplotlib
+class MaskROIPolygon:
     """
     Draw a polygon ROI on an existing Axes and convert to a boolean mask on (xx,yy).
     Designed for %matplotlib widget (ipympl) + JupyterLab.
@@ -6906,7 +6922,6 @@ class PolygonMaskSession:
         if self.verts is None or len(self.verts) < 3:
             return np.zeros_like(self.xx, dtype=bool)
         pts = np.column_stack([self.xx.ravel(), self.yy.ravel()])
-        print(pts)
         return Path(self.verts).contains_points(pts).reshape(self.xx.shape)
 
     def reset(self):
