@@ -2,7 +2,7 @@
 Module for plotting figures
 '''
 import os, copy
-from pathlib import Path
+import pathlib
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -176,7 +176,7 @@ def save(path, ext=['png', 'pdf', 'svg'], close=False, verbose=True, fignum=None
             directory = '.'
 
         # Make sure the directory exists
-        directory = Path(directory)
+        directory = pathlib.Path(directory)
         if not os.path.exists(directory):
             os.makedirs(directory)
 
@@ -1438,6 +1438,30 @@ def pdf(data, nbins=100, return_data=False, vmax=None, vmin=None, log=False,
         bins = np.delete(bins, 0)
         return bins, hist
 
+    def get_optimal_bin_width(data):
+        "Freedman-Diaconis method"
+        data = np.asarray(data)
+        data = data[~np.isnan(data)]  # remove NaNs if any
+
+        n = data.size
+        if n < 2:
+            return 0.0
+
+        q25, q75 = np.percentile(data, [25, 75])
+        iqr = q75 - q25
+
+        if iqr == 0:
+            # fallback to standard deviation (Scott-like)
+            sigma = np.std(data)
+            if sigma == 0:
+                return 0.0
+            h = 3.5 * sigma / (n ** (1 / 3))
+        else:
+            h = 2 * iqr / (n ** (1 / 3))
+        qmin, qmax = np.min(data), np.max(data)
+        nbins = max(int(np.ceil((qmax - qmin) / h)), 2)  # at least 2 bins
+        return nbins
+
     data = np.asarray(data)
 
     # Use data where values are between vmin and vmax
@@ -1452,6 +1476,8 @@ def pdf(data, nbins=100, return_data=False, vmax=None, vmin=None, log=False,
         vmin = np.nanmin(data)
         cond2 = np.ones(data.shape, dtype=bool)
     data = data[cond1 * cond2]
+    if nbins is None:
+        nbins = get_optimal_bin_width(data)
     delta = (vmax - vmin) / nbins
     if log:
         bins = np.geomspace(max(vmin, 1e-16), vmax, nbins)
