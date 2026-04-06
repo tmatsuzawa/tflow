@@ -6,7 +6,7 @@ import re
 import h5py
 import pickle
 from scipy import fftpack, signal, integrate
-from scipy.interpolate import interp2d, griddata, UnivariateSpline, RegularGridInterpolator, LinearNDInterpolator
+from scipy.interpolate import InterpolatedUnivariateSpline, RegularGridInterpolator, LinearNDInterpolator
 from scipy.stats import binned_statistic, binned_statistic_2d, binned_statistic_dd, multivariate_normal
 from scipy.optimize import minimize, curve_fit
 from scipy import ndimage, interpolate, signal, special
@@ -18,6 +18,7 @@ import subprocess, glob
 import cv2
 import math
 import copy
+from pathlib import Path
 
 import warnings
 import matplotlib.pyplot as plt
@@ -1000,7 +1001,7 @@ def get_time_avg_enstrophy(udata, dx=1., dy=1., dz=1., xx=None, yy=None, zz=None
     return enstrophy_avg
 
 
-def get_spatial_avg_energy(udata, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, use3comp=True, ):
+def get_spatial_avg_energy(udata, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, use3comp=True, return_std=True):
     """
     Returns energy averaged over a spatial region
 
@@ -1047,7 +1048,10 @@ def get_spatial_avg_energy(udata, x0=0, x1=None, y0=0, y1=None, z0=0, z1=None, u
     for t in tqdm(range(energy.shape[-1])):
         n_elements[t] = np.sum(~np.isnan(energy[..., t]))
     # correctly, it should be n_elements - 1 but use n_elements to avoid ZeroDivisionError
-    energy_vs_t_err = energy_vs_t_std / np.sqrt(n_elements)
+    if return_std:
+        energy_vs_t_err = energy_vs_t_std
+    else:
+        energy_vs_t_err = energy_vs_t_std / np.sqrt(n_elements)
     return energy_vs_t, energy_vs_t_err
 
 
@@ -4118,8 +4122,17 @@ def get_two_point_vel_corr_iso(udata, x, y, z=None, time=None, n_bins=None,
             time_list += [t] * len(r_long[:, 0])
         # 2d interpolation of long./trans. autocorrelation functions
         print('... 2D interpolation to define long./trans. autocorrelation function (this may take a while)')
-        f = interp2d(r_long.flatten(), time_list, f_long.flatten())
-        g = interp2d(r_tran.flatten(), time_list, g_tran.flatten())
+        # f = interp2d(r_long.flatten(), time_list, f_long.flatten()) # interp2d was removed in scipy 1.10.0, so use RegularGridInterpolator instead
+        # g = interp2d(r_tran.flatten(), time_list, g_tran.flatten()) # interp2d was removed in scipy 1.10.0, so use RegularGridInterpolator instead
+        # Ensure f_long is shaped (time, r)
+        f = RegularGridInterpolator(
+            (time_list, r_long),
+            f_long
+        )
+        g = RegularGridInterpolator(
+            (time_list, r_tran),
+            g_tran
+        )
 
         # Define Rij(r, t) as a function.
         def two_pt_velocity_autocorrelation_tensor(i, j, r, t, udata):
@@ -4172,8 +4185,16 @@ def get_autocorr_functions(r_long, f_long, r_tran, g_tran, time):
     for t in time:
         time_list += [t] * len(r_long[:, 0])
     # 2d interpolation of long./trans. autocorrelation functions
-    f = interp2d(r_long.flatten(), time_list, f_long.flatten())
-    g = interp2d(r_tran.flatten(), time_list, g_tran.flatten())
+    # f = interp2d(r_long.flatten(), time_list, f_long.flatten())
+    # g = interp2d(r_tran.flatten(), time_list, g_tran.flatten())
+    # Ensure f_long is shaped (time, r)
+    f = RegularGridInterpolator(
+        (time_list, r_long),
+        f_long)
+    g = RegularGridInterpolator(
+        (time_list, r_tran),
+        g_tran)
+
     return f, g
 
 
@@ -4228,8 +4249,8 @@ def get_autocorr_functions_int_list(r_long, f_long, r_tran, g_tran):
         g_tran_tmp = np.concatenate((np.flip(g_tran_tmp, axis=0)[:-1], g_tran_tmp))
 
         # Interpolate
-        f_spl = UnivariateSpline(r_long_tmp, f_long_tmp, s=0, k=3)  # longitudinal autocorrelation func.
-        g_spl = UnivariateSpline(r_tran_tmp, g_tran_tmp, s=0, k=3)  # transverse autocorrelation func.
+        f_spl = InterpolatedUnivariateSpline(r_long_tmp, f_long_tmp, s=0, k=3)  # longitudinal autocorrelation func.
+        g_spl = InterpolatedUnivariateSpline(r_tran_tmp, g_tran_tmp, s=0, k=3)  # transverse autocorrelation func.
 
         fs.append(f_spl)
         gs.append(g_spl)
@@ -5417,9 +5438,9 @@ def get_integral_scales(r_long, f_long, r_tran, g_tran, method='trapz'):
         # quadrature
         if method == 'quad':
             rmin, rmax = np.nanmin(r_long), np.nanmax(r_long)
-            f_spl = UnivariateSpline(r_long[mask, t], f_long[mask, t] / f_long[0, t], s=0,
+            f_spl = InterpolatedUnivariateSpline(r_long[mask, t], f_long[mask, t] / f_long[0, t], s=0,
                                      k=3)  # longitudinal autocorrelation func.
-            g_spl = UnivariateSpline(r_tran[mask, t], g_tran[mask, t] / g_tran[0, t], s=0,
+            g_spl = InterpolatedUnivariateSpline(r_tran[mask, t], g_tran[mask, t] / g_tran[0, t], s=0,
                                      k=3)  # transverse autocorrelation func.
             L11.append(integrate.quad(lambda r: f_spl(r), rmin, rmax)[0])
             L22.append(integrate.quad(lambda r: g_spl(r), rmin, rmax)[0])
@@ -8583,80 +8604,80 @@ def interpolate_vector_field_at_instant_of_time(vfield, xx, yy, zz=None, t=0, bo
     return funcs
 
 
-def griddata_easy(x, y, data, xi=None, yi=None, dx=None, dy=None, nx=10, ny=10, method='nearest',
-                   xmin=None, xmax=None, ymin=None, ymax=None, fill_value=None):
-    """
-    Conduct 2D interpolation of data from a nonuniformly spaced rectangular grid
-    ... A wrapper of scipy.interplate.griddata
-
-    Parameters
-    ----------
-    xx: nd array-like
-        x-coordinate of scattered data
-        this will be flattened when passed to griddata
-    yy: nd array-like
-        y-coordinate of scattered data
-        this will be flattened when passed to griddata
-    data: nd array-like
-        values of scattered data
-        this will be flattened when passed to griddata
-    xi: 1d array
-        x-coordinate of the interpolated grid
-        ... The array must be monotonically increasing.
-        ... If None, xi = np.arange(xmin, xmax, dx)
-    yi: 1d array
-        y-coordinate of the interpolated grid
-        ... The array must be monotonically increasing.
-        ... If None, yi = np.arange(ymin, ymax, dy)
-    dx: float
-        spacing of 'xi' if 'xi' is not given
-    dy: float
-        spacing of 'xi' if 'xi' is not given
-    nx: int
-        if 'dx' were not given, dx is set as (xmax-xmin)/nx
-    ny: int
-        if 'dy' were not given, dx is set as (ymax-ymin)/ny
-    method: method of 2D interpolation
-        ... Options: 'nearest', 'linear', 'cubic'
-    xmin: float, minimum x value of the interpolated grid
-    xmax: float, maximum x value of the interpolated grid
-    ymin: float, minimum y value of the interpolated grid
-    ymax: float, maximum y value of the interpolated grid
-    fill_value: float, value to fill in the interpolated grid, default is None
-
-    Returns
-    -------
-    xxi: 2d array
-        x-coordinate of the grid
-    yyi: 2d array
-        y-coordinate of the grid
-    data_i: 2d array
-        values on the grid
-    """
-    x, y, data = np.asarray(x), np.asarray(y), np.asarray(data)
-    if not x.shape == y.shape == data.shape:
-        print('x.shape, y.shape, and data.shape must match. ', x.shape, y.shape, data.shape)
-        raise ValueError('shapes of x, y, and data do not match.')
-    x, y, data1d = x.flatten(), y.flatten(), data.flatten()
-
-    if xmin is None: xmin = np.nanmin(x)
-    if xmax is None: xmax = np.nanmax(x)
-    if ymin is None: ymin = np.nanmin(y)
-    if ymax is None: ymax = np.nanmax(y)
-
-    if xi is None:
-        if dx is None:
-            dx = (xmax - xmin) / nx
-        xi = np.arange(xmin, xmax, dx)
-    if yi is None:
-        if dy is None:
-            dy = (ymax - ymin) / ny
-        yi = np.arange(ymin, ymax, dy)
-    xxi, yyi = np.meshgrid(xi, yi)
-
-    # interpolate
-    data_i = griddata((x, y), data1d, (xxi, yyi), method=method, fill_value=fill_value)
-    return xxi, yyi, data_i
+# def griddata_easy(x, y, data, xi=None, yi=None, dx=None, dy=None, nx=10, ny=10, method='nearest',
+#                    xmin=None, xmax=None, ymin=None, ymax=None, fill_value=None):
+#     """
+#     Conduct 2D interpolation of data from a nonuniformly spaced rectangular grid
+#     ... A wrapper of scipy.interplate.griddata
+#
+#     Parameters
+#     ----------
+#     xx: nd array-like
+#         x-coordinate of scattered data
+#         this will be flattened when passed to griddata
+#     yy: nd array-like
+#         y-coordinate of scattered data
+#         this will be flattened when passed to griddata
+#     data: nd array-like
+#         values of scattered data
+#         this will be flattened when passed to griddata
+#     xi: 1d array
+#         x-coordinate of the interpolated grid
+#         ... The array must be monotonically increasing.
+#         ... If None, xi = np.arange(xmin, xmax, dx)
+#     yi: 1d array
+#         y-coordinate of the interpolated grid
+#         ... The array must be monotonically increasing.
+#         ... If None, yi = np.arange(ymin, ymax, dy)
+#     dx: float
+#         spacing of 'xi' if 'xi' is not given
+#     dy: float
+#         spacing of 'xi' if 'xi' is not given
+#     nx: int
+#         if 'dx' were not given, dx is set as (xmax-xmin)/nx
+#     ny: int
+#         if 'dy' were not given, dx is set as (ymax-ymin)/ny
+#     method: method of 2D interpolation
+#         ... Options: 'nearest', 'linear', 'cubic'
+#     xmin: float, minimum x value of the interpolated grid
+#     xmax: float, maximum x value of the interpolated grid
+#     ymin: float, minimum y value of the interpolated grid
+#     ymax: float, maximum y value of the interpolated grid
+#     fill_value: float, value to fill in the interpolated grid, default is None
+#
+#     Returns
+#     -------
+#     xxi: 2d array
+#         x-coordinate of the grid
+#     yyi: 2d array
+#         y-coordinate of the grid
+#     data_i: 2d array
+#         values on the grid
+#     """
+#     x, y, data = np.asarray(x), np.asarray(y), np.asarray(data)
+#     if not x.shape == y.shape == data.shape:
+#         print('x.shape, y.shape, and data.shape must match. ', x.shape, y.shape, data.shape)
+#         raise ValueError('shapes of x, y, and data do not match.')
+#     x, y, data1d = x.flatten(), y.flatten(), data.flatten()
+#
+#     if xmin is None: xmin = np.nanmin(x)
+#     if xmax is None: xmax = np.nanmax(x)
+#     if ymin is None: ymin = np.nanmin(y)
+#     if ymax is None: ymax = np.nanmax(y)
+#
+#     if xi is None:
+#         if dx is None:
+#             dx = (xmax - xmin) / nx
+#         xi = np.arange(xmin, xmax, dx)
+#     if yi is None:
+#         if dy is None:
+#             dy = (ymax - ymin) / ny
+#         yi = np.arange(ymin, ymax, dy)
+#     xxi, yyi = np.meshgrid(xi, yi)
+#
+#     # interpolate
+#     data_i = griddata((x, y), data1d, (xxi, yyi), method=method, fill_value=fill_value)
+#     return xxi, yyi, data_i
 
 
 def zoom(qty, xxx, yyy, zzz, zf=2, bounds_error=False):
@@ -13372,6 +13393,534 @@ def get_phase_averaged_udata_from_path(dpath, freq, time, deltaT=None,
         from tqdm import tqdm
     return tp, udata_pavg
 
+# R/W
+
+def isListOfStrings(obj):
+    """
+    Check if a list is a list of strings
+
+    Parameters
+    ----------
+    obj: object
+
+    Returns
+    -------
+    bool
+    """
+    if isinstance(obj, list):
+        return all(isinstance(item, str) for item in obj)
+    else:
+        return False
+
+def isListOfArrays(obj):
+    """
+    Check if a list is a list of arrays
+
+    Parameters
+    ----------
+    obj: object
+
+    Returns
+    -------
+    bool
+    """
+    if isinstance(obj, list):
+        return all(isinstance(item, np.ndarray) for item in obj)
+    else:
+        return False
+
+def isListOfLists(obj):
+    """
+    Check if a list is a list of lists
+
+    Parameters
+    ----------
+    obj: object
+
+    Returns
+    -------
+    bool
+    """
+    if isinstance(obj, list):
+        return all(isinstance(item, list) for item in obj)
+    else:
+        return False
+
+# READ / WRITE
+# HDF5
+
+# h5 helpers
+def show_h5_contents(dpath):
+    """
+    Displays the contents of an HDF5 file in a tree-like structure.
+
+    Parameters
+    ----------
+    dpath: str, path to the HDF5 file
+
+    Returns
+    -------
+    None
+    """
+    def print_name(name, obj):
+        indent = "  " * (name.count('/'))
+        if isinstance(obj, h5py.Dataset):
+            print(f"{indent}- {name.split('/')[-1]} (Dataset, shape={obj.shape})")
+        else:
+            print(f"{indent}+ {name.split('/')[-1]} (Group)")
+    if os.path.exists(dpath):
+        with h5py.File(dpath, "r") as f:
+            f.visititems(print_name)
+    else:
+        print(f'{dpath} does not exist.')
+
+def show_h5_keys(dpath):
+    """Displays a list of dataset names in h5- only the datasets stored under the top"""
+    with h5py.File(dpath, mode='r') as f:
+        print(f.keys())
+
+
+def show_h5_subkeys(dpath, key):
+    """Displays a list of dataset names in h5- only the datasets stored under the top"""
+    with h5py.File(dpath, mode='r') as f:
+        try:
+            print(f[key].keys())
+        except KeyError:
+            print(f'{key} does not exist in {dpath}')
+
+
+def get_h5_keys(dpath):
+    """Returns a list of dataset names in h5- only the datasets stored under the top
+    ... /Dataset1, /Dataset2, ... -> Returns ["Dataset1", "Dataset2"]
+    """
+    with h5py.File(dpath, mode='r') as f:
+        keys = [key for key in f.keys()]
+    return keys
+
+
+def get_h5_subkeys(dpath, key):
+    """Returns a list of dataset names in h5- only the datasets stored under /key
+    ... key/Dataset1, key/Dataset2, ... -> Returns ["Dataset1", "Dataset2"]
+    """
+    with h5py.File(dpath, mode='r') as f:
+        subkeys = [subkey for subkey in f[key].keys()]
+    return subkeys
+
+def read_data(
+    filepath: str,
+    keys,
+    return_dict: bool = False,
+    recursive: bool = True,
+    grpname: str = None,
+    verbose: bool = True
+):
+    """
+    Reads datasets or subgroups from an HDF5 file by full path or relative to a group (backward-compatible).
+
+    # Example usage:
+    # 1) Flatten-only (default) returns a dict of immediate datasets under the group:
+    #    read_h5_data("mydata.h5", ["/GroupA/SubGroupA1"], return_dict=True)
+    #
+    # 2) Full nested subtree:
+    #    read_h5_data("mydata.h5", ["/GroupA/SubGroupA1"], return_dict=True, recursive=True)
+
+    Parameters
+    ----------
+    filepath : str
+        Path to the .h5 file (extension optional).
+    keys : list of str or 'all'
+        If grpname is None, full HDF5 paths (e.g. '/A/A1/key').
+        If grpname is provided, keys are names under that group (relative): ['ds1', 'sub/ds2'] or 'all'.
+    as_dict : bool, default False
+        If True, returns a dict {path_or_name: data}. Otherwise returns a list of data.
+    recursive : bool, default False
+        If True and a key refers to a group, reads the entire subtree into a nested dict.
+        If False and the key is a group, reads only its immediate datasets into a flat dict.
+    grpname : str, default None
+        Backward-compatible: if provided, all keys are looked up under this group.
+    verbose : bool, default True
+        If True, prints warnings for missing paths or type mismatches.
+
+    Returns
+    -------
+    list or dict
+        The data read from the file (arrays or dicts).
+    """
+    def _read_group_tree(group):
+        tree = {}
+        for name, item in group.items():
+            if isinstance(item, h5py.Dataset):
+                tree[name] = item[...]
+            else:
+                tree[name] = _read_group_tree(item)
+        return tree
+    if isinstance(filepath, Path):
+        filepath = str(filepath)
+
+    if not filepath.endswith('.h5'):
+        filepath += '.h5'
+
+    if isinstance(filepath, Path):
+        filepath = str(filepath)
+
+    with h5py.File(filepath, 'r') as f:
+        # Determine base object: root or subgroup for backward compatibility
+        base = f
+        if grpname:
+            if grpname in f:
+                base = f[grpname]
+            else:
+                if verbose:
+                    print(f"Group '{grpname}' not found; using root.")
+                base = f
+
+        # Expand 'all' under base group
+        if keys == 'all':
+            keys_to_process = list(base.keys())
+        else:
+            keys_to_process = list(keys)
+
+        result = {} if return_dict else []
+
+        for key in keys_to_process:
+            # If using full paths and no grpname, split absolute path
+            if grpname is None and key.startswith('/'):
+                parts = [p for p in key.strip('/').split('/') if p]
+                obj = f
+                for p in parts:
+                    if isinstance(obj, h5py.Group) and p in obj:
+                        obj = obj[p]
+                    else:
+                        if verbose:
+                            print(f"Path '{key}' not found in {filepath}.")
+                        obj = None
+                        break
+            else:
+                # Relative to base group
+                parts = [p for p in key.strip('/').split('/') if p]
+                obj = base
+                for p in parts:
+                    if isinstance(obj, h5py.Group) and p in obj:
+                        obj = obj[p]
+                    else:
+                        if verbose:
+                            print(f"Path '{key}' not found under '{grpname or '/'}'.")
+                        obj = None
+                        break
+
+            # Determine read behavior
+            if obj is None:
+                data = None
+            elif isinstance(obj, h5py.Dataset):
+                data = obj[...]
+            elif isinstance(obj, h5py.Group):
+                if recursive:
+                    data = _read_group_tree(obj)
+                else:
+                    data = {name: ds[...] for name, ds in obj.items() if isinstance(ds, h5py.Dataset)}
+            else:
+                data = None
+
+            if return_dict:
+                result[key] = data
+            else:
+                result.append(data)
+
+    return result
+
+def read_attr(
+    filepath: str,
+    keys,
+    return_dict: bool = False,
+    recursive: bool = True,
+    grpname: str = None,
+    verbose: bool = True
+):
+    """
+    Reads attributes of specified keys from an HDF5 file.
+
+    Parameters
+    ----------
+    filepath : str
+        Path to the HDF5 file.
+    keys : str or list of str
+        Keys for which attributes are to be read.
+    return_dict : bool, optional
+        If True, returns attributes as a dictionary. Default is False.
+    recursive : bool, optional
+        If True, reads attributes recursively for groups. Default is True.
+    grpname : str, optional
+        Name of the group to start reading from. Default is None (root group).
+    verbose : bool, optional
+        If True, prints the attributes being read. Default is True.
+
+    Returns
+    -------
+    dict or list
+        Attributes of the specified keys as a dictionary or list.
+    """
+    import h5py
+
+    if isinstance(keys, str):
+        keys = [keys]
+
+    attributes = {} if return_dict else []
+
+    with h5py.File(filepath, mode='r') as f:
+        group = f[grpname] if grpname else f
+        for key in keys:
+            if key in group:
+                obj = group[key]
+                attr_dict = {attr: obj.attrs[attr] for attr in obj.attrs}
+                if verbose:
+                    print(f"Attributes for key '{key}': {attr_dict}")
+                if return_dict:
+                    attributes[key] = attr_dict
+                else:
+                    attributes.append(attr_dict)
+            elif recursive and isinstance(group, h5py.Group):
+                for subkey in group.keys():
+                    if key in group[subkey]:
+                        obj = group[subkey][key]
+                        attr_dict = {attr: obj.attrs[attr] for attr in obj.attrs}
+                        if verbose:
+                            print(f"Attributes for key '{key}' in subgroup '{subkey}': {attr_dict}")
+                        if return_dict:
+                            attributes[key] = attr_dict
+                        else:
+                            attributes.append(attr_dict)
+            else:
+                if verbose:
+                    print(f"Key '{key}' not found in the group '{grpname or '/'}'.")
+
+    return attributes
+
+def _remove_datasets_in_group(group):
+    """Recursively delete all Dataset objects under this h5py.Group."""
+    for name in list(group.keys()):
+        obj = group[name]
+        if isinstance(obj, h5py.Dataset):
+            del group[name]
+        elif isinstance(obj, h5py.Group):
+            _remove_datasets_in_group(obj)
+
+def remove_data_from_h5(h5_path, target_paths, recursive=False, verbose=True):
+    """
+    Remove one or more datasets (or group contents) in an HDF5 file.
+
+    # Example usage:
+    # 1. Remove multiple datasets:
+    # remove_h5_paths("susceptibility_data.h5",
+    #                 ["/Bik1/60uM/AcETF/fluoro/c_solute",
+    #                  "/Bik1/60uM/AcEETF/fluoro/c_Bik1"],
+    #                 recursive=False)
+
+    # 2. Clear out all datasets under several groups:
+    # remove_h5_paths("susceptibility_data.h5",
+    #                 ["/Bik1/60uM/AcETF/fluoro",
+    #                  "/Bik1/60uM/AcEETF/fluoro"],
+    #                 recursive=True)
+    Parameters
+    ----------
+    h5_path : str
+        Path to the .h5 file.
+    target_paths : str or list of str
+        Full HDF5 path(s) to the object(s) you want to remove, e.g.
+        "/Bik1/…/c_solute" or ["/grp/ds1", "/grp/subgrp"].
+    recursive : bool, default False
+        If True and a target path is a group, delete all datasets under it.
+        If False and a target is a group, raises an error.
+        Ignored for dataset paths.
+    """
+    # normalize to a list
+    if isinstance(target_paths, str):
+        target_paths = [target_paths]
+
+    if not os.path.exists(h5_path):
+        raise FileNotFoundError(f"HDF5 file not found: {h5_path}")
+
+    with h5py.File(h5_path, "a") as f:
+        for tgt in target_paths:
+            if tgt not in f:
+                print(f"Path '{tgt}' not found in file.")
+                continue
+
+            obj = f[tgt]
+            parent_path, name = os.path.split(tgt.rstrip("/"))
+            parent = f[parent_path] if parent_path else f["/"]
+
+            if isinstance(obj, h5py.Dataset):
+                # delete the single dataset
+                del parent[name]
+                if verbose:
+                   print(f"Removed {tgt} (dataset)'.")
+
+            elif isinstance(obj, h5py.Group):
+                if recursive:
+                    ## Option 1: Keep a group but delete all datasets inside it
+                    ## delete all datasets under this group
+                    # _remove_datasets_in_group(obj)
+                    ## Option 2: Remove the group entirely
+                    del parent[name]
+                    if verbose:
+                       print(f"Removed {tgt} (group)'.")
+                else:
+                    raise ValueError(
+                        f"'{tgt}' is a group. "
+                        "Set recursive=True to delete its contents."
+                    )
+
+            else:
+                raise TypeError(f"Unknown object type at '{tgt}'.")
+
+        f.flush()
+
+def add_data(dpath, datadict, attrdict=None, grpname=None, overwrite=False, verbose=True,
+                restricted_keys=['ux', 'uy', 'uz', 'x', 'y', 'z'],
+                ):
+    """
+    Writes a data stored in a dictionary into a hdf5 at udatatapth
+    ... datadict = {"name1": value1, "name2":value2, ...} will be stored like /name1, /name2 in the hdf5 file
+    ... datadict = {"grp1": {"name1": value1, "name2":value2, ...},
+                    "grp1": {"name1": value1, "name2":value2, ...}, ... }
+        will be stored like /grp1/name1, /grp1/name2, /grp2/name1, /grp2/name2, ...
+
+    Parameters
+    ----------
+    dpath: str, a path to the hdf5 file
+    datadict: dictionary, or a nested dictionary (up to level 2)
+        ... data must be stored like {"name1": value1, "name2": value2, ...}
+    grpname: str
+        ... if given, it saves the datadict like
+            /grpname/name1, /grpname/name2
+    overwrite: bool, if True, it overwrite the data in the target hdf5 file
+    verbose: bool, if True, it prints out details during saving the data
+
+    Returns
+    -------
+    None
+    """
+    def format_datadict(datadict):
+
+        """
+        Format the data to be saved in the hdf5 file
+        Parameters
+        ----------
+        datadict: dict, a dictionary to be saved in the hdf5 file
+
+        Returns
+        -------
+        datadict: dict, a formatted dictionary
+        """
+        for key in datadict.keys():
+            # Check if the data is a list of strings
+            # If so, convert it to a numpy array of strings
+            if isListOfStrings(datadict[key]):
+                maxLength = max([len(item) for item in datadict[key]])
+                datadict[key] = np.array(datadict[key], dtype=f'S{maxLength}')
+            elif isListOfLists(datadict[key]) or isListOfArrays(datadict[key]):
+                arrays = datadict[key]
+                # Find the maximum length of arrays
+                max_length = max(len(arr) for arr in arrays)
+                # Create a padded array
+                padded_array = np.array(
+                    [np.pad(np.array(arr, dtype=float), (0, max_length - len(np.array(arr, dtype=float))), constant_values=np.nan) for arr in arrays])
+
+                datadict[key] = padded_array
+        return datadict
+    datadict = format_datadict(datadict)
+
+    if grpname is not None:
+        if verbose:
+            print('add_data: data will be saved like /%s/names' % grpname)
+            print('... the given datadict must not be a nested dictionary')
+        datadict = {grpname: datadict}
+    #
+    # restricted_keys = ['ux', 'uy', 'uz', 'x', 'y', 'z']  # these keys will be ignored to protect original data
+
+    # check if datadict contains data that must not be overwritten
+    new_keys = [key for key in datadict.keys() if key not in restricted_keys]
+    for key in datadict.keys():
+        if key in restricted_keys:
+            print(key, ' is forbidden to overwrite. To write udata to a h5 file, use write_udata()')
+
+    if not os.path.exists(os.path.split(dpath)[0]):
+        os.makedirs(os.path.split(dpath)[0])
+    with h5py.File(dpath, mode='a') as f:
+        existing_keys = f.keys()
+        for new_key in new_keys:
+            if overwrite and type(datadict[new_key]) != dict:
+                try:
+                    if verbose:
+                        print('add_data: Adding %s...' % new_key)
+                    f.create_dataset(new_key, data=datadict[new_key])
+                except:
+                    del f[new_key]
+                    f.create_dataset(new_key, data=datadict[new_key])
+                    if verbose:
+                        print('add_data: %s already exists. Overwriting...' % new_key)
+            else:
+                if new_key in existing_keys and type(datadict[new_key]) != dict:
+                    if verbose:
+                        print('add_data: %s already exists! Skipping...' % new_key)
+                else:
+                    if type(datadict[new_key]) == dict: # {'key1': {'subkey1': data}}
+                        if not new_key in existing_keys:
+                            grp = f.create_group('/%s/' % new_key)
+                        else:
+                            grp = f[new_key]
+                        subkeys = datadict[new_key].keys()
+                        existing_subkeys = f[new_key].keys()
+                        for subkey in subkeys:
+                            if type(datadict[new_key][subkey]) == dict:
+                                subsubkeys = datadict[new_key][subkey].keys()
+                                if subkey not in existing_subkeys:
+                                    subgrp = f.create_group('/%s/%s' % (new_key, subkey))
+                                else:
+                                    subgrp = f[new_key][subkey]
+                                for subsubkey in subsubkeys:
+                                    try:
+                                        subgrp.create_dataset(subsubkey, data=datadict[new_key][subkey][subsubkey])
+                                        if verbose:
+                                            print('add_data: Adding /%s/%s/%s...' % (
+                                                new_key, subkey, subsubkey))
+                                    except:
+                                        if overwrite:
+                                            del grp[subkey][subsubkey]
+                                            subgrp.create_dataset(subsubkey, data=datadict[new_key][subkey][subsubkey])
+                                            print('add_data: /%s/%s/% already exists. Overwriting...' % (
+                                                new_key, subkey, subsubkey))
+                                        else:
+                                            if verbose:
+                                                print('add_data: /%s/%s/%s already exists! Skipping...' % (
+                                                    new_key, subkey, subsubkey))
+                            else:
+                                try:
+                                    grp.create_dataset(subkey, data=datadict[new_key][subkey])
+                                    if verbose:
+                                        print('add_data: Adding /%s/%s...' % (
+                                            new_key, subkey))
+                                except:
+                                    if overwrite:
+                                        del grp[subkey]
+                                        grp.create_dataset(subkey, data=datadict[new_key][subkey])
+                                        print('add_data: /%s/%s already exists. Overwriting...' % (
+                                            new_key, subkey))
+                                    else:
+                                        if verbose:
+                                            print('add_data: /%s/%s already exists! Skipping...' % (
+                                                new_key, subkey))
+                    else:
+                        f.create_dataset(new_key, data=datadict[new_key])
+
+        if attrdict is not None:
+            for key in attrdict:
+                for attrname, item in attrdict[key].items():
+                    if attrname not in f[key].attrs or overwrite:
+                        print(f'add_data: {key}.attrs[\'{attrname}\'] already exists. Overwriting...')
+                        f[key].attrs[attrname] = item
+                    else:
+                        print(f'add_data: {key}.attrs[\'{attrname}\'] already exists. Skipping...')
 
 def write_hdf5_dict(filename, datadict, attrdict=None, overwrite=False, verbose=True):
     """
@@ -16162,77 +16711,77 @@ def compute_form_no(stroke_length, orifice_d=25.6, piston_d=160., num_orifices=8
     return LD
 
 
-def estimate_veff(sl, sv):
-    """
-    Returns effective velocity from a given commanded stroke length and velocity
-    ... This function interpolates values based on the measurements in the past
-
-    Parameters
-    ----------
-    sl: int/float/1d array
-        - Commanded stroke length in mm
-    sv: int/float/1d array
-        - Commanded stroke velocity in mm/s
-
-    Returns
-    -------
-    veff: 1d array
-        - Effective velocity in mm/s
-        - Velocity program factor * mean speed
-        - Velocity program factor P = Mean of the second moment / Square of the mean of the first moment (average)
-    """
-
-    if isinstance(sl, np.ndarray):
-        if sl.ndim == 0: sl = float(sl)
-    if isinstance(sv, np.ndarray):
-        if sv.ndim == 0: sv = float(sv)
-    if type(sl) in [int, float]:
-        sl, sv = [sl], [sv]
-    pts2estimate = list(zip(sl, sv))
-    # commanded velocity (mm)
-    sl_cmd = [2.6, 2.6, 2.6, 2.6, 2.6,
-              5.2, 5.2, 5.2, 5.2, 5.2, 5.2,
-              7.800000000000001, 7.800000000000001, 7.800000000000001, 7.800000000000001, 7.800000000000001, 7.8,
-              10.4, 10.4, 10.4, 10.4, 10.4,
-              13.0, 13.0, 13.0, 13.0, 13.0, 13.0,
-              15.600000000000001, 15.600000000000001, 15.600000000000001, 15.60000000000001, 15.600000000000001,
-              15.600000000000001,
-              18.2, 18.2, 18.2, 18.2, 18.2, 18.2,
-              20.8, 20.8, 20.8, 20.8, 20.8, 20.8,
-              23.400000000000002, 23.400000000000002]
-    # commanded velocity (mm/s)
-    vp_cmd_sorted = [100, 200, 300, 400, 1000,
-                     50, 100, 200, 300, 400, 1000,
-                     50, 100, 200, 300, 400, 1000,
-                     100, 200, 300, 400, 1000,
-                     50, 100, 200, 300, 400, 1000,
-                     50, 100, 200, 300, 400, 1000,
-                     50, 100, 200, 300, 400, 1000,
-                     50, 100, 200, 300, 400, 1000,
-                     400, 1000]
-    # effective velocity
-    veff_data_sorted = [101.49904052529494, 120.65398433821005, 132.64713389903653, 150.54889987470946,
-                        152.11259965582218,
-                        52.41700229303288, 104.41173411234168, 210.09654261275634, 269.4166774275767, 309.410059801625,
-                        317.2246281837468,
-                        49.42329705118604, 98.12842281108405, 195.83154238039648, 283.3434393869659, 398.3035669516888,
-                        401.04887767,
-                        101.94968594333488, 212.96098308225953, 374.8247002126497, 418.2011203579417, 420.,
-                        52.031669318230065, 105.1845578538833, 213.6180029013978, 325.8482337883638, 405,
-                        419.23942762100165,  # 335.94 instead of 405?
-                        52.06532370156262, 103.19137134275651, 208.1194793168665, 325.628713002109, 442.99802519923526,
-                        525.3650045528688,
-                        52.236702955826594, 104.55176927251647, 207.09067744554528, 318.4794962481438,
-                        440.9965102573683, 589.5473184534424,
-                        52.51967045608249, 104.30639832142036, 206.27539423030547, 313.5499443061134,
-                        435.22484204357414, 641.7059086973986,
-                        425.65185384290123, 683.6223751807265]
-    points = np.dstack((sl_cmd, vp_cmd_sorted))[0, ...]
-    veff = interpolate.griddata(points, veff_data_sorted, pts2estimate)  # stroke length, commanded_velocity
-
-    if len(veff) == 1:
-        veff = veff[0]
-    return veff
+# def estimate_veff(sl, sv):
+#     """
+#     Returns effective velocity from a given commanded stroke length and velocity
+#     ... This function interpolates values based on the measurements in the past
+#
+#     Parameters
+#     ----------
+#     sl: int/float/1d array
+#         - Commanded stroke length in mm
+#     sv: int/float/1d array
+#         - Commanded stroke velocity in mm/s
+#
+#     Returns
+#     -------
+#     veff: 1d array
+#         - Effective velocity in mm/s
+#         - Velocity program factor * mean speed
+#         - Velocity program factor P = Mean of the second moment / Square of the mean of the first moment (average)
+#     """
+#
+#     if isinstance(sl, np.ndarray):
+#         if sl.ndim == 0: sl = float(sl)
+#     if isinstance(sv, np.ndarray):
+#         if sv.ndim == 0: sv = float(sv)
+#     if type(sl) in [int, float]:
+#         sl, sv = [sl], [sv]
+#     pts2estimate = list(zip(sl, sv))
+#     # commanded velocity (mm)
+#     sl_cmd = [2.6, 2.6, 2.6, 2.6, 2.6,
+#               5.2, 5.2, 5.2, 5.2, 5.2, 5.2,
+#               7.800000000000001, 7.800000000000001, 7.800000000000001, 7.800000000000001, 7.800000000000001, 7.8,
+#               10.4, 10.4, 10.4, 10.4, 10.4,
+#               13.0, 13.0, 13.0, 13.0, 13.0, 13.0,
+#               15.600000000000001, 15.600000000000001, 15.600000000000001, 15.60000000000001, 15.600000000000001,
+#               15.600000000000001,
+#               18.2, 18.2, 18.2, 18.2, 18.2, 18.2,
+#               20.8, 20.8, 20.8, 20.8, 20.8, 20.8,
+#               23.400000000000002, 23.400000000000002]
+#     # commanded velocity (mm/s)
+#     vp_cmd_sorted = [100, 200, 300, 400, 1000,
+#                      50, 100, 200, 300, 400, 1000,
+#                      50, 100, 200, 300, 400, 1000,
+#                      100, 200, 300, 400, 1000,
+#                      50, 100, 200, 300, 400, 1000,
+#                      50, 100, 200, 300, 400, 1000,
+#                      50, 100, 200, 300, 400, 1000,
+#                      50, 100, 200, 300, 400, 1000,
+#                      400, 1000]
+#     # effective velocity
+#     veff_data_sorted = [101.49904052529494, 120.65398433821005, 132.64713389903653, 150.54889987470946,
+#                         152.11259965582218,
+#                         52.41700229303288, 104.41173411234168, 210.09654261275634, 269.4166774275767, 309.410059801625,
+#                         317.2246281837468,
+#                         49.42329705118604, 98.12842281108405, 195.83154238039648, 283.3434393869659, 398.3035669516888,
+#                         401.04887767,
+#                         101.94968594333488, 212.96098308225953, 374.8247002126497, 418.2011203579417, 420.,
+#                         52.031669318230065, 105.1845578538833, 213.6180029013978, 325.8482337883638, 405,
+#                         419.23942762100165,  # 335.94 instead of 405?
+#                         52.06532370156262, 103.19137134275651, 208.1194793168665, 325.628713002109, 442.99802519923526,
+#                         525.3650045528688,
+#                         52.236702955826594, 104.55176927251647, 207.09067744554528, 318.4794962481438,
+#                         440.9965102573683, 589.5473184534424,
+#                         52.51967045608249, 104.30639832142036, 206.27539423030547, 313.5499443061134,
+#                         435.22484204357414, 641.7059086973986,
+#                         425.65185384290123, 683.6223751807265]
+#     points = np.dstack((sl_cmd, vp_cmd_sorted))[0, ...]
+#     veff = interpolate.griddata(points, veff_data_sorted, pts2estimate)  # stroke length, commanded_velocity
+#
+#     if len(veff) == 1:
+#         veff = veff[0]
+#     return veff
 
 
 def isRingFormed(sl, sv, f, P=1.0, do=25.6, dp=160., n=8, ldmax=4.5, amax=1.8e4):
